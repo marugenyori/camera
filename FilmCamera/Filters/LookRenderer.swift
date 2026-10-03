@@ -290,8 +290,9 @@ enum LookRenderer {
 
     // MARK: - 保存用の拡大
 
-    /// 保存する写真の長い辺（約2700万画素）。小さければ高品質な拡大（Lanczos）で大きくし、
-    /// 4800万画素などで大きすぎる場合は縮める（30MB を超えて送れなくなるため）
+    /// 保存する写真の長い辺の最小値（約2700万画素）。これより小さければ高品質な拡大（Lanczos）で
+    /// 大きくする。大きい写真（4800万画素など）は縮めない。拡大したときに細部が残るよう、
+    /// カメラが撮った画素はそのまま保存する
     static let savedLongSide: CGFloat = 6048
 
     /// 写真を保存用の大きさにする。拡大で増えるのは画素数で、写っている情報は増えないため、
@@ -299,14 +300,13 @@ enum LookRenderer {
     static func resizeForSaving(_ image: CIImage) -> CIImage {
         let extent = image.extent
         let long = longSide(extent)
-        guard long > 0, abs(long - savedLongSide) > savedLongSide * 0.05 else { return image }
+        guard long > 0, long < savedLongSide * 0.95 else { return image }
         let scale = savedLongSide / long
         let lanczos = CIFilter.lanczosScaleTransform()
         lanczos.inputImage = image
         lanczos.scale = Float(scale)
         lanczos.aspectRatio = 1
         guard let up = lanczos.outputImage else { return image }
-        guard scale > 1 else { return up.cropped(to: up.extent) }
         let sharpen = CIFilter.sharpenLuminance()
         sharpen.inputImage = up
         sharpen.sharpness = 0.3
