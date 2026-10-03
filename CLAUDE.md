@@ -21,7 +21,7 @@
 | `FilmCamera/Views/CameraPreview.swift` | MTKView（Metal）で、フィルタをかけた映像を毎秒30コマ描く |
 | `FilmCamera/Camera/DualCameraSession.swift` | 外カメラと内カメラを同時に動かす（`AVCaptureMultiCamSession`）。「前後同時」をオンにしている間だけ使う |
 | `FilmCamera/Camera/VideoRecorder.swift` | フィルタをかけた映像と音声を HEVC の動画に書き出す |
-| `FilmCamera/Views/ContentView.swift` | 画面（すりガラス風のボタン、ズームレバー、モード／写真・ビデオの切り替え、シャッター） |
+| `FilmCamera/Views/ContentView.swift` | 画面。持ち主の希望で「ミニマル・プロ機材風」（黒地・細い線・小さな等幅の英字）。上に略号と色見本・状態・DATE/GRID/DUAL、プレビューの四隅にかぎ括弧、流れる目盛りのズーム（なぞる／数字／W・T）、回して選ぶモードのダイヤル（各モードの代表色の帯つき）、PHOTO/VIDEO、シャッター |
 | `FilmCamera.xcodeproj/` | Xcode プロジェクト（フォルダ同期方式。`FilmCamera/` にファイルを置くだけでビルド対象になる） |
 | `.github/workflows/ios-build.yml` | ビルド確認と TestFlight 配信 |
 

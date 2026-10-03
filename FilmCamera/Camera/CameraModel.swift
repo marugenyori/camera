@@ -574,13 +574,22 @@ final class CameraModel: NSObject, ObservableObject {
 
     /// 0.5× / 1× / 2× などのボタン：その倍率まで、一定の速さで動かす
     func zoom(to display: CGFloat) {
+        ramp(to: display, rate: 1.6)
+    }
+
+    /// ズームの目盛りを指でなぞったとき：その倍率へ素早く追いかける（レンズのリングを回す感覚）
+    func scrubZoom(to display: CGFloat) {
+        ramp(to: display, rate: 8)
+    }
+
+    private func ramp(to display: CGFloat, rate: Float) {
         sessionQueue.async {
             guard let device = self.videoInput?.device,
                   (try? device.lockForConfiguration()) != nil else { return }
             defer { device.unlockForConfiguration() }
             let limits = Self.zoomLimits(of: device)
             let factor = min(max(display / Self.zoomMultiplier(for: device), limits.min), limits.max)
-            device.ramp(toVideoZoomFactor: factor, withRate: 1.6)
+            device.ramp(toVideoZoomFactor: factor, withRate: rate)
         }
     }
 
