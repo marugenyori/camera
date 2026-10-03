@@ -98,7 +98,7 @@ final class CameraModel: NSObject, ObservableObject {
 
     /// 今の設定でフィルタをかけるときの設定（距離や重ねる画像は呼ぶ側で足す）
     var baseOptions: LookOptions {
-        var options = baseOptions
+        var options = LookOptions(mode: mode, dateStamp: dateStamp)
         options.contactLayout = contactLayout
         options.contactModes = Array(contactSlots.prefix(contactLayout.count))
         options.contactLabels = contactLabels
