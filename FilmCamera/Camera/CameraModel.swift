@@ -377,16 +377,16 @@ final class CameraModel: NSObject, ObservableObject {
         options.depth = depth
 
         processingQueue.async {
-            let output = LookRenderer.upscaleForSaving(LookRenderer.apply(image, options: options))
+            let output = LookRenderer.resizeForSaving(LookRenderer.apply(image, options: options))
             // 10 ビットの HEIF で保存する（JPEG の 8 ビットより階調がなめらかで、ファイルも小さい）
             let p3 = CGColorSpace(name: CGColorSpace.displayP3)!
             let quality = kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption
             let file: (data: Data, type: String)
             if let heif = try? self.ciContext.heif10Representation(of: output, colorSpace: p3,
-                                                                   options: [quality: 0.95]) {
+                                                                   options: [quality: 0.85]) {
                 file = (heif, "public.heic")
             } else if let jpeg = self.ciContext.jpegRepresentation(of: output, colorSpace: p3,
-                                                                    options: [quality: 0.97]) {
+                                                                    options: [quality: 0.90]) {
                 file = (jpeg, "public.jpeg")
             } else {
                 DispatchQueue.main.async {
