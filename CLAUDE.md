@@ -21,7 +21,7 @@
 | `FilmCamera/Views/CameraPreview.swift` | MTKView（Metal）で、フィルタをかけた映像を毎秒30コマ描く |
 | `FilmCamera/Camera/DualCameraSession.swift` | 外カメラと内カメラを同時に動かす（`AVCaptureMultiCamSession`）。「前後同時」をオンにしている間だけ使う |
 | `FilmCamera/Camera/VideoRecorder.swift` | フィルタをかけた映像と音声を HEVC の動画に書き出す |
-| `FilmCamera/Views/ContentView.swift` | 画面。持ち主の希望で **teenage engineering 風**：アルミ色の筐体（`Panel`）に角丸の画面、黒い表示窓（番号・モード名・状態）、モードを選ぶ 3×3 キー（4 文字の略号だけ。番号や色見本のアイコンは冗長と言われて外した）、黒縁の大きな丸いシャッター、ランプつき機能キー（日付・グリッド・前後同時・切り替え。**文字ではなくアイコンだけ**で示す＝持ち主の希望）、写真／ビデオのスライドスイッチ（アイコン）。差し色はオレンジ（AccentColor、`.tint`）。プレビュー上には流れる目盛りのズーム（なぞる／数字／W・T） |
+| `FilmCamera/Views/ContentView.swift` | 画面。持ち主の希望で **teenage engineering 風**：アルミ色の筐体（`Panel`）に角丸の画面、黒い表示窓（番号・モード名・状態）、モードを選ぶ 3×3 キー（日本語の名前だけ。番号・略号・色見本のアイコンは持ち主の希望で外した）、黒縁の大きな丸いシャッター、ランプつき機能キー（日付・グリッド・前後同時・切り替え。**文字ではなくアイコンだけ**で示す＝持ち主の希望）、写真／ビデオのスライドスイッチ（アイコン）。差し色はオレンジ（AccentColor、`.tint`）。プレビュー上には流れる目盛りのズーム（なぞる／数字／W・T） |
 | `FilmCamera.xcodeproj/` | Xcode プロジェクト（フォルダ同期方式。`FilmCamera/` にファイルを置くだけでビルド対象になる） |
 | `.github/workflows/ios-build.yml` | ビルド確認と TestFlight 配信 |
 

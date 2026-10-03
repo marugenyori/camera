@@ -266,7 +266,7 @@ struct ContentView: View {
         }
     }
 
-    /// モードを選ぶ 3×3 のキー（略号だけ。名前は表示窓に出る）
+    /// モードを選ぶ 3×3 のキー（日本語の名前だけ）
     private var keypad: some View {
         let modes = LookMode.allCases
         return Grid(horizontalSpacing: 8, verticalSpacing: 8) {
@@ -289,11 +289,14 @@ struct ContentView: View {
         return Button {
             withAnimation(.snappy(duration: 0.2)) { camera.mode = mode }
         } label: {
-            Text(mode.code)
-                .font(.caption2.weight(.heavy).monospaced())
+            Text(mode.title)
+                .font(.caption2.weight(.bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .padding(.horizontal, 3)
         }
         .buttonStyle(PanelKeyStyle(lit: lit))
-        .frame(width: Panel.keySize, height: Panel.keySize)
+        .frame(width: Panel.keyWidth, height: Panel.keySize)
         .accessibilityLabel(mode.title)
         .accessibilityAddTraits(lit ? .isSelected : [])
     }
@@ -412,6 +415,8 @@ private enum Panel {
     static let print = Color(hex: 0x76756F)
     static let display = Color(hex: 0x121212)
     static let keySize: CGFloat = 46
+    /// モードのキーの幅（日本語の名前が入るよう横長にする）
+    static let keyWidth: CGFloat = 62
 }
 
 /// 四角いキー。押すと沈み、選ばれているとオレンジに光る
@@ -582,25 +587,6 @@ private extension View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(Capsule().fill(Panel.key))
-    }
-}
-
-// MARK: - モードの略号
-
-extension LookMode {
-    /// モードのキーに出す 4 文字の略号
-    var code: String {
-        switch self {
-        case .film: return "FILM"
-        case .flash: return "FLSH"
-        case .warmFlash: return "WFLS"
-        case .iwai: return "IWAI"
-        case .cross: return "XPRO"
-        case .harinezumi: return "HARI"
-        case .warmHarinezumi: return "WHRI"
-        case .double: return "MULT"
-        case .contact: return "SPLT"
-        }
     }
 }
 
