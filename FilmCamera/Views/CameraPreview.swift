@@ -13,6 +13,8 @@ struct CameraPreview: UIViewRepresentable {
     func makeUIView(context: Context) -> MTKView {
         let view = MTKView(frame: .zero, device: context.coordinator.device)
         view.framebufferOnly = false
+        // 画面の画素数どおりに描く（指定しないと1倍で描かれて粗くなることがある）
+        view.contentScaleFactor = UIScreen.main.nativeScale
         view.colorPixelFormat = .bgra8Unorm
         view.preferredFramesPerSecond = 30
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)

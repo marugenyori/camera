@@ -53,11 +53,11 @@ enum LookRenderer {
         // ハイライトのにじみ（ハレーション）
         let bloom = CIFilter.bloom()
         bloom.inputImage = warm
-        bloom.radius = Float(longSide(extent) * 0.010)
-        bloom.intensity = 0.30
+        bloom.radius = Float(longSide(extent) * 0.006)
+        bloom.intensity = 0.15
         let glowed = (bloom.outputImage ?? warm).cropped(to: extent)
 
-        let grained = grain(glowed, amount: 0.10, seed: seed)
+        let grained = grain(glowed, amount: 0.06, seed: seed)
         return vignette(grained, strength: 0.42, inner: 0.40)
     }
 
@@ -118,7 +118,6 @@ enum LookRenderer {
                                 width: side, height: side))
         let base = square.transformed(by: CGAffineTransform(
             translationX: -square.extent.minX, y: -square.extent.minY))
-        let extent = base.extent
 
         let controls = CIFilter.colorControls()
         controls.inputImage = base
@@ -135,13 +134,7 @@ enum LookRenderer {
                                  r: 1.03, g: 1.01, b: 0.93,
                                  bias: (-0.010, 0.020, 0.045))
 
-        // 少しだけ柔らかく
-        let soft = tinted
-            .clampedToExtent()
-            .applyingGaussianBlur(sigma: Double(side * 0.0008))
-            .cropped(to: extent)
-
-        let grained = grain(soft, amount: 0.06, seed: seed)
+        let grained = grain(tinted, amount: 0.04, seed: seed)
         return vignette(grained, strength: 0.30, inner: 0.45)
     }
 

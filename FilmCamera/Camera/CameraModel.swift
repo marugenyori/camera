@@ -131,6 +131,13 @@ final class CameraModel: NSObject, ObservableObject {
 
     /// sessionQueue で呼ぶ
     private func setUpConnections(for device: AVCaptureDevice) {
+        // 写真はそのカメラの最大解像度・画質優先で撮る（初期値だと小さめになる）
+        if let largest = device.activeFormat.supportedMaxPhotoDimensions
+            .max(by: { $0.width * $0.height < $1.width * $1.height }) {
+            photoOutput.maxPhotoDimensions = largest
+        }
+        photoOutput.maxPhotoQualityPrioritization = .quality
+
         if let connection = videoOutput.connection(with: .video) {
             // 画面は縦向き固定なので、映像も縦向きでもらう
             if connection.isVideoRotationAngleSupported(90) {
@@ -195,6 +202,8 @@ final class CameraModel: NSObject, ObservableObject {
                 }
             }
             let settings = AVCapturePhotoSettings()
+            settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
+            settings.photoQualityPrioritization = .quality
             let processor = PhotoCaptureProcessor { [weak self] data in
                 self?.finishCapture(data: data, options: options, id: settings.uniqueID)
             }
