@@ -318,8 +318,6 @@ final class CameraModel: NSObject, ObservableObject {
             }
         }
     }
-        }
-    }
 
     private func startSession() {
         let position = self.position
