@@ -5,6 +5,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var flashOpacity = 0.0
     @State private var showingPhoto = false
+    @AppStorage("showGrid") private var showGrid = false
 
     var body: some View {
         ZStack {
@@ -67,6 +68,18 @@ struct ContentView: View {
                                 in: Capsule())
                     .foregroundStyle(camera.dateStamp ? .black : .white)
             }
+            Button {
+                showGrid.toggle()
+            } label: {
+                Image(systemName: "squareshape.split.3x3")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(showGrid ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.15)),
+                                in: Capsule())
+                    .foregroundStyle(showGrid ? .black : .white)
+            }
+            .accessibilityLabel("グリッド")
             Spacer()
             if camera.mode == .double && !camera.exposures.isEmpty && !camera.isBursting {
                 Button {
@@ -95,6 +108,9 @@ struct ContentView: View {
 
     private var preview: some View {
         CameraPreview(model: camera)
+            .overlay {
+                if showGrid { GridOverlay() }
+            }
             .overlay { statusOverlay }
             .overlay(alignment: .top) {
                 if let message = camera.message {
@@ -301,5 +317,31 @@ private struct PhotoSheet: View {
                 .navigationTitle("写真アプリに保存しました")
                 .navigationBarTitleDisplayMode(.inline)
         }
+    }
+}
+
+/// 三分割のグリッド。プレビューの写真（縦 4:3）が映っている範囲に合わせて線を引く
+private struct GridOverlay: View {
+    var body: some View {
+        GeometryReader { geo in
+            let aspect: CGFloat = 3.0 / 4.0
+            let width = min(geo.size.width, geo.size.height * aspect)
+            let height = width / aspect
+            let rect = CGRect(x: (geo.size.width - width) / 2, y: (geo.size.height - height) / 2,
+                              width: width, height: height)
+            Path { path in
+                for i in 1...2 {
+                    let x = rect.minX + rect.width * CGFloat(i) / 3
+                    path.move(to: CGPoint(x: x, y: rect.minY))
+                    path.addLine(to: CGPoint(x: x, y: rect.maxY))
+                    let y = rect.minY + rect.height * CGFloat(i) / 3
+                    path.move(to: CGPoint(x: rect.minX, y: y))
+                    path.addLine(to: CGPoint(x: rect.maxX, y: y))
+                }
+            }
+            .stroke(Color.white.opacity(0.45), lineWidth: 0.7)
+            .shadow(color: .black.opacity(0.4), radius: 0.5)
+        }
+        .allowsHitTesting(false)
     }
 }
