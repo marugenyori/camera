@@ -129,7 +129,12 @@ final class CameraModel: NSObject, ObservableObject {
     /// 録画を続けたいか（開始の準備中に停止されたときのため）
     private var _wantsRecording = false
 
-    // 録画中の状態（videoQueue で触る）
+    // 録画中の状態（recordingQueue で触る）。
+    // フィルタをかけて書き込む処理は重いので、カメラの映像を受け取るキューとは分ける。
+    // 前のコマを書き込み中なら次のコマは飛ばし、処理待ちが積み上がらないようにする
+    private let recordingQueue = DispatchQueue(label: "camera.recording", qos: .userInitiated)
+    private var _recordingActive = false   // frameLock で守る
+    private var _renderingFrame = false    // frameLock で守る
     private var recorder: VideoRecorder?
     private var recordingOptions: LookOptions?
     private var recordingTransform: CGAffineTransform = .identity
@@ -581,9 +586,10 @@ final class CameraModel: NSObject, ObservableObject {
             self.sessionQueue.async {
                 if granted && !self.hasAudio { self.addMicrophone() }
                 let withAudio = self.hasAudio
-                self.videoQueue.async {
+                self.recordingQueue.async {
                     self.frameLock.lock()
                     let wants = self._wantsRecording
+                    self._recordingActive = wants
                     self.frameLock.unlock()
                     guard wants else { return }
                     self.recorder = nil
@@ -602,9 +608,10 @@ final class CameraModel: NSObject, ObservableObject {
         isSaving = true
         frameLock.lock()
         _wantsRecording = false
+        _recordingActive = false
         frameLock.unlock()
 
-        videoQueue.async {
+        recordingQueue.async {
             let recorder = self.recorder
             let lastFrame = self.lastRecordedFrame
             self.recorder = nil
@@ -642,7 +649,7 @@ final class CameraModel: NSObject, ObservableObject {
         session.beginConfiguration()
         if session.canAddInput(input) && session.canAddOutput(audioOutput) {
             session.addInput(input)
-            audioOutput.setSampleBufferDelegate(self, queue: videoQueue)
+            audioOutput.setSampleBufferDelegate(self, queue: recordingQueue)
             session.addOutput(audioOutput)
             hasAudio = true
         }
@@ -946,6 +953,7 @@ extension CameraModel: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAu
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         if output === audioOutput {
+            // 音声は recordingQueue で届く
             if recordingOptions != nil { recorder?.append(audio: sampleBuffer) }
             return
         }
@@ -955,21 +963,32 @@ extension CameraModel: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAu
         _latestFrame = frame
         let depth = _latestDepth
         let subject = _subjectDistance
+        // 録画中で、前のコマの書き込みが終わっていれば、このコマを書き込む
+        let shouldRecord = _recordingActive && !_renderingFrame
+        if shouldRecord { _renderingFrame = true }
         frameLock.unlock()
+        guard shouldRecord else { return }
 
-        // 録画中は、撮影中の画面と同じフィルタをかけて書き込む
-        guard var options = recordingOptions else { return }
-        if recorder == nil {
-            recorder = VideoRecorder(size: frame.extent.size, transform: recordingTransform,
-                                     withAudio: recordingWithAudio)
+        let time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        recordingQueue.async {
+            defer {
+                self.frameLock.lock()
+                self._renderingFrame = false
+                self.frameLock.unlock()
+            }
+            guard var options = self.recordingOptions else { return }
+            if self.recorder == nil {
+                self.recorder = VideoRecorder(size: frame.extent.size, transform: self.recordingTransform,
+                                              withAudio: self.recordingWithAudio)
+            }
+            if options.mode.usesDepth {
+                options.depth = depth
+                options.subjectDistance = subject
+            }
+            let look = LookRenderer.apply(frame, options: options)
+            self.recorder?.append(look, at: time, context: self.videoContext)
+            self.lastRecordedFrame = look
         }
-        if options.mode.usesDepth {
-            options.depth = depth
-            options.subjectDistance = subject
-        }
-        let look = LookRenderer.apply(frame, options: options)
-        recorder?.append(look, at: CMSampleBufferGetPresentationTimeStamp(sampleBuffer), context: videoContext)
-        lastRecordedFrame = look
     }
 }
 
