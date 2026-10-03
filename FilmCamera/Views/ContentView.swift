@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// 撮影画面。黒地に細い線と小さな等幅文字だけの、プロ機材風のミニマルな見た目
+/// 撮影画面。teenage engineering の機材のような見た目：
+/// アルミ色の筐体に画面がはめ込まれ、下に黒い小さな表示窓、番号つきの四角いキー、オレンジの差し色
 struct ContentView: View {
     @StateObject private var camera = CameraModel()
     @Environment(\.scenePhase) private var scenePhase
@@ -11,10 +12,10 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Panel.body.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                hud
+                brandStrip
                 ZStack(alignment: .bottom) {
                     preview
                     VStack(spacing: 10) {
@@ -26,7 +27,7 @@ struct ContentView: View {
                                 showingContactSettings = true
                             } label: {
                                 Label("\(camera.contactLayout.title)  フィルタと並べ方", systemImage: "square.grid.2x2")
-                                    .hudChip()
+                                    .panelChip()
                             }
                             .disabled(camera.isRecording)
                         }
@@ -41,12 +42,10 @@ struct ContentView: View {
                     }
                     .padding(.bottom, 12)
                 }
-                ModeDial(selection: $camera.mode)
-                    .disabled(camera.isRecording)
-                    .opacity(camera.isRecording ? 0.4 : 1)
-                    .padding(.top, 8)
-                kindPicker
-                controls
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding(.horizontal, 8)
+
+                controlPanel
             }
 
             // フラッシュで撮ったときに画面を白く光らせる
@@ -55,6 +54,7 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
         }
+        .statusBarHidden(true)
         .onAppear { camera.start() }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -79,7 +79,7 @@ struct ContentView: View {
         }
         .sensoryFeedback(.impact, trigger: camera.shotCount)
         .sensoryFeedback(.impact(weight: .medium), trigger: camera.isRecording)
-        .sensoryFeedback(.selection, trigger: camera.mode)
+        .sensoryFeedback(.impact(weight: .light), trigger: camera.mode)
         // ズーム中は 0.1× ごとにカチカチと手応えを返す（ズームリングの目盛りのように）
         .sensoryFeedback(.selection, trigger: Int((camera.zoom * 10).rounded()))
         .sheet(isPresented: $showingContactSettings) {
@@ -93,75 +93,27 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 上の表示（モード・状態・切り替え）
+    // MARK: - 筐体の印刷
 
-    private var hud: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 8) {
-                ModeSwatch(mode: camera.mode)
-                    .frame(width: 22, height: 8)
-                Text(camera.mode.code)
-                    .foregroundStyle(.white)
-            }
-            .hudText()
-            .animation(.snappy, value: camera.mode)
-
-            Spacer(minLength: 8)
-            statusReadout
-            Spacer(minLength: 8)
-
-            HStack(spacing: 16) {
-                HUDToggle(title: "DATE", isOn: camera.dateStamp, label: "日付") {
-                    camera.dateStamp.toggle()
-                }
-                HUDToggle(title: "GRID", isOn: showGrid, label: "グリッド") {
-                    showGrid.toggle()
-                }
-                if CameraModel.isDualSupported {
-                    HUDToggle(title: "DUAL", isOn: camera.isDual, label: "前後同時") {
-                        camera.isDual.toggle()
-                    }
-                    .disabled(camera.isRecording || camera.isSaving)
+    private var brandStrip: some View {
+        HStack(spacing: 8) {
+            Text("CC—1")
+                .font(.caption.weight(.heavy).monospaced())
+                .foregroundStyle(Panel.ink)
+            Text("film camera")
+                .font(.caption2.weight(.medium).monospaced())
+                .foregroundStyle(Panel.print)
+            Spacer()
+            HStack(spacing: 3) {
+                ForEach(0..<4, id: \.self) { i in
+                    Circle()
+                        .fill(i == 0 ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Panel.print.opacity(0.35)))
+                        .frame(width: 5, height: 5)
                 }
             }
         }
-        .padding(.horizontal, 18)
-        .frame(height: 44)
-    }
-
-    @ViewBuilder
-    private var statusReadout: some View {
-        if camera.isRecording, let start = camera.recordingStartedAt {
-            TimelineView(.periodic(from: start, by: 0.5)) { context in
-                let seconds = Int(context.date.timeIntervalSince(start))
-                HStack(spacing: 6) {
-                    Circle().fill(Color.red).frame(width: 7, height: 7)
-                    Text(String(format: "REC %02d:%02d", seconds / 60, seconds % 60))
-                        .foregroundStyle(.white)
-                }
-                .hudText()
-            }
-        } else if camera.mode == .double && !camera.exposures.isEmpty && !camera.isBursting {
-            Button {
-                camera.discardExposures()
-            } label: {
-                HStack(spacing: 5) {
-                    Text("\(camera.exposures.count)/\(camera.exposureCount)")
-                    Image(systemName: "arrow.uturn.backward")
-                }
-                .hudText()
-                .foregroundStyle(.tint)
-            }
-            .accessibilityLabel("撮り直す")
-        } else if camera.mode.usesDepth && camera.isDepthActive && !camera.isDual {
-            Text("DEPTH")
-                .hudText()
-                .foregroundStyle(.tint)
-        } else if !camera.isDual {
-            Text(ZoomRuler.label(camera.zoom) + "×")
-                .hudText()
-                .foregroundStyle(.white.opacity(0.6))
-        }
+        .padding(.horizontal, 16)
+        .frame(height: 30)
     }
 
     // MARK: - プレビュー
@@ -174,11 +126,10 @@ struct ContentView: View {
                 if let message = camera.message {
                     Text(message)
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Panel.ink)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .background(Color.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.white.opacity(0.15), lineWidth: 0.5))
+                        .background(Panel.key, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                         .padding(.top, 14)
                         .transition(.opacity)
                 }
@@ -225,44 +176,185 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - ズーム
-
     private var zoomPresets: [CGFloat] {
         [0.5, 1, 2, 5].filter { camera.zoomRange.contains($0) || abs($0 - camera.zoomRange.lowerBound) < 0.02 }
     }
 
-    // MARK: - 写真／ビデオ
+    // MARK: - 操作パネル
 
-    private var kindPicker: some View {
-        HStack(spacing: 30) {
-            kindButton("PHOTO", kind: .photo, label: "写真")
-            kindButton("VIDEO", kind: .video, label: "ビデオ")
-                .disabled(camera.isDual)
-                .opacity(camera.isDual ? 0.35 : 1)
+    private var controlPanel: some View {
+        VStack(spacing: 12) {
+            display
+            HStack(alignment: .center, spacing: 16) {
+                keypad
+                ZStack(alignment: .bottomTrailing) {
+                    ShutterButton(kind: camera.captureKind,
+                                  isRecording: camera.isRecording,
+                                  isBusy: camera.isSaving) {
+                        camera.shutterPressed()
+                    }
+                    .disabled(camera.status != .running || (camera.isSaving && !camera.isRecording))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    thumbnail
+                }
+            }
+            .frame(height: Panel.keySize * 3 + 16)
+            functionRow
         }
-        .disabled(camera.isRecording || camera.isSaving)
-        .padding(.top, 4)
-        .padding(.bottom, 4)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
     }
 
-    private func kindButton(_ title: String, kind: CameraModel.CaptureKind, label: String) -> some View {
-        let selected = camera.captureKind == kind
-        return Button {
-            withAnimation(.snappy) { camera.captureKind = kind }
-        } label: {
-            VStack(spacing: 4) {
-                Text(title)
-                    .hudText()
-                    .foregroundStyle(selected ? Color.white : Color.white.opacity(0.4))
-                Circle()
-                    .fill(selected ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.clear))
-                    .frame(width: 4, height: 4)
-            }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
+    /// 黒い小さな表示窓：モードの番号と名前、右に状態
+    private var display: some View {
+        let number = (LookMode.allCases.firstIndex(of: camera.mode) ?? 0) + 1
+        return HStack(spacing: 10) {
+            Text(String(format: "%02d", number))
+                .foregroundStyle(.tint)
+            Text(camera.mode.title)
+                .foregroundStyle(.white)
+            Spacer(minLength: 6)
+            statusReadout
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .font(.caption.weight(.semibold).monospaced())
+        .lineLimit(1)
+        .padding(.horizontal, 12)
+        .frame(height: 34)
+        .background(Panel.display, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .animation(.snappy(duration: 0.2), value: camera.mode)
+    }
+
+    @ViewBuilder
+    private var statusReadout: some View {
+        if camera.isRecording, let start = camera.recordingStartedAt {
+            TimelineView(.periodic(from: start, by: 0.5)) { context in
+                let seconds = Int(context.date.timeIntervalSince(start))
+                HStack(spacing: 6) {
+                    Circle().fill(Color.red).frame(width: 7, height: 7)
+                    Text(String(format: "REC %02d:%02d", seconds / 60, seconds % 60))
+                        .foregroundStyle(.white)
+                }
+            }
+        } else if camera.mode == .double && !camera.exposures.isEmpty && !camera.isBursting {
+            Button {
+                camera.discardExposures()
+            } label: {
+                HStack(spacing: 5) {
+                    Text("\(camera.exposures.count)/\(camera.exposureCount)")
+                    Image(systemName: "arrow.uturn.backward")
+                }
+                .foregroundStyle(.tint)
+            }
+            .accessibilityLabel("撮り直す")
+        } else {
+            HStack(spacing: 8) {
+                if camera.mode.usesDepth && camera.isDepthActive && !camera.isDual {
+                    Text("DEPTH").foregroundStyle(.tint)
+                }
+                if camera.isDual {
+                    Text("DUAL").foregroundStyle(.tint)
+                } else {
+                    Text(ZoomRuler.label(camera.zoom) + "×").foregroundStyle(.white.opacity(0.6))
+                }
+                Text(camera.captureKind == .video ? "VID" : "PIC")
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+        }
+    }
+
+    /// モードを選ぶ 3×3 のキー（番号・略号・色見本つき）
+    private var keypad: some View {
+        let modes = LookMode.allCases
+        return Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+            ForEach(0..<3, id: \.self) { row in
+                GridRow {
+                    ForEach(0..<3, id: \.self) { column in
+                        let index = row * 3 + column
+                        if index < modes.count {
+                            modeKey(modes[index], number: index + 1)
+                        }
+                    }
+                }
+            }
+        }
+        .disabled(camera.isRecording)
+    }
+
+    private func modeKey(_ mode: LookMode, number: Int) -> some View {
+        let lit = camera.mode == mode
+        return Button {
+            withAnimation(.snappy(duration: 0.2)) { camera.mode = mode }
+        } label: {
+            ZStack(alignment: .topLeading) {
+                VStack(spacing: 5) {
+                    Text(mode.code)
+                        .font(.caption2.weight(.heavy).monospaced())
+                    ModeSwatch(mode: mode)
+                        .frame(width: 22, height: 3)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text("\(number)")
+                    .font(.caption2.weight(.medium).monospaced())
+                    .opacity(0.55)
+                    .padding(.leading, 5)
+                    .padding(.top, 3)
+            }
+        }
+        .buttonStyle(PanelKeyStyle(lit: lit))
+        .frame(width: Panel.keySize, height: Panel.keySize)
+        .accessibilityLabel(mode.title)
+        .accessibilityAddTraits(lit ? .isSelected : [])
+    }
+
+    private var thumbnail: some View {
+        Button {
+            showingPhoto = true
+        } label: {
+            Group {
+                if let photo = camera.lastPhoto {
+                    Image(uiImage: photo)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Panel.display
+                }
+            }
+            .frame(width: 42, height: 42)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Panel.ink.opacity(0.25), lineWidth: 1))
+        }
+        .disabled(camera.lastPhoto == nil || camera.isRecording)
+        .accessibilityLabel("最後に撮った写真")
+    }
+
+    /// 下の段：機能キー（ランプつき）と、写真／ビデオのスライドスイッチ
+    private var functionRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            FunctionKey(title: "DATE", systemImage: "calendar", isOn: camera.dateStamp, label: "日付") {
+                camera.dateStamp.toggle()
+            }
+            FunctionKey(title: "GRID", systemImage: "squareshape.split.3x3", isOn: showGrid, label: "グリッド") {
+                showGrid.toggle()
+            }
+            if CameraModel.isDualSupported {
+                FunctionKey(title: "DUAL", systemImage: "rectangle.inset.topleft.filled", isOn: camera.isDual,
+                            label: "前後同時") {
+                    camera.isDual.toggle()
+                }
+                .disabled(camera.isRecording || camera.isSaving)
+            }
+            FunctionKey(title: "FLIP", systemImage: "arrow.triangle.2.circlepath", isOn: nil, label: "カメラを切り替え") {
+                camera.switchCamera()
+            }
+            .disabled(camera.status != .running || camera.isRecording || camera.isDual)
+            Spacer(minLength: 0)
+            KindSwitch(kind: camera.captureKind, videoAllowed: !camera.isDual) { kind in
+                withAnimation(.snappy(duration: 0.25)) { camera.captureKind = kind }
+            }
+            .disabled(camera.isRecording || camera.isSaving)
+        }
     }
 
     // MARK: - 多重露光の設定
@@ -275,14 +367,14 @@ struct ContentView: View {
                     camera.exposureCount = count
                 } label: {
                     Text("\(count)枚")
-                        .hudText()
-                        .foregroundStyle(selected ? Color.black : Color.white.opacity(0.75))
+                        .font(.caption2.weight(.bold).monospaced())
+                        .foregroundStyle(selected ? Color.white : Panel.ink)
                         .frame(width: 46, height: 28)
-                        .background(Capsule().fill(selected ? Color.white : Color.clear))
+                        .background(Capsule().fill(selected ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.clear)))
                 }
                 .buttonStyle(.plain)
             }
-            Rectangle().fill(.white.opacity(0.2)).frame(width: 0.5, height: 18).padding(.horizontal, 4)
+            Rectangle().fill(Panel.ink.opacity(0.2)).frame(width: 1, height: 18).padding(.horizontal, 4)
             Menu {
                 Picker("撮り方", selection: $camera.burstInterval) {
                     ForEach(CameraModel.burstIntervals, id: \.self) { interval in
@@ -291,15 +383,14 @@ struct ContentView: View {
                 }
             } label: {
                 Label(Self.burstLabel(camera.burstInterval), systemImage: "timer")
-                    .hudText()
-                    .foregroundStyle(.white.opacity(0.85))
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Panel.ink)
                     .padding(.horizontal, 8)
                     .frame(height: 28)
             }
         }
         .padding(4)
-        .background(Capsule().fill(Color.black.opacity(0.5)))
-        .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 0.5))
+        .background(Capsule().fill(Panel.key))
         .disabled(camera.isBursting || !camera.exposures.isEmpty)
     }
 
@@ -318,75 +409,218 @@ struct ContentView: View {
         guard all.indices.contains(next) else { return }
         withAnimation(.snappy) { camera.mode = all[next] }
     }
+}
 
-    // MARK: - シャッターなど
+// MARK: - 筐体の色
 
-    private var controls: some View {
-        HStack {
-            Button {
-                showingPhoto = true
-            } label: {
-                Group {
-                    if let photo = camera.lastPhoto {
-                        Image(uiImage: photo)
-                            .resizable()
-                            .scaledToFill()
-                    } else {
-                        Color.white.opacity(0.06)
+/// 操作パネルの色（筐体はアルミのような明るい灰色。オレンジはテーマ色 `.tint`）
+private enum Panel {
+    static let body = Color(hex: 0xDDDCD7)
+    static let key = Color(hex: 0xF5F4F0)
+    static let ink = Color(hex: 0x1C1C1C)
+    /// 筐体に印刷された小さな文字
+    static let print = Color(hex: 0x76756F)
+    static let display = Color(hex: 0x121212)
+    static let keySize: CGFloat = 46
+}
+
+/// 四角いキー。押すと沈み、選ばれているとオレンジに光る
+private struct PanelKeyStyle: ButtonStyle {
+    var lit = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        PanelKey(configuration: configuration, lit: lit)
+    }
+
+    private struct PanelKey: View {
+        let configuration: ButtonStyleConfiguration
+        let lit: Bool
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            let pressed = configuration.isPressed
+            configuration.label
+                .foregroundStyle(lit ? Color.white : Panel.ink)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(lit ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Panel.key))
+                        .shadow(color: .black.opacity(pressed ? 0 : 0.22), radius: 0, x: 0, y: pressed ? 0 : 2)
+                )
+                .offset(y: pressed ? 2 : 0)
+                .opacity(isEnabled ? 1 : 0.4)
+                .animation(.snappy(duration: 0.08), value: pressed)
+        }
+    }
+}
+
+/// 機能キー：アイコンのキーに小さなランプ、下に印刷された名前（isOn が nil ならランプなし）
+private struct FunctionKey: View {
+    let title: String
+    let systemImage: String
+    let isOn: Bool?
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        VStack(spacing: 5) {
+            Button(action: action) {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: systemImage)
+                        .font(.footnote.weight(.semibold))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if let isOn {
+                        Circle()
+                            .fill(isOn ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Panel.print.opacity(0.3)))
+                            .frame(width: 5, height: 5)
+                            .padding(5)
                     }
                 }
-                .frame(width: 46, height: 46)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(.white.opacity(0.3), lineWidth: 0.5))
             }
-            .disabled(camera.lastPhoto == nil || camera.isRecording)
-            .accessibilityLabel("最後に撮った写真")
-
-            Spacer()
-
-            ShutterButton(kind: camera.captureKind,
-                          isRecording: camera.isRecording,
-                          isBusy: camera.isSaving) {
-                camera.shutterPressed()
-            }
-            .disabled(camera.status != .running || (camera.isSaving && !camera.isRecording))
-
-            Spacer()
-
-            Button {
-                camera.switchCamera()
-            } label: {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.white)
-                    .frame(width: 46, height: 46)
-                    .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 0.5))
-            }
-            .disabled(camera.status != .running || camera.isRecording || camera.isDual)
-            .opacity(camera.isDual ? 0.35 : 1)
-            .accessibilityLabel("カメラを切り替え")
+            .buttonStyle(PanelKeyStyle())
+            .frame(width: 46, height: 34)
+            Text(title)
+                .font(.caption2.weight(.semibold).monospaced())
+                .foregroundStyle(Panel.print)
         }
-        .padding(.horizontal, 32)
-        .padding(.top, 6)
-        .padding(.bottom, 20)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(label)
+        .accessibilityValue(isOn.map { $0 ? "オン" : "オフ" } ?? "")
+    }
+}
+
+/// 写真／ビデオのスライドスイッチ
+private struct KindSwitch: View {
+    let kind: CameraModel.CaptureKind
+    let videoAllowed: Bool
+    let onChange: (CameraModel.CaptureKind) -> Void
+
+    var body: some View {
+        VStack(spacing: 5) {
+            HStack(spacing: 0) {
+                segment("PIC", .photo)
+                segment("VID", .video)
+                    .disabled(!videoAllowed)
+                    .opacity(videoAllowed ? 1 : 0.35)
+            }
+            .padding(3)
+            .background(Capsule().fill(Panel.display))
+            Text(kind == .photo ? "photo" : "video")
+                .font(.caption2.weight(.semibold).monospaced())
+                .foregroundStyle(Panel.print)
+        }
+    }
+
+    private func segment(_ title: String, _ value: CameraModel.CaptureKind) -> some View {
+        let selected = kind == value
+        return Button {
+            onChange(value)
+        } label: {
+            Text(title)
+                .font(.caption2.weight(.heavy).monospaced())
+                .foregroundStyle(selected ? Color.white : Color.white.opacity(0.45))
+                .frame(width: 44, height: 28)
+                .background {
+                    if selected {
+                        Capsule().fill(value == .video ? AnyShapeStyle(Color.red) : AnyShapeStyle(TintShapeStyle()))
+                    }
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(value == .photo ? "写真" : "ビデオ")
+    }
+}
+
+/// シャッター。黒い縁の大きな丸いキー（ビデオは赤、録画中は中に白い四角）
+private struct ShutterButton: View {
+    let kind: CameraModel.CaptureKind
+    let isRecording: Bool
+    let isBusy: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            EmptyView()
+        }
+        .buttonStyle(ShutterStyle(kind: kind, isRecording: isRecording, isBusy: isBusy))
+        .accessibilityLabel(kind == .video ? (isRecording ? "録画を止める" : "録画する") : "シャッター")
+    }
+
+    private struct ShutterStyle: ButtonStyle {
+        let kind: CameraModel.CaptureKind
+        let isRecording: Bool
+        let isBusy: Bool
+
+        func makeBody(configuration: Configuration) -> some View {
+            let pressed = configuration.isPressed
+            ZStack {
+                Circle()
+                    .fill(Panel.ink)
+                    .frame(width: 92, height: 92)
+                Circle()
+                    .fill(kind == .video ? AnyShapeStyle(Color.red) : AnyShapeStyle(Panel.key))
+                    .frame(width: 76, height: 76)
+                    .shadow(color: .black.opacity(pressed ? 0 : 0.35), radius: 0, x: 0, y: pressed ? 0 : 3)
+                    .offset(y: pressed ? 3 : 0)
+                Group {
+                    if isRecording {
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(.white)
+                            .frame(width: 24, height: 24)
+                    } else if isBusy {
+                        ProgressView().tint(kind == .video ? .white : Panel.ink)
+                    } else if kind == .photo {
+                        Circle()
+                            .fill(.tint)
+                            .frame(width: 10, height: 10)
+                    }
+                }
+                .offset(y: pressed ? 3 : 0)
+            }
+            .animation(.snappy(duration: 0.1), value: pressed)
+            .animation(.snappy(duration: 0.25), value: isRecording)
+            .animation(.snappy(duration: 0.25), value: kind)
+        }
+    }
+}
+
+private extension View {
+    /// ズームのレバーなどに使う、小さな等幅の文字
+    func hudText() -> some View {
+        self
+            .font(.caption2.weight(.semibold).monospaced())
+            .tracking(1.2)
+            .lineLimit(1)
+    }
+
+    /// プレビューの上に置く、白いキーのような札
+    func panelChip() -> some View {
+        self
+            .font(.caption2.weight(.bold))
+            .lineLimit(1)
+            .foregroundStyle(Panel.ink)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(Panel.key))
     }
 }
 
 // MARK: - モードの見た目（略号と色見本）
 
 extension LookMode {
-    /// 上の表示に出す英字の略号
+    /// モードのキーと表示窓に出す 4 文字の略号
     var code: String {
         switch self {
         case .film: return "FILM"
-        case .flash: return "FLASH"
-        case .warmFlash: return "FLASH W"
+        case .flash: return "FLSH"
+        case .warmFlash: return "WFLS"
         case .iwai: return "IWAI"
-        case .cross: return "CROSS"
+        case .cross: return "XPRO"
         case .harinezumi: return "HARI"
-        case .warmHarinezumi: return "HARI W"
-        case .double: return "MULTI"
-        case .contact: return "SPLIT"
+        case .warmHarinezumi: return "WHRI"
+        case .double: return "MULT"
+        case .contact: return "SPLT"
         }
     }
 
@@ -427,34 +661,6 @@ private struct ModeSwatch: View {
             }
         }
         .clipShape(Capsule())
-    }
-}
-
-/// 上の表示の、文字だけの切り替え（オンのときはテーマ色と下線）
-private struct HUDToggle: View {
-    let title: String
-    let isOn: Bool
-    let label: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 3) {
-                Text(title)
-                    .hudText()
-                    .foregroundStyle(isOn ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.45)))
-                Rectangle()
-                    .fill(isOn ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.clear))
-                    .frame(height: 1)
-            }
-            .fixedSize()
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .animation(.snappy(duration: 0.2), value: isOn)
-        .accessibilityLabel(label)
-        .accessibilityValue(isOn ? "オン" : "オフ")
     }
 }
 
@@ -628,130 +834,6 @@ private struct ZoomLever: View {
                     }
             )
             .accessibilityLabel(title == "W" ? "広角へズーム" : "望遠へズーム")
-    }
-}
-
-/// モードを選ぶダイヤル。横に回して、真ん中に来たモードになる（押しても選べる）
-private struct ModeDial: View {
-    @Binding var selection: LookMode
-    @State private var centered: LookMode?
-    private let itemWidth: CGFloat = 86
-
-    var body: some View {
-        GeometryReader { geo in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(LookMode.allCases) { mode in
-                        let selected = mode == selection
-                        Button {
-                            withAnimation(.snappy) { centered = mode }
-                        } label: {
-                            VStack(spacing: 7) {
-                                Text(mode.title)
-                                    .font(.footnote.weight(selected ? .semibold : .regular))
-                                    .foregroundStyle(selected ? Color.white : Color.white.opacity(0.4))
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.7)
-                                ModeSwatch(mode: mode)
-                                    .frame(width: selected ? 30 : 14, height: 3)
-                                    .opacity(selected ? 1 : 0.4)
-                            }
-                            .frame(width: itemWidth, height: 46)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .id(mode)
-                    }
-                }
-                .scrollTargetLayout()
-            }
-            .contentMargins(.horizontal, max(0, (geo.size.width - itemWidth) / 2), for: .scrollContent)
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $centered)
-            .mask(
-                LinearGradient(stops: [.init(color: .clear, location: 0),
-                                       .init(color: .black, location: 0.15),
-                                       .init(color: .black, location: 0.85),
-                                       .init(color: .clear, location: 1)],
-                               startPoint: .leading, endPoint: .trailing)
-            )
-        }
-        .frame(height: 46)
-        .overlay(alignment: .top) {
-            // 真ん中の印
-            Rectangle()
-                .fill(.tint)
-                .frame(width: 1.5, height: 5)
-                .offset(y: -6)
-        }
-        .animation(.snappy, value: selection)
-        .onChange(of: centered) { _, mode in
-            if let mode, mode != selection { selection = mode }
-        }
-        .onChange(of: selection) { _, mode in
-            if centered != mode { withAnimation(.snappy) { centered = mode } }
-        }
-        .onAppear {
-            DispatchQueue.main.async { centered = selection }
-        }
-    }
-}
-
-/// シャッター。細い輪の中に白い円（動画は赤、録画中は四角になる）
-private struct ShutterButton: View {
-    let kind: CameraModel.CaptureKind
-    let isRecording: Bool
-    let isBusy: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .stroke(.white.opacity(0.9), lineWidth: 2)
-                    .frame(width: 76, height: 76)
-                RoundedRectangle(cornerRadius: isRecording ? 6 : 31, style: .continuous)
-                    .fill(kind == .video ? Color.red : Color.white)
-                    .frame(width: isRecording ? 28 : 62, height: isRecording ? 28 : 62)
-                if isBusy && !isRecording {
-                    ProgressView().tint(kind == .video ? .white : .black)
-                }
-            }
-            .animation(.snappy(duration: 0.25), value: isRecording)
-            .animation(.snappy(duration: 0.25), value: kind)
-        }
-        .buttonStyle(PressScaleStyle())
-        .accessibilityLabel(kind == .video ? (isRecording ? "録画を止める" : "録画する") : "シャッター")
-    }
-}
-
-private struct PressScaleStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.93 : 1)
-            .animation(.snappy(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
-private extension View {
-    /// 上の表示などに使う、小さな等幅の文字
-    func hudText() -> some View {
-        self
-            .font(.caption2.weight(.semibold).monospaced())
-            .tracking(1.2)
-            .lineLimit(1)
-    }
-
-    /// プレビューの上に置く、黒い半透明の札
-    func hudChip() -> some View {
-        self
-            .font(.caption2.weight(.semibold))
-            .lineLimit(1)
-            .foregroundStyle(.white.opacity(0.85))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Capsule().fill(Color.black.opacity(0.5)))
-            .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 0.5))
     }
 }
 
