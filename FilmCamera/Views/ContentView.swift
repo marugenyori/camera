@@ -251,14 +251,16 @@ struct ContentView: View {
         } else {
             HStack(spacing: 8) {
                 if camera.mode.usesDepth && camera.isDepthActive && !camera.isDual {
-                    Text("DEPTH").foregroundStyle(.tint)
+                    Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(.tint)
+                        .accessibilityLabel("距離で光を調整")
                 }
                 if camera.isDual {
-                    Text("DUAL").foregroundStyle(.tint)
+                    Image(systemName: "rectangle.inset.topleft.filled").foregroundStyle(.tint)
+                        .accessibilityLabel("前後同時")
                 } else {
                     Text(ZoomRuler.label(camera.zoom) + "×").foregroundStyle(.white.opacity(0.6))
                 }
-                Text(camera.captureKind == .video ? "VID" : "PIC")
+                Image(systemName: camera.captureKind == .video ? "video.fill" : "camera.fill")
                     .foregroundStyle(.white.opacity(0.6))
             }
         }
@@ -331,21 +333,21 @@ struct ContentView: View {
 
     /// 下の段：機能キー（ランプつき）と、写真／ビデオのスライドスイッチ
     private var functionRow: some View {
-        HStack(alignment: .top, spacing: 10) {
-            FunctionKey(title: "DATE", systemImage: "calendar", isOn: camera.dateStamp, label: "日付") {
+        HStack(alignment: .center, spacing: 10) {
+            FunctionKey(systemImage: "calendar", isOn: camera.dateStamp, label: "日付") {
                 camera.dateStamp.toggle()
             }
-            FunctionKey(title: "GRID", systemImage: "squareshape.split.3x3", isOn: showGrid, label: "グリッド") {
+            FunctionKey(systemImage: "squareshape.split.3x3", isOn: showGrid, label: "グリッド") {
                 showGrid.toggle()
             }
             if CameraModel.isDualSupported {
-                FunctionKey(title: "DUAL", systemImage: "rectangle.inset.topleft.filled", isOn: camera.isDual,
+                FunctionKey(systemImage: "rectangle.inset.topleft.filled", isOn: camera.isDual,
                             label: "前後同時") {
                     camera.isDual.toggle()
                 }
                 .disabled(camera.isRecording || camera.isSaving)
             }
-            FunctionKey(title: "FLIP", systemImage: "arrow.triangle.2.circlepath", isOn: nil, label: "カメラを切り替え") {
+            FunctionKey(systemImage: "arrow.triangle.2.circlepath", isOn: nil, label: "カメラを切り替え") {
                 camera.switchCamera()
             }
             .disabled(camera.status != .running || camera.isRecording || camera.isDual)
@@ -454,20 +456,18 @@ private struct PanelKeyStyle: ButtonStyle {
     }
 }
 
-/// 機能キー：アイコンのキーに小さなランプ、下に印刷された名前（isOn が nil ならランプなし）
+/// 機能キー：アイコンだけのキーに小さなランプ（isOn が nil ならランプなし）
 private struct FunctionKey: View {
-    let title: String
     let systemImage: String
     let isOn: Bool?
     let label: String
     let action: () -> Void
 
     var body: some View {
-        VStack(spacing: 5) {
-            Button(action: action) {
+        Button(action: action) {
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: systemImage)
-                        .font(.footnote.weight(.semibold))
+                        .font(.body.weight(.semibold))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if let isOn {
                         Circle()
@@ -478,11 +478,7 @@ private struct FunctionKey: View {
                 }
             }
             .buttonStyle(PanelKeyStyle())
-            .frame(width: 46, height: 34)
-            Text(title)
-                .font(.caption2.weight(.semibold).monospaced())
-                .foregroundStyle(Panel.print)
-        }
+            .frame(width: 50, height: 44)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
         .accessibilityValue(isOn.map { $0 ? "オン" : "オフ" } ?? "")
@@ -496,30 +492,25 @@ private struct KindSwitch: View {
     let onChange: (CameraModel.CaptureKind) -> Void
 
     var body: some View {
-        VStack(spacing: 5) {
-            HStack(spacing: 0) {
-                segment("PIC", .photo)
-                segment("VID", .video)
-                    .disabled(!videoAllowed)
-                    .opacity(videoAllowed ? 1 : 0.35)
-            }
-            .padding(3)
-            .background(Capsule().fill(Panel.display))
-            Text(kind == .photo ? "photo" : "video")
-                .font(.caption2.weight(.semibold).monospaced())
-                .foregroundStyle(Panel.print)
+        HStack(spacing: 0) {
+            segment("camera.fill", .photo)
+            segment("video.fill", .video)
+                .disabled(!videoAllowed)
+                .opacity(videoAllowed ? 1 : 0.35)
         }
+        .padding(3)
+        .background(Capsule().fill(Panel.display))
     }
 
-    private func segment(_ title: String, _ value: CameraModel.CaptureKind) -> some View {
+    private func segment(_ systemImage: String, _ value: CameraModel.CaptureKind) -> some View {
         let selected = kind == value
         return Button {
             onChange(value)
         } label: {
-            Text(title)
-                .font(.caption2.weight(.heavy).monospaced())
+            Image(systemName: systemImage)
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(selected ? Color.white : Color.white.opacity(0.45))
-                .frame(width: 44, height: 28)
+                .frame(width: 46, height: 38)
                 .background {
                     if selected {
                         Capsule().fill(value == .video ? AnyShapeStyle(Color.red) : AnyShapeStyle(TintShapeStyle()))
