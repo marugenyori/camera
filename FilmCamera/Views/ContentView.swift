@@ -266,7 +266,7 @@ struct ContentView: View {
         }
     }
 
-    /// モードを選ぶ 3×3 のキー（番号・略号・色見本つき）
+    /// モードを選ぶ 3×3 のキー（色見本だけ。名前は表示窓に出る）
     private var keypad: some View {
         let modes = LookMode.allCases
         return Grid(horizontalSpacing: 8, verticalSpacing: 8) {
@@ -275,7 +275,7 @@ struct ContentView: View {
                     ForEach(0..<3, id: \.self) { column in
                         let index = row * 3 + column
                         if index < modes.count {
-                            modeKey(modes[index], number: index + 1)
+                            modeKey(modes[index])
                         }
                     }
                 }
@@ -284,25 +284,13 @@ struct ContentView: View {
         .disabled(camera.isRecording)
     }
 
-    private func modeKey(_ mode: LookMode, number: Int) -> some View {
+    private func modeKey(_ mode: LookMode) -> some View {
         let lit = camera.mode == mode
         return Button {
             withAnimation(.snappy(duration: 0.2)) { camera.mode = mode }
         } label: {
-            ZStack(alignment: .topLeading) {
-                VStack(spacing: 5) {
-                    Text(mode.code)
-                        .font(.caption2.weight(.heavy).monospaced())
-                    ModeSwatch(mode: mode)
-                        .frame(width: 22, height: 3)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Text("\(number)")
-                    .font(.caption2.weight(.medium).monospaced())
-                    .opacity(0.55)
-                    .padding(.leading, 5)
-                    .padding(.top, 3)
-            }
+            ModeSwatch(mode: mode)
+                .frame(width: 24, height: 6)
         }
         .buttonStyle(PanelKeyStyle(lit: lit))
         .frame(width: Panel.keySize, height: Panel.keySize)
@@ -597,24 +585,9 @@ private extension View {
     }
 }
 
-// MARK: - モードの見た目（略号と色見本）
+// MARK: - モードの見た目（色見本）
 
 extension LookMode {
-    /// モードのキーと表示窓に出す 4 文字の略号
-    var code: String {
-        switch self {
-        case .film: return "FILM"
-        case .flash: return "FLSH"
-        case .warmFlash: return "WFLS"
-        case .iwai: return "IWAI"
-        case .cross: return "XPRO"
-        case .harinezumi: return "HARI"
-        case .warmHarinezumi: return "WHRI"
-        case .double: return "MULT"
-        case .contact: return "SPLT"
-        }
-    }
-
     /// そのモードの写りを表す色（参考写真から拾った代表色）
     var swatch: [Color] {
         switch self {
