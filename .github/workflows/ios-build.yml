@@ -1,0 +1,196 @@
+name: iOS Build
+
+# main に push したとき、または Actions 画面から手動で実行したときに動く
+on:
+  push:
+    branches: [main]
+    paths:
+      - "FilmCamera/**"
+      - "FilmCamera.xcodeproj/**"
+      - ".github/workflows/ios-build.yml"
+  workflow_dispatch:
+    inputs:
+      testflight:
+        description: "TestFlight にアップロードする（Apple Developer Program と Secrets の設定が必要）"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------
+  # 1. 署名なしでシミュレータ向けにビルドし、コンパイルできるか確認する
+  #    （Apple のアカウントは不要）
+  # ------------------------------------------------------------
+  build:
+    name: ビルド確認（署名なし）
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Xcode のバージョン
+        run: |
+          xcodebuild -version
+          xcodebuild -list -project FilmCamera.xcodeproj
+
+      - name: シミュレータ向けにビルド
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project FilmCamera.xcodeproj \
+            -scheme FilmCamera \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee build.log
+
+      - name: エラーの要約
+        if: always()
+        run: |
+          {
+            echo "## ビルド結果"
+            if grep -qE "error:" build.log; then
+              echo ""
+              echo "以下のエラーをコピーして Claude に貼ってください。"
+              echo ""
+              echo '```'
+              grep -E "error:" build.log | sed -E "s#^.*/FilmCamera/##" | sort -u | head -80
+              echo '```'
+            elif grep -q "BUILD SUCCEEDED" build.log; then
+              echo ""
+              echo "✅ ビルド成功"
+            else
+              echo ""
+              echo "ビルドログの最後の40行："
+              echo '```'
+              tail -40 build.log
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: ビルドログを保存
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
+
+  # ------------------------------------------------------------
+  # 2. （任意）署名してアーカイブし、TestFlight にアップロードする
+  #    手動実行で「TestFlight にアップロードする」にチェックしたときだけ動く
+  # ------------------------------------------------------------
+  testflight:
+    name: TestFlight にアップロード
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.testflight
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Secrets の確認
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          missing=""
+          for v in TEAM_ID BUNDLE_ID ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
+            if [ -z "${!v}" ]; then missing="$missing $v"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::次の Secrets が未設定です:$missing"
+            exit 1
+          fi
+
+      - name: App Store Connect API キーを配置
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8"
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8" >> "$GITHUB_ENV"
+
+      - name: CI が作った古い開発用証明書を整理
+        # 毎回まっさらなマシンで自動署名すると証明書が増え続け、上限に達すると失敗するため
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "pyjwt[crypto]"
+          "$RUNNER_TEMP/venv/bin/python" .github/scripts/cleanup_dev_certs.py
+
+      - name: アーカイブ（自動署名）
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project FilmCamera.xcodeproj \
+            -scheme FilmCamera \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/FilmCamera.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            APP_BUNDLE_ID="$BUNDLE_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            archive 2>&1 | tee archive.log
+
+      - name: 署名プロファイルの確認（失敗したときだけ）
+        if: failure()
+        run: |
+          echo "Bundle ID: $BUNDLE_ID"
+          for f in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/"*.mobileprovision \
+                   "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision; do
+            [ -f "$f" ] || continue
+            security cms -D -i "$f" > "$RUNNER_TEMP/p.plist" 2>/dev/null || continue
+            name=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/p.plist")
+            groups=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$RUNNER_TEMP/p.plist" 2>/dev/null | tr -d '\n' | tr -s ' ')
+            echo "$name => ${groups:-App Group なし}"
+          done
+
+      - name: TestFlight にアップロード
+        run: |
+          set -o pipefail
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath build/FilmCamera.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" 2>&1 | tee export.log
+          echo "## TestFlight" >> "$GITHUB_STEP_SUMMARY"
+          echo "ビルド番号 ${{ github.run_number }} をアップロードしました。App Store Connect で処理が終わると（10〜30分ほど）TestFlight に表示されます。" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: ログを保存
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: testflight-logs
+          path: |
+            archive.log
+            export.log
+          retention-days: 7
