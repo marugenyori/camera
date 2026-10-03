@@ -41,8 +41,8 @@ enum LookRenderer {
                                g: (0.045, 0.94, -0.02, -0.07),
                                b: (0.04, 0.82, 0.06, -0.04))
 
-        let hazy = diffusion(toned, radius: longSide(extent) * 0.006, amount: 0.14)
-        let grained = grain(hazy, amount: 0.05, seed: seed)
+        // 粒子は画質が落ちて見えるため入れない（`grain` は残してある）
+        let grained = diffusion(toned, radius: longSide(extent) * 0.006, amount: 0.10)
         return toLinear(vignette(grained, strength: 0.28, inner: 0.42))
     }
 
@@ -91,7 +91,7 @@ enum LookRenderer {
         sharpen.sharpness = 0.25
         let sharp = (sharpen.outputImage ?? cool).cropped(to: extent)
 
-        let grained = grain(sharp, amount: 0.02, seed: seed)
+        let grained = sharp
         return toLinear(vignette(grained, strength: 0.12, inner: 0.55))
     }
 
@@ -113,8 +113,7 @@ enum LookRenderer {
                                g: (0.05, 0.91, 0.05, -0.04),
                                b: (0.08, 0.89, 0.04, -0.04))
 
-        let hazy = diffusion(toned, radius: longSide(extent) * 0.012, amount: 0.25)
-        let grained = grain(hazy, amount: 0.03, seed: seed)
+        let grained = diffusion(toned, radius: longSide(extent) * 0.010, amount: 0.18)
         return toLinear(vignette(grained, strength: 0.10, inner: 0.55))
     }
 

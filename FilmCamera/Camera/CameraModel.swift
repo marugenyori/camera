@@ -229,7 +229,7 @@ final class CameraModel: NSObject, ObservableObject {
             let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
             let quality = kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption
             guard let jpeg = self.ciContext.jpegRepresentation(
-                of: output, colorSpace: colorSpace, options: [quality: 0.92]) else {
+                of: output, colorSpace: colorSpace, options: [quality: 0.97]) else {
                 DispatchQueue.main.async {
                     self.isSaving = false
                     self.message = "画像の作成に失敗しました"
