@@ -43,7 +43,7 @@ enum LookRenderer {
 
         let hazy = diffusion(toned, radius: longSide(extent) * 0.006, amount: 0.14)
         let grained = grain(hazy, amount: 0.05, seed: seed)
-        return toLinear(vignette(grained, strength: 0.35, inner: 0.40))
+        return toLinear(vignette(grained, strength: 0.28, inner: 0.42))
     }
 
     // MARK: - フラッシュ風（2000年代のコンデジの直射フラッシュ）
@@ -55,14 +55,14 @@ enum LookRenderer {
         // 人が来やすい、中央より少し上を中心にする（Core Image は下が原点）
         let center = CGPoint(x: extent.midX, y: extent.midY + extent.height * 0.05)
 
-        let bright = exposure(image, ev: 0.45)
-        let dark = exposure(image, ev: -0.9)
+        let bright = exposure(image, ev: 0.15)
+        let dark = exposure(image, ev: -1.2)
 
         // 中央は明るく、外側はゆるやかに暗くなるマスク
         let gradient = CIFilter.radialGradient()
         gradient.center = center
-        gradient.radius0 = Float(shortSide(extent) * 0.30)
-        gradient.radius1 = Float(longSide(extent) * 0.95)
+        gradient.radius0 = Float(shortSide(extent) * 0.22)
+        gradient.radius1 = Float(longSide(extent) * 0.80)
         gradient.color0 = CIColor(red: 1, green: 1, blue: 1)
         gradient.color1 = CIColor(red: 0, green: 0, blue: 0)
         let mask = (gradient.outputImage ?? image).cropped(to: extent)
@@ -88,7 +88,7 @@ enum LookRenderer {
 
         let sharpen = CIFilter.sharpenLuminance()
         sharpen.inputImage = cool
-        sharpen.sharpness = 0.35
+        sharpen.sharpness = 0.25
         let sharp = (sharpen.outputImage ?? cool).cropped(to: extent)
 
         let grained = grain(sharp, amount: 0.02, seed: seed)
@@ -268,8 +268,16 @@ enum LookRenderer {
     /// Core Image は明るさを「光の量に比例する値（リニア）」で計算するため、
     /// 色の調整は見た目どおりの明るさ（sRGB）に変換してから行い、最後に戻す。
     /// リニアのまま黒を持ち上げると、画面全体が白っぽく霞んでしまう
+    /// あわせて 0〜1 の範囲に収める。iPhone の写真は色域が広く、
+    /// sRGB にすると範囲外（マイナスや 1 超え）の値が出る。そのまま 3 次式や
+    /// トーンカーブにかけると値が暴れ、色付きの白い点やまだらになる
     private static func toSRGB(_ image: CIImage) -> CIImage {
-        image.applyingFilter("CILinearToSRGBToneCurve")
+        let srgb = image.applyingFilter("CILinearToSRGBToneCurve")
+        let clamp = CIFilter.colorClamp()
+        clamp.inputImage = srgb
+        clamp.minComponents = CIVector(x: 0, y: 0, z: 0, w: 0)
+        clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
+        return clamp.outputImage ?? srgb
     }
 
     private static func toLinear(_ image: CIImage) -> CIImage {
