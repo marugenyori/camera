@@ -19,6 +19,7 @@ enum LookRenderer {
         case .warmFlash: out = flash(image, depth: options.depth, subject: options.subjectDistance, warm: true)
         case .iwai: out = iwai(image, seed: options.grainSeed)
         case .cross: out = cross(image)
+        case .harinezumi: out = harinezumi(image)
         case .double: out = multiple(image, overlays: options.overlays,
                                      total: options.exposureTotal, seed: options.grainSeed)
         }
@@ -207,6 +208,33 @@ enum LookRenderer {
         sharpen.sharpness = 0.6
         let sharp = (sharpen.outputImage ?? cool).cropped(to: extent)
         return vignette(sharp, strength: 0.12, inner: 0.55)
+    }
+
+    // MARK: - デジタルハリネズミ風（トイデジ）
+
+    /// 小さなトイデジカメ「Digital Harinezumi」の写り。
+    /// 硬いコントラストと濃い色、青緑に転ぶ影と黄色っぽく飛ぶハイライト、
+    /// 安いレンズらしい強い周辺減光と少しのにじみ。
+    /// 本物は低画素でノイズも多いが、画質は落とさず色と光の癖だけをまねる
+    private static func harinezumi(_ image: CIImage) -> CIImage {
+        let extent = image.extent
+
+        let controls = CIFilter.colorControls()
+        controls.inputImage = toSRGB(exposure(image, ev: 0.15))
+        controls.saturation = 1.30
+        controls.contrast = 1.20
+
+        let punchy = toneCurve(controls.outputImage, [
+            (0.00, 0.00), (0.20, 0.10), (0.50, 0.52), (0.80, 0.92), (1.00, 1.00),
+        ])
+        // 影は青緑（赤を抑える）、ハイライトは黄色（青を抑える）
+        let toned = polynomial(punchy,
+                               r: (0.00, 0.92, 0.18, -0.10),
+                               g: (0.02, 1.00, 0.00, -0.02),
+                               b: (0.04, 0.95, -0.05, -0.08))
+
+        let soft = diffusion(toned, radius: longSide(extent) * 0.004, amount: 0.08)
+        return toLinear(vignette(soft, strength: 0.50, inner: 0.30))
     }
 
     // MARK: - 多重露光
