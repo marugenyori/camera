@@ -26,8 +26,16 @@ final class DualCameraSession: NSObject {
         return true
     }
 
+    /// 止めて、カメラを手放す（ふだんのセッションがすぐにカメラを使えるように）
     func stop() {
         if session.isRunning { session.stopRunning() }
+        guard isConfigured else { return }
+        session.beginConfiguration()
+        for connection in session.connections { session.removeConnection(connection) }
+        for input in session.inputs { session.removeInput(input) }
+        for output in session.outputs { session.removeOutput(output) }
+        session.commitConfiguration()
+        isConfigured = false
     }
 
     // MARK: - 準備
@@ -47,6 +55,7 @@ final class DualCameraSession: NSObject {
 
     private func setUp(back: AVCaptureDevice, front: AVCaptureDevice, maxVideoArea: Int32) -> Bool {
         session.beginConfiguration()
+        for connection in session.connections { session.removeConnection(connection) }
         for input in session.inputs { session.removeInput(input) }
         for output in session.outputs { session.removeOutput(output) }
 

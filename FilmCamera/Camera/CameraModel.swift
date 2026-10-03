@@ -157,6 +157,8 @@ final class CameraModel: NSObject, ObservableObject {
     private let frameLock = NSLock()
     private var _latestFrame: CIImage?
     private var _latestFrontFrame: CIImage?
+    /// 前後同時撮影を始めてから届いたコマの数（映像が来ているかの確認用）
+    private var _dualFrameCount = 0
     private var _latestDepth: CIImage?
     private var _subjectDistance: CGFloat?
     /// 距離の画像を接続側で縦向きにできたか（できなければ自分で回す）
@@ -230,6 +232,7 @@ final class CameraModel: NSObject, ObservableObject {
             guard let self else { return }
             self.frameLock.lock()
             if isBack { self._latestFrame = frame } else { self._latestFrontFrame = frame }
+            self._dualFrameCount += 1
             self.frameLock.unlock()
         }
     }
@@ -265,12 +268,36 @@ final class CameraModel: NSObject, ObservableObject {
     /// ふだんのセッションとマルチカメラを切り替える
     private func switchDual(_ on: Bool) {
         guard isConfigured else { return }
+        let position = self.position
+        let wantDepth = mode.usesDepth
         sessionQueue.async {
             if on {
+                // カメラは同時に 1 つのセッションにしかつなげないので、ふだんのセッションから外してから渡す
                 if self.session.isRunning { self.session.stopRunning() }
-                if !self.dual.start() {
+                self.session.beginConfiguration()
+                if let input = self.videoInput { self.session.removeInput(input) }
+                self.videoInput = nil
+                self.session.commitConfiguration()
+                self.frameLock.lock()
+                self._dualFrameCount = 0
+                self.frameLock.unlock()
+
+                guard self.dual.start() else {
                     DispatchQueue.main.async {
                         self.message = "この機種では前後同時撮影が使えません"
+                        self.isDual = false
+                    }
+                    return
+                }
+                // 2 秒たっても映像が届かなければ、あきらめてふだんの撮影に戻す
+                self.sessionQueue.asyncAfter(deadline: .now() + 2) {
+                    self.frameLock.lock()
+                    let frames = self._dualFrameCount
+                    self.frameLock.unlock()
+                    guard frames == 0 else { return }
+                    DispatchQueue.main.async {
+                        guard self.isDual else { return }
+                        self.message = "前後同時撮影を始められませんでした"
                         self.isDual = false
                     }
                 }
@@ -279,8 +306,18 @@ final class CameraModel: NSObject, ObservableObject {
                 self.frameLock.lock()
                 self._latestFrontFrame = nil
                 self.frameLock.unlock()
+                // ふだんのセッションにカメラをつなぎ直す
+                self.session.beginConfiguration()
+                if let device = self.useCamera(at: position, wantDepth: wantDepth) {
+                    self.applyFormat(for: device, wantDepth: wantDepth)
+                    self.setUpConnections(for: device)
+                }
+                self.session.commitConfiguration()
+                self.refreshPhotoDepthDelivery()
                 if !self.session.isRunning { self.session.startRunning() }
             }
+        }
+    }
         }
     }
 
