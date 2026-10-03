@@ -20,6 +20,7 @@ enum LookRenderer {
         case .iwai: out = iwai(image, seed: options.grainSeed)
         case .cross: out = cross(image)
         case .harinezumi: out = harinezumi(image)
+        case .warmHarinezumi: out = warmHarinezumi(image)
         case .double: out = multiple(image, overlays: options.overlays,
                                      total: options.exposureTotal, seed: options.grainSeed)
         }
@@ -241,6 +242,30 @@ enum LookRenderer {
         unsharp.intensity = 0.8
         let crisp = (unsharp.outputImage ?? toned).cropped(to: extent)
         return toLinear(vignette(crisp, strength: 0.15, inner: 0.45))
+    }
+
+    /// ハリネズミのもう一つの写り（持ち主が見せたお城の写真が目標）。
+    /// 石や木は琥珀〜オレンジに、空は濃い青のまま、白い雲は少しピンク、
+    /// 四隅は暗く落ち、全体はやわらかめ。マゼンタの版と違い、中間を暖かくする
+    private static func warmHarinezumi(_ image: CIImage) -> CIImage {
+        let extent = image.extent
+
+        let controls = CIFilter.colorControls()
+        controls.inputImage = toSRGB(exposure(image, ev: 0.10))
+        controls.saturation = 1.35
+        controls.contrast = 1.15
+
+        let curved = toneCurve(controls.outputImage, [
+            (0.00, 0.00), (0.20, 0.12), (0.50, 0.50), (0.80, 0.88), (1.00, 0.98),
+        ])
+        // 中間は赤を足して青を引き（琥珀色）、白は緑を少し抑える（ピンクがかった雲）
+        let toned = polynomial(curved,
+                               r: (0.02, 1.05, 0.00, -0.08),
+                               g: (0.00, 0.98, 0.00, -0.06),
+                               b: (0.02, 0.92, 0.00, 0.00))
+
+        let soft = diffusion(toned, radius: longSide(extent) * 0.004, amount: 0.06)
+        return toLinear(vignette(soft, strength: 0.35, inner: 0.35))
     }
 
     // MARK: - 多重露光

@@ -9,6 +9,7 @@ enum LookMode: String, CaseIterable, Identifiable {
     case iwai
     case cross
     case harinezumi
+    case warmHarinezumi
     case double
 
     var id: String { rawValue }
@@ -21,6 +22,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .iwai: return "岩井俊二風"
         case .cross: return "クロス"
         case .harinezumi: return "ハリネズミ"
+        case .warmHarinezumi: return "暖ハリネズミ"
         case .double: return "多重露光"
         }
     }
@@ -36,6 +38,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .iwai: return "澄んだ青空・紺の影・にじむ光"
         case .cross: return "暖色と寒色がぶつかる、濃く硬い色"
         case .harinezumi: return "トイデジ風：白飛び・マゼンタ・どぎつい緑"
+        case .warmHarinezumi: return "トイデジ風：琥珀色・濃い青空・暗い四隅"
         case .double: return "何枚かを 1 枚に重ねる"
         }
     }
