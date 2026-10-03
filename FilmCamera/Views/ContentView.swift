@@ -13,6 +13,7 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 topBar
                 preview
+                if camera.mode == .double { exposureOptions }
                 modePicker
                 controls
             }
@@ -67,11 +68,12 @@ struct ContentView: View {
                     .foregroundStyle(camera.dateStamp ? .black : .white)
             }
             Spacer()
-            if camera.mode == .double && camera.firstExposure != nil {
+            if camera.mode == .double && !camera.exposures.isEmpty && !camera.isBursting {
                 Button {
-                    camera.discardFirstExposure()
+                    camera.discardExposures()
                 } label: {
-                    Label("1枚目を撮り直す", systemImage: "arrow.uturn.backward")
+                    Label("\(camera.exposures.count) / \(camera.exposureCount) 枚 ・ 撮り直す",
+                          systemImage: "arrow.uturn.backward")
                         .font(.caption.weight(.semibold))
                 }
                 .tint(.white)
@@ -169,6 +171,44 @@ struct ContentView: View {
             .onAppear { proxy.scrollTo(camera.mode, anchor: .center) }
         }
         .padding(.vertical, 14)
+    }
+
+    // MARK: - 多重露光の設定
+
+    private var exposureOptions: some View {
+        HStack(spacing: 12) {
+            Picker("枚数", selection: $camera.exposureCount) {
+                ForEach(2...4, id: \.self) { Text("\($0)枚").tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 180)
+
+            Menu {
+                Picker("撮り方", selection: $camera.burstInterval) {
+                    ForEach(CameraModel.burstIntervals, id: \.self) { interval in
+                        Text(Self.burstLabel(interval)).tag(interval)
+                    }
+                }
+            } label: {
+                Label(Self.burstLabel(camera.burstInterval), systemImage: "timer")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.15), in: Capsule())
+                    .foregroundStyle(.white)
+            }
+        }
+        .disabled(camera.isBursting || !camera.exposures.isEmpty)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+    }
+
+    private static func burstLabel(_ interval: Double) -> String {
+        if interval == 0 { return "手動" }
+        let seconds = interval < 1 ? String(format: "%.1f", interval) : String(format: "%.0f", interval)
+        return interval < CameraModel.fastBurstLimit
+            ? "\(seconds)秒ごと（1200万画素）"
+            : "\(seconds)秒ごと"
     }
 
     private func shiftMode(by step: Int) {

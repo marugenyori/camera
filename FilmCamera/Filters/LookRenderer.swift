@@ -19,7 +19,8 @@ enum LookRenderer {
         case .warmFlash: out = flash(image, depth: options.depth, subject: options.subjectDistance, warm: true)
         case .iwai: out = iwai(image, seed: options.grainSeed)
         case .cross: out = cross(image)
-        case .double: out = double(image, overlay: options.overlay, seed: options.grainSeed)
+        case .double: out = multiple(image, overlays: options.overlays,
+                                     total: options.exposureTotal, seed: options.grainSeed)
         }
         if options.dateStamp { out = stamp(date, on: out) }
         return out
@@ -210,19 +211,22 @@ enum LookRenderer {
 
     // MARK: - 多重露光
 
-    /// フィルムで同じコマに 2 回露光したように、1 枚目と今の像を「スクリーン」で重ねる
-    /// （明るい部分が足し合わさり、暗い部分にもう一方が透けて見える）。
-    /// 重ねると明るくなりすぎるので、それぞれ少し暗くしてから重ね、仕上げにフィルムの色をかける
-    private static func double(_ image: CIImage, overlay: CIImage?, seed: CGPoint) -> CIImage {
-        guard let overlay else { return film(image, seed: seed) }
+    /// フィルムで同じコマに何回も露光したように、先に撮った分と今の像を「スクリーン」で重ねる
+    /// （明るい部分が足し合わさり、暗い部分にはほかの像が透けて見える）。
+    /// 重ねるほど明るくなりすぎるので、枚数に応じて 1 枚ずつ暗くしてから重ね、仕上げにフィルムの色をかける
+    private static func multiple(_ image: CIImage, overlays: [CIImage], total: Int, seed: CGPoint) -> CIImage {
+        guard !overlays.isEmpty else { return film(image, seed: seed) }
         let extent = image.extent
-        let first = toSRGB(exposure(fill(overlay, into: extent), ev: -0.35))
-        let second = toSRGB(exposure(image, ev: -0.35))
-        let screen = CIFilter.screenBlendMode()
-        screen.inputImage = first
-        screen.backgroundImage = second
-        let combined = toLinear((screen.outputImage ?? second).cropped(to: extent))
-        return film(combined, seed: seed)
+        let ev = Float(-0.35 * log2(Double(max(total, 2))))
+        var combined = toSRGB(exposure(image, ev: ev))
+        for overlay in overlays {
+            let layer = toSRGB(exposure(fill(overlay, into: extent), ev: ev))
+            let screen = CIFilter.screenBlendMode()
+            screen.inputImage = layer
+            screen.backgroundImage = combined
+            combined = (screen.outputImage ?? combined).cropped(to: extent)
+        }
+        return film(toLinear(combined), seed: seed)
     }
 
     /// 縦横比を保ったまま extent いっぱいに広げ、はみ出しは中央で切る

@@ -31,19 +31,39 @@ final class CameraModel: NSObject, ObservableObject {
         didSet {
             UserDefaults.standard.set(mode.rawValue, forKey: "mode")
             if mode.usesDepth != oldValue.usesDepth { updateDepth() }
-            if mode != .double { discardFirstExposure() }
+            if mode != .double { discardExposures() }
         }
     }
 
-    /// 多重露光の 1 枚目（保存用のフル解像度。向きは適用済み）
-    @Published private(set) var firstExposure: CIImage?
-    /// 多重露光の 1 枚目を、プレビューに重ねる用に小さくしたもの
-    @Published private(set) var firstExposurePreview: CIImage?
+    // MARK: 多重露光
 
-    /// 多重露光の 1 枚目を捨てて、撮り直せるようにする
-    func discardFirstExposure() {
-        firstExposure = nil
-        firstExposurePreview = nil
+    /// 何枚重ねるか（2〜4）
+    @Published var exposureCount: Int {
+        didSet {
+            UserDefaults.standard.set(exposureCount, forKey: "exposureCount")
+            discardExposures()
+        }
+    }
+    /// 連続で撮る間隔（秒）。0 は 1 枚ずつ手動でシャッターを切る
+    @Published var burstInterval: Double {
+        didSet { UserDefaults.standard.set(burstInterval, forKey: "burstInterval") }
+    }
+    static let burstIntervals: [Double] = [0, 0.1, 0.3, 0.5, 1, 2]
+    /// この間隔より短い連射は、4800万画素では間に合わないので 1200万画素・速さ優先で撮る
+    static let fastBurstLimit: Double = 0.5
+
+    /// 撮り終えた分（保存用のフル解像度。向きは適用済み）
+    @Published private(set) var exposures: [CIImage] = []
+    /// 撮り終えた分を、プレビューに重ねる用に小さくしたもの
+    @Published private(set) var exposurePreviews: [CIImage] = []
+    /// 連射中か（途中でシャッターや撮り直しを受け付けない）
+    @Published private(set) var isBursting = false
+
+    /// 撮り終えた分を捨てて、最初から撮り直せるようにする
+    func discardExposures() {
+        guard !isBursting else { return }
+        exposures = []
+        exposurePreviews = []
     }
     @Published var dateStamp: Bool {
         didSet { UserDefaults.standard.set(dateStamp, forKey: "dateStamp") }
@@ -103,6 +123,9 @@ final class CameraModel: NSObject, ObservableObject {
         let defaults = UserDefaults.standard
         mode = LookMode(rawValue: defaults.string(forKey: "mode") ?? "") ?? .film
         dateStamp = defaults.bool(forKey: "dateStamp")
+        let count = defaults.integer(forKey: "exposureCount")
+        exposureCount = (2...4).contains(count) ? count : 2
+        burstInterval = defaults.double(forKey: "burstInterval")
         super.init()
     }
 
@@ -397,13 +420,34 @@ final class CameraModel: NSObject, ObservableObject {
 
     func capture() {
         guard status == .running, !isSaving else { return }
+        if mode == .double && burstInterval > 0 && exposures.isEmpty {
+            startBurst()
+            return
+        }
         isSaving = true
         shotCount += 1
+        shoot(fast: false)
+    }
 
+    /// 多重露光の連射：決めた間隔で、決めた枚数を続けて撮る（届いた順に重ねる）
+    private func startBurst() {
+        let count = exposureCount
+        let interval = burstInterval
+        let fast = interval < Self.fastBurstLimit
+        isSaving = true
+        isBursting = true
+        for index in 0..<count {
+            DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(index)) {
+                guard self.isBursting else { return }
+                self.shotCount += 1
+                self.shoot(fast: fast)
+            }
+        }
+    }
+
+    /// 1 枚撮る。fast は連射用（1200万画素・速さ優先）
+    private func shoot(fast: Bool) {
         var options = LookOptions(mode: mode, dateStamp: dateStamp)
-        // 多重露光：1 枚目は保存せずに取っておき、2 枚目を撮ったときに重ねて保存する
-        let isFirstExposure = mode == .double && firstExposure == nil
-        if mode == .double { options.overlay = firstExposure }
         let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
         let mirrored = position == .front
 
@@ -429,16 +473,20 @@ final class CameraModel: NSObject, ObservableObject {
                 }
             }
             let settings = AVCapturePhotoSettings()
-            settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
-            settings.photoQualityPrioritization = .quality
+            if fast {
+                settings.maxPhotoDimensions = self.fastPhotoDimensions()
+                settings.photoQualityPrioritization = .speed
+            } else {
+                settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
+                settings.photoQualityPrioritization = .quality
+            }
             if options.mode.usesDepth && !borrowDepth && self.photoOutput.isDepthDataDeliveryEnabled {
                 settings.isDepthDataDeliveryEnabled = true
                 settings.embedsDepthDataInPhoto = false
             }
             let processor = PhotoCaptureProcessor { [weak self] data, depth, distance in
                 self?.finishCapture(data: data, depth: depth, distance: distance,
-                                    options: options, isFirstExposure: isFirstExposure,
-                                    id: settings.uniqueID)
+                                    options: options, id: settings.uniqueID)
                 if borrowDepth {
                     // 撮り終わったら距離を測る設定に戻す（その間にモードが変わっていれば戻さない）
                     DispatchQueue.main.async {
@@ -449,6 +497,16 @@ final class CameraModel: NSObject, ObservableObject {
             self.inFlight[settings.uniqueID] = processor
             self.photoOutput.capturePhoto(with: settings, delegate: processor)
         }
+    }
+
+    /// 連射用の写真の大きさ（1200万画素前後。なければいちばん小さいもの）。sessionQueue で呼ぶ
+    private func fastPhotoDimensions() -> CMVideoDimensions {
+        let all = videoInput?.device.activeFormat.supportedMaxPhotoDimensions ?? []
+        let limit: Int32 = 4032 * 3024
+        return all.filter { $0.width * $0.height <= limit }
+            .max { $0.width * $0.height < $1.width * $1.height }
+            ?? all.min { $0.width * $0.height < $1.width * $1.height }
+            ?? photoOutput.maxPhotoDimensions
     }
 
     /// 背面の広角カメラ・最大解像度の設定に切り替え、露出が落ち着くまで少し待つ（sessionQueue で呼ぶ）
@@ -469,20 +527,21 @@ final class CameraModel: NSObject, ObservableObject {
     }
 
     private func finishCapture(data: Data?, depth: CIImage?, distance: CGFloat?,
-                               options: LookOptions, isFirstExposure: Bool, id: Int64) {
+                               options: LookOptions, id: Int64) {
         sessionQueue.async { self.inFlight[id] = nil }
 
         guard let data,
               let image = CIImage(data: data, options: [.applyOrientationProperty: true]) else {
             DispatchQueue.main.async {
+                self.isBursting = false
                 self.isSaving = false
                 self.message = "撮影に失敗しました"
             }
             return
         }
 
-        if isFirstExposure {
-            keepFirstExposure(image)
+        if options.mode == .double {
+            addExposure(image, options: options)
             return
         }
 
@@ -491,7 +550,11 @@ final class CameraModel: NSObject, ObservableObject {
             options.depth = depth
             options.subjectDistance = distance
         }
+        renderAndSave(image, options: options)
+    }
 
+    /// フィルタをかけて写真アプリに保存する
+    private func renderAndSave(_ image: CIImage, options: LookOptions) {
         processingQueue.async {
             // 撮影日時やカメラ・レンズの情報を残す（向きは適用済みなので「そのまま」にする）
             var properties = image.properties
@@ -519,24 +582,35 @@ final class CameraModel: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 self.lastPhoto = thumbnail
                 self.isSaving = false
-                if options.mode == .double { self.discardFirstExposure() }
             }
             self.saveToLibrary(file.data, type: file.type)
         }
     }
 
-    /// 多重露光の 1 枚目を取っておく。プレビューで毎コマ重ねるので、小さくして画像にしておく
-    private func keepFirstExposure(_ image: CIImage) {
+    /// 多重露光の 1 枚を取っておき、枚数がそろったら重ねて保存する。
+    /// プレビューで毎コマ重ねるので、小さくした画像も作っておく
+    private func addExposure(_ image: CIImage, options: LookOptions) {
         processingQueue.async {
             let long = max(image.extent.width, image.extent.height)
             let scale = min(1, 1600 / max(long, 1))
             let small = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             let preview = self.ciContext.createCGImage(small, from: small.extent).map { CIImage(cgImage: $0) }
             DispatchQueue.main.async {
-                self.firstExposure = image
-                self.firstExposurePreview = preview
-                self.isSaving = false
-                self.message = "1枚目を撮りました。重ねたいものを写して、もう一度シャッターを"
+                self.exposures.append(image)
+                if let preview { self.exposurePreviews.append(preview) }
+                let total = self.exposureCount
+                if self.exposures.count >= total {
+                    var options = options
+                    options.overlays = Array(self.exposures.dropLast())
+                    options.exposureTotal = self.exposures.count
+                    let last = self.exposures[self.exposures.count - 1]
+                    self.isBursting = false
+                    self.discardExposures()
+                    self.renderAndSave(last, options: options)
+                } else if !self.isBursting {
+                    self.isSaving = false
+                    self.message = "\(self.exposures.count) / \(total) 枚。重ねたいものを写して、もう一度シャッターを"
+                }
             }
         }
     }

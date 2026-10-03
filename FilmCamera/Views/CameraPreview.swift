@@ -70,7 +70,8 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
 
         var options = LookOptions(mode: model.mode, dateStamp: model.dateStamp)
         if options.mode == .double {
-            options.overlay = model.firstExposurePreview
+            options.overlays = model.exposurePreviews
+            options.exposureTotal = model.exposureCount
         }
         if options.mode.usesDepth {
             options.depth = model.latestDepth

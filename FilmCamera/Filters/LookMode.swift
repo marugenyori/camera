@@ -33,7 +33,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .warmFlash: return "暖かい色のフラッシュ写真"
         case .iwai: return "淡い水色・白飛び・やわらかな光"
         case .cross: return "暖色と寒色がぶつかる、濃く硬い色"
-        case .double: return "2回シャッターを切って重ねる"
+        case .double: return "何枚かを 1 枚に重ねる"
         }
     }
 }
@@ -46,8 +46,10 @@ struct LookOptions {
     var depth: CIImage? = nil
     /// 主な被写体までの距離（メートル）。フラッシュの光がちょうどよく当たる距離になる
     var subjectDistance: CGFloat? = nil
-    /// 多重露光の 1 枚目（向きは適用済み）。あれば今の像に重ねる
-    var overlay: CIImage? = nil
+    /// 多重露光で先に撮った分（向きは適用済み）。今の像に重ねる
+    var overlays: [CIImage] = []
+    /// 多重露光で最終的に重ねる枚数（重ねすぎて白くならないよう、1 枚ずつの暗さを決める）
+    var exposureTotal: Int = 2
     /// 粒子（グレイン）の模様をずらす量。毎フレーム変えると粒子が動いて見える
     var grainSeed: CGPoint = CGPoint(x: CGFloat.random(in: 0..<512), y: CGFloat.random(in: 0..<512))
 }
