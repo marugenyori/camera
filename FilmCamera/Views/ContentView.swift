@@ -266,7 +266,7 @@ struct ContentView: View {
         }
     }
 
-    /// モードを選ぶ 3×3 のキー（色見本だけ。名前は表示窓に出る）
+    /// モードを選ぶ 3×3 のキー（略号だけ。名前は表示窓に出る）
     private var keypad: some View {
         let modes = LookMode.allCases
         return Grid(horizontalSpacing: 8, verticalSpacing: 8) {
@@ -289,8 +289,8 @@ struct ContentView: View {
         return Button {
             withAnimation(.snappy(duration: 0.2)) { camera.mode = mode }
         } label: {
-            ModeSwatch(mode: mode)
-                .frame(width: 24, height: 6)
+            Text(mode.code)
+                .font(.caption2.weight(.heavy).monospaced())
         }
         .buttonStyle(PanelKeyStyle(lit: lit))
         .frame(width: Panel.keySize, height: Panel.keySize)
@@ -585,21 +585,21 @@ private extension View {
     }
 }
 
-// MARK: - モードの見た目（色見本）
+// MARK: - モードの略号
 
 extension LookMode {
-    /// そのモードの写りを表す色（参考写真から拾った代表色）
-    var swatch: [Color] {
+    /// モードのキーに出す 4 文字の略号
+    var code: String {
         switch self {
-        case .film: return [Color(hex: 0xEBD6B0), Color(hex: 0xD99A62), Color(hex: 0x76876A)]
-        case .flash: return [Color(hex: 0xF5F2EC), Color(hex: 0xE0A688), Color(hex: 0x1A1D24)]
-        case .warmFlash: return [Color(hex: 0xFFE0A8), Color(hex: 0xE8843E), Color(hex: 0x2B1A10)]
-        case .iwai: return [Color(hex: 0xE4F4F8), Color(hex: 0x5EC2E6), Color(hex: 0x1B2A4E)]
-        case .cross: return [Color(hex: 0xF2C14E), Color(hex: 0xC2405A), Color(hex: 0x2B6F8A)]
-        case .harinezumi: return [Color(hex: 0xD23C96), Color(hex: 0x5DD13A), Color(hex: 0x4A3AA6)]
-        case .warmHarinezumi: return [Color(hex: 0xE6A0B5), Color(hex: 0xD88E2C), Color(hex: 0x1E3D8C)]
-        case .double: return [Color(hex: 0xDADADA), Color(hex: 0x8E8E8E), Color(hex: 0x3C3C3C)]
-        case .contact: return [Color(hex: 0xEBD6B0), Color(hex: 0x5EC2E6), Color(hex: 0xD23C96)]
+        case .film: return "FILM"
+        case .flash: return "FLSH"
+        case .warmFlash: return "WFLS"
+        case .iwai: return "IWAI"
+        case .cross: return "XPRO"
+        case .harinezumi: return "HARI"
+        case .warmHarinezumi: return "WHRI"
+        case .double: return "MULT"
+        case .contact: return "SPLT"
         }
     }
 }
@@ -613,20 +613,6 @@ private extension Color {
 }
 
 // MARK: - 部品
-
-/// モードの色見本（細い帯）
-private struct ModeSwatch: View {
-    let mode: LookMode
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(mode.swatch.enumerated()), id: \.offset) { _, color in
-                color
-            }
-        }
-        .clipShape(Capsule())
-    }
-}
 
 /// ファインダーの枠：写真の範囲（縦 4:3）の四隅に細いかぎ括弧、必要なら三分割の線
 private struct ViewfinderFrame: View {
