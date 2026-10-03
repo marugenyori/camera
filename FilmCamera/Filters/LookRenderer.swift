@@ -23,9 +23,83 @@ enum LookRenderer {
         case .warmHarinezumi: out = warmHarinezumi(image)
         case .double: out = multiple(image, overlays: options.overlays,
                                      total: options.exposureTotal, seed: options.grainSeed)
+        case .contact: out = contactSheet(image, tileLongSide: options.contactTileLongSide,
+                                          seed: options.grainSeed)
         }
         if options.dateStamp { out = stamp(date, on: out) }
         return out
+    }
+
+    // MARK: - 6分割（1 回のシャッターで 6 つのフィルタ）
+
+    /// 6分割に並べるモードと順番（左上から右へ、2 列 × 3 段）
+    static let contactModes: [LookMode] = [.film, .flash, .iwai, .cross, .harinezumi, .warmHarinezumi]
+
+    /// 同じ 1 枚に 6 つのフィルタをかけ、2 列 × 3 段に並べて 1 枚にする（フィルムのコンタクトシート風）
+    private static func contactSheet(_ image: CIImage, tileLongSide: CGFloat?, seed: CGPoint) -> CIImage {
+        let long = longSide(image.extent)
+        guard long > 0 else { return image }
+        let target = tileLongSide ?? long / 3
+        let scale = min(1, target / long)
+        // 大きく縮めるのでギザギザが出ないよう、画質の良い縮小（Lanczos）を使う
+        let lanczos = CIFilter.lanczosScaleTransform()
+        lanczos.inputImage = image
+        lanczos.scale = Float(scale)
+        lanczos.aspectRatio = 1
+        let scaled = lanczos.outputImage ?? image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let tile = scaled.transformed(by: CGAffineTransform(
+            translationX: -scaled.extent.minX, y: -scaled.extent.minY))
+        let w = tile.extent.width
+        let h = tile.extent.height
+        let gap = (w * 0.025).rounded()
+        let columns = 2
+        let rows = 3
+        let sheetRect = CGRect(x: 0, y: 0,
+                               width: CGFloat(columns) * w + CGFloat(columns + 1) * gap,
+                               height: CGFloat(rows) * h + CGFloat(rows + 1) * gap)
+        var sheet = CIImage(color: CIColor(red: 0.06, green: 0.06, blue: 0.06)).cropped(to: sheetRect)
+
+        for (index, mode) in contactModes.enumerated() {
+            var options = LookOptions(mode: mode, dateStamp: false)
+            options.grainSeed = seed
+            var look = apply(tile, options: options)
+            look = look.composited(over: label(mode.title, in: look.extent))
+            let column = index % columns
+            let row = index / columns
+            // Core Image は下が原点なので、上の段ほど y が大きい
+            let x = gap + CGFloat(column) * (w + gap)
+            let y = gap + CGFloat(rows - 1 - row) * (h + gap)
+            let placed = look.transformed(by: CGAffineTransform(translationX: x, y: y))
+            sheet = placed.composited(over: sheet)
+        }
+        return sheet.cropped(to: sheetRect)
+    }
+
+    /// 1 コマの左下に置く、モード名の小さな白い文字
+    private static func label(_ text: String, in extent: CGRect) -> CIImage {
+        let generator = CIFilter.textImageGenerator()
+        generator.text = text
+        generator.fontName = "HiraginoSans-W6"
+        generator.fontSize = Float(shortSide(extent) * 0.06)
+        generator.scaleFactor = 1
+        guard let glyphs = generator.outputImage else { return CIImage.empty() }
+        let white = CIImage(color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.92)).cropped(to: glyphs.extent)
+        let colored = CIFilter.blendWithAlphaMask()
+        colored.inputImage = white
+        colored.backgroundImage = CIImage.empty()
+        colored.maskImage = glyphs
+        guard let textImage = colored.outputImage else { return CIImage.empty() }
+        let margin = shortSide(extent) * 0.04
+        let moved = textImage.transformed(by: CGAffineTransform(
+            translationX: extent.minX + margin, y: extent.minY + margin))
+        // 明るい写真でも読めるよう、うっすら影を付ける
+        let shadow = CIFilter.blendWithAlphaMask()
+        shadow.inputImage = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.6)).cropped(to: moved.extent)
+        shadow.backgroundImage = CIImage.empty()
+        shadow.maskImage = moved
+        let soft = (shadow.outputImage ?? CIImage.empty())
+            .applyingGaussianBlur(sigma: Double(shortSide(extent) * 0.006))
+        return moved.composited(over: soft)
     }
 
     // MARK: - フィルム風（写ルンです・ネガフィルム）

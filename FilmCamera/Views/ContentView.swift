@@ -117,7 +117,7 @@ struct ContentView: View {
     private var preview: some View {
         CameraPreview(model: camera)
             .overlay {
-                if showGrid { GridOverlay() }
+                if showGrid && camera.mode != .contact { GridOverlay() }
             }
             .overlay { statusOverlay }
             .overlay(alignment: .top) {

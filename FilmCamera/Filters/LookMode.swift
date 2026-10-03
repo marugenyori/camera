@@ -11,6 +11,7 @@ enum LookMode: String, CaseIterable, Identifiable {
     case harinezumi
     case warmHarinezumi
     case double
+    case contact
 
     var id: String { rawValue }
 
@@ -24,6 +25,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .harinezumi: return "ハリネズミ"
         case .warmHarinezumi: return "暖ハリネズミ"
         case .double: return "多重露光"
+        case .contact: return "6分割"
         }
     }
 
@@ -40,6 +42,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .harinezumi: return "トイデジ風：白飛び・マゼンタ・どぎつい緑"
         case .warmHarinezumi: return "トイデジ風：琥珀色・濃い青空・暗い四隅"
         case .double: return "何枚かを 1 枚に重ねる"
+        case .contact: return "6つのフィルタで同時に撮って1枚に"
         }
     }
 }
@@ -56,6 +59,8 @@ struct LookOptions {
     var overlays: [CIImage] = []
     /// 多重露光で最終的に重ねる枚数（重ねすぎて白くならないよう、1 枚ずつの暗さを決める）
     var exposureTotal: Int = 2
+    /// 6分割で、1 コマの長い辺（ピクセル）。nil なら元の画像の 1/3（プレビュー・動画用）
+    var contactTileLongSide: CGFloat? = nil
     /// 粒子（グレイン）の模様をずらす量。毎フレーム変えると粒子が動いて見える
     var grainSeed: CGPoint = CGPoint(x: CGFloat.random(in: 0..<512), y: CGFloat.random(in: 0..<512))
 }

@@ -811,6 +811,8 @@ final class CameraModel: NSObject, ObservableObject {
             options.depth = depth
             options.subjectDistance = distance
         }
+        // 6分割は 1 コマ 2000px（全体で約 3100×6200）にする
+        if options.mode == .contact { options.contactTileLongSide = 2000 }
         renderAndSave(image, options: options)
     }
 
@@ -977,15 +979,16 @@ extension CameraModel: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAu
                 self.frameLock.unlock()
             }
             guard var options = self.recordingOptions else { return }
-            if self.recorder == nil {
-                self.recorder = VideoRecorder(size: frame.extent.size, transform: self.recordingTransform,
-                                              withAudio: self.recordingWithAudio)
-            }
             if options.mode.usesDepth {
                 options.depth = depth
                 options.subjectDistance = subject
             }
             let look = LookRenderer.apply(frame, options: options)
+            // 動画の大きさはフィルタ後の大きさ（6分割は元と縦横比が変わる）
+            if self.recorder == nil {
+                self.recorder = VideoRecorder(size: look.extent.size, transform: self.recordingTransform,
+                                              withAudio: self.recordingWithAudio)
+            }
             self.recorder?.append(look, at: time, context: self.videoContext)
             self.lastRecordedFrame = look
         }
