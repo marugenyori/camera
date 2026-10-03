@@ -388,11 +388,22 @@ final class CameraModel: NSObject, ObservableObject {
         isSaving = true
         shotCount += 1
 
-        let options = LookOptions(mode: mode, dateStamp: dateStamp)
+        var options = LookOptions(mode: mode, dateStamp: dateStamp)
         let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
         let mirrored = position == .front
 
+        // フラッシュ：距離を測れる設定だと 1200万画素でしか撮れないので、
+        // 直前のプレビューで測った距離を借りて、撮影の瞬間だけ 4800万画素の設定に切り替える
+        let borrowDepth = options.mode.usesDepth && isDepthActive && position == .back
+        if borrowDepth, let depth = latestDepth {
+            // プレビューは縦向き（90°）。写真の向き（angle）に合わせて回す
+            let radians = -(angle - 90) * .pi / 180
+            options.depth = depth.transformed(by: CGAffineTransform(rotationAngle: radians))
+            options.subjectDistance = subjectDistance
+        }
+
         sessionQueue.async {
+            if borrowDepth { self.switchToFullResolutionForCapture() }
             if let connection = self.photoOutput.connection(with: .video) {
                 if connection.isVideoRotationAngleSupported(angle) {
                     connection.videoRotationAngle = angle
@@ -405,16 +416,39 @@ final class CameraModel: NSObject, ObservableObject {
             let settings = AVCapturePhotoSettings()
             settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
             settings.photoQualityPrioritization = .quality
-            if options.mode.usesDepth && self.photoOutput.isDepthDataDeliveryEnabled {
+            if options.mode.usesDepth && !borrowDepth && self.photoOutput.isDepthDataDeliveryEnabled {
                 settings.isDepthDataDeliveryEnabled = true
                 settings.embedsDepthDataInPhoto = false
             }
             let processor = PhotoCaptureProcessor { [weak self] data, depth, distance in
                 self?.finishCapture(data: data, depth: depth, distance: distance,
                                     options: options, id: settings.uniqueID)
+                if borrowDepth {
+                    // 撮り終わったら距離を測る設定に戻す（その間にモードが変わっていれば戻さない）
+                    DispatchQueue.main.async {
+                        if self?.mode.usesDepth == true { self?.updateDepth() }
+                    }
+                }
             }
             self.inFlight[settings.uniqueID] = processor
             self.photoOutput.capturePhoto(with: settings, delegate: processor)
+        }
+    }
+
+    /// 背面の広角カメラ・最大解像度の設定に切り替え、露出が落ち着くまで少し待つ（sessionQueue で呼ぶ）
+    private func switchToFullResolutionForCapture() {
+        session.beginConfiguration()
+        if let device = useCamera(at: .back, wantDepth: false) {
+            applyFormat(for: device, wantDepth: false)
+            setUpConnections(for: device)
+        }
+        session.commitConfiguration()
+        refreshPhotoDepthDelivery()
+        guard let device = videoInput?.device else { return }
+        let deadline = Date().addingTimeInterval(1.0)
+        Thread.sleep(forTimeInterval: 0.15)
+        while device.isAdjustingExposure && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
         }
     }
 
@@ -432,8 +466,10 @@ final class CameraModel: NSObject, ObservableObject {
         }
 
         var options = options
-        options.depth = depth
-        options.subjectDistance = distance
+        if let depth {
+            options.depth = depth
+            options.subjectDistance = distance
+        }
 
         processingQueue.async {
             // 撮影日時やカメラ・レンズの情報を残す（向きは適用済みなので「そのまま」にする）
