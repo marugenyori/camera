@@ -5,6 +5,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var flashOpacity = 0.0
     @State private var showingPhoto = false
+    @State private var showingContactSettings = false
     @AppStorage("showGrid") private var showGrid = false
 
     var body: some View {
@@ -18,6 +19,15 @@ struct ContentView: View {
                     VStack(spacing: 10) {
                         if camera.mode == .double && camera.captureKind == .photo && !camera.isDual {
                             exposureOptions
+                        }
+                        if camera.mode == .contact && !camera.isDual {
+                            Button {
+                                showingContactSettings = true
+                            } label: {
+                                Label("\(camera.contactLayout.title) ・ フィルタと並べ方", systemImage: "square.grid.2x2")
+                                    .chipStyle()
+                            }
+                            .disabled(camera.isRecording)
                         }
                         if !camera.isDual { zoomBar }
                     }
@@ -60,6 +70,10 @@ struct ContentView: View {
         .sensoryFeedback(.impact(weight: .medium), trigger: camera.isRecording)
         // ズーム中は 0.1× ごとにカチカチと手応えを返す（ズームリングの目盛りのように）
         .sensoryFeedback(.selection, trigger: Int((camera.zoom * 10).rounded()))
+        .sheet(isPresented: $showingContactSettings) {
+            ContactSettingsView(camera: camera)
+                .presentationDetents([.medium, .large])
+        }
         .sheet(isPresented: $showingPhoto) {
             if let photo = camera.lastPhoto {
                 PhotoSheet(image: photo)
@@ -539,5 +553,106 @@ private struct GridOverlay: View {
             .shadow(color: .black.opacity(0.4), radius: 0.5)
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// 分割の設定：並べ方と、コマごとのフィルタを選ぶ
+private struct ContactSettingsView: View {
+    @ObservedObject var camera: CameraModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("並べ方（横×縦）") {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 5), spacing: 14) {
+                        ForEach(ContactLayout.allCases) { layout in
+                            Button {
+                                camera.contactLayout = layout
+                            } label: {
+                                VStack(spacing: 6) {
+                                    LayoutIcon(layout: layout, selected: camera.contactLayout == layout)
+                                        .frame(width: 40, height: 40)
+                                    Text(layout.title)
+                                        .font(.caption2.weight(.semibold).monospacedDigit())
+                                        .foregroundStyle(camera.contactLayout == layout
+                                                         ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.secondary))
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+
+                Section {
+                    ForEach(0..<camera.contactLayout.count, id: \.self) { index in
+                        Picker(selection: slotBinding(index)) {
+                            ForEach(ContactLayout.selectableModes) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        } label: {
+                            Text(slotName(index))
+                                .monospacedDigit()
+                        }
+                    }
+                } header: {
+                    Text("コマごとのフィルタ")
+                } footer: {
+                    Text("左上から右へ、上の段から順に並びます。同じフィルタを何回使ってもかまいません。")
+                }
+
+                Section {
+                    Toggle("各コマにフィルタ名を入れる", isOn: $camera.contactLabels)
+                }
+            }
+            .navigationTitle("分割の設定")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func slotBinding(_ index: Int) -> Binding<LookMode> {
+        Binding(
+            get: { camera.contactSlots[index] },
+            set: { camera.contactSlots[index] = $0 }
+        )
+    }
+
+    /// 「1段目・左」のような、コマの場所の名前
+    private func slotName(_ index: Int) -> String {
+        let layout = camera.contactLayout
+        let row = index / layout.columns + 1
+        let column = index % layout.columns + 1
+        return layout.columns == 1 ? "\(row)段目" : "\(row)段目・\(column)列目"
+    }
+}
+
+/// 並べ方の小さな絵
+private struct LayoutIcon: View {
+    let layout: ContactLayout
+    let selected: Bool
+
+    var body: some View {
+        GeometryReader { geo in
+            let gap: CGFloat = 2
+            let cellW = (geo.size.width - gap * CGFloat(layout.columns - 1)) / CGFloat(layout.columns)
+            let cellH = (geo.size.height - gap * CGFloat(layout.rows - 1)) / CGFloat(layout.rows)
+            VStack(spacing: gap) {
+                ForEach(0..<layout.rows, id: \.self) { _ in
+                    HStack(spacing: gap) {
+                        ForEach(0..<layout.columns, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(selected ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.secondary.opacity(0.5)))
+                                .frame(width: cellW, height: cellH)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

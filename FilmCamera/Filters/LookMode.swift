@@ -25,7 +25,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .harinezumi: return "ハリネズミ"
         case .warmHarinezumi: return "暖ハリネズミ"
         case .double: return "多重露光"
-        case .contact: return "6分割"
+        case .contact: return "分割"
         }
     }
 
@@ -42,7 +42,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .harinezumi: return "トイデジ風：白飛び・マゼンタ・どぎつい緑"
         case .warmHarinezumi: return "トイデジ風：琥珀色・濃い青空・暗い四隅"
         case .double: return "何枚かを 1 枚に重ねる"
-        case .contact: return "6つのフィルタで同時に撮って1枚に"
+        case .contact: return "いくつものフィルタで同時に撮って1枚に"
         }
     }
 }
@@ -59,10 +59,51 @@ struct LookOptions {
     var overlays: [CIImage] = []
     /// 多重露光で最終的に重ねる枚数（重ねすぎて白くならないよう、1 枚ずつの暗さを決める）
     var exposureTotal: Int = 2
-    /// 6分割で、1 コマの長い辺（ピクセル）。nil なら元の画像の 1/3（プレビュー・動画用）
+    /// 分割で、1 コマの長い辺（ピクセル）。nil なら元の画像に収まる大きさ（プレビュー・動画用）
     var contactTileLongSide: CGFloat? = nil
+    /// 分割の並べ方と、コマごとのフィルタ（左上から右へ。足りない分は前から繰り返す）
+    var contactLayout: ContactLayout = .c2x3
+    var contactModes: [LookMode] = ContactLayout.defaultModes
+    /// 分割の各コマに、フィルタ名を小さく入れるか
+    var contactLabels = true
     /// 前後同時撮影の内カメラの画像。あれば同じフィルタをかけて左上に小さく重ねる
     var front: CIImage? = nil
     /// 粒子（グレイン）の模様をずらす量。毎フレーム変えると粒子が動いて見える
     var grainSeed: CGPoint = CGPoint(x: CGFloat.random(in: 0..<512), y: CGFloat.random(in: 0..<512))
+}
+
+/// 分割の並べ方（横に何コマ × 縦に何コマ）
+enum ContactLayout: String, CaseIterable, Identifiable {
+    case c2x1, c1x2, c2x2, c3x1, c1x3, c3x2, c2x3, c3x3, c4x2, c2x4
+
+    var id: String { rawValue }
+
+    var columns: Int {
+        switch self {
+        case .c1x2, .c1x3: return 1
+        case .c2x1, .c2x2, .c2x3, .c2x4: return 2
+        case .c3x1, .c3x2, .c3x3: return 3
+        case .c4x2: return 4
+        }
+    }
+
+    var rows: Int {
+        switch self {
+        case .c2x1, .c3x1: return 1
+        case .c1x2, .c2x2, .c3x2, .c4x2: return 2
+        case .c1x3, .c2x3, .c3x3: return 3
+        case .c2x4: return 4
+        }
+    }
+
+    var count: Int { columns * rows }
+
+    /// 「横×縦」の表記
+    var title: String { "\(columns)×\(rows)" }
+
+    /// 分割で選べるフィルタ（重ねたり分割したりするモードは除く）
+    static let selectableModes: [LookMode] = [.film, .flash, .warmFlash, .iwai, .cross, .harinezumi, .warmHarinezumi]
+
+    static let defaultModes: [LookMode] = [.film, .flash, .iwai, .cross, .harinezumi, .warmHarinezumi,
+                                           .warmFlash, .film, .iwai]
 }

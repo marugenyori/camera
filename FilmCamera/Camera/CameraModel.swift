@@ -82,6 +82,29 @@ final class CameraModel: NSObject, ObservableObject {
     @Published private(set) var isRecording = false
     @Published private(set) var recordingStartedAt: Date?
 
+    // MARK: 分割
+
+    @Published var contactLayout: ContactLayout {
+        didSet { UserDefaults.standard.set(contactLayout.rawValue, forKey: "contactLayout") }
+    }
+    /// コマごとのフィルタ（いちばん多い並べ方の分まで持っておく）
+    @Published var contactSlots: [LookMode] {
+        didSet { UserDefaults.standard.set(contactSlots.map(\.rawValue), forKey: "contactSlots") }
+    }
+    @Published var contactLabels: Bool {
+        didSet { UserDefaults.standard.set(contactLabels, forKey: "contactLabels") }
+    }
+    static let maxContactSlots = ContactLayout.allCases.map(\.count).max() ?? 9
+
+    /// 今の設定でフィルタをかけるときの設定（距離や重ねる画像は呼ぶ側で足す）
+    var baseOptions: LookOptions {
+        var options = baseOptions
+        options.contactLayout = contactLayout
+        options.contactModes = Array(contactSlots.prefix(contactLayout.count))
+        options.contactLabels = contactLabels
+        return options
+    }
+
     // MARK: 前後同時撮影
 
     /// 外カメラと内カメラを同時に使うか（オンの間はふだんのセッションを止め、マルチカメラに切り替える）
@@ -194,6 +217,14 @@ final class CameraModel: NSObject, ObservableObject {
         exposureCount = (2...4).contains(count) ? count : 2
         burstInterval = defaults.double(forKey: "burstInterval")
         captureKind = CaptureKind(rawValue: defaults.string(forKey: "captureKind") ?? "") ?? .photo
+        contactLayout = ContactLayout(rawValue: defaults.string(forKey: "contactLayout") ?? "") ?? .c2x3
+        var slots = (defaults.stringArray(forKey: "contactSlots") ?? []).compactMap(LookMode.init(rawValue:))
+        let fallback = ContactLayout.defaultModes + ContactLayout.defaultModes
+        while slots.count < (ContactLayout.allCases.map(\.count).max() ?? 9) {
+            slots.append(fallback[slots.count % fallback.count])
+        }
+        contactSlots = slots
+        contactLabels = defaults.object(forKey: "contactLabels") as? Bool ?? true
         super.init()
         dual.onFrame = { [weak self] frame, isBack in
             guard let self else { return }
@@ -627,7 +658,8 @@ final class CameraModel: NSObject, ObservableObject {
     /// 撮影中の画面と同じフィルタをかけた映像を録画する（多重露光はフィルムの色で録る）
     func startRecording() {
         guard status == .running, !isRecording, !isSaving else { return }
-        let options = LookOptions(mode: mode == .double ? .film : mode, dateStamp: dateStamp)
+        var options = baseOptions
+        if options.mode == .double { options.mode = .film }
         // 端末を横にして撮ったら、横向きで再生されるようにする
         let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
         let transform = CGAffineTransform(rotationAngle: (angle - 90) * .pi / 180)
@@ -767,7 +799,7 @@ final class CameraModel: NSObject, ObservableObject {
 
     /// 1 枚撮る。fast は連射用（1200万画素・速さ優先）
     private func shoot(fast: Bool) {
-        var options = LookOptions(mode: mode, dateStamp: dateStamp)
+        var options = baseOptions
         let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
         let mirrored = position == .front
 
@@ -833,7 +865,7 @@ final class CameraModel: NSObject, ObservableObject {
     private func captureDual() {
         isSaving = true
         shotCount += 1
-        var options = LookOptions(mode: mode, dateStamp: dateStamp)
+        var options = baseOptions
         let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
         sessionQueue.async {
             self.dual.capture(angle: angle) { back, front in
@@ -891,8 +923,12 @@ final class CameraModel: NSObject, ObservableObject {
             options.depth = depth
             options.subjectDistance = distance
         }
-        // 6分割は 1 コマ 2000px（全体で約 3100×6200）にする
-        if options.mode == .contact { options.contactTileLongSide = 2000 }
+        // 分割は、並べた全体の長い辺が約 6000px になるようにコマの大きさを決める（1 コマは最大 4000px）
+        if options.mode == .contact {
+            let layout = options.contactLayout
+            let tileLong = 24000 / CGFloat(max(3 * layout.columns, 4 * layout.rows))
+            options.contactTileLongSide = min(4000, tileLong)
+        }
         renderAndSave(image, options: options)
     }
 

@@ -39,8 +39,7 @@ enum LookRenderer {
         case .warmHarinezumi: out = warmHarinezumi(image)
         case .double: out = multiple(image, overlays: options.overlays,
                                      total: options.exposureTotal, seed: options.grainSeed)
-        case .contact: out = contactSheet(image, tileLongSide: options.contactTileLongSide,
-                                          seed: options.grainSeed)
+        case .contact: out = contactSheet(image, options: options)
         }
         if options.dateStamp { out = stamp(date, on: out) }
         return out
@@ -96,16 +95,17 @@ enum LookRenderer {
         return generator.outputImage?.cropped(to: rect) ?? CIImage.empty()
     }
 
-    // MARK: - 6分割（1 回のシャッターで 6 つのフィルタ）
+    // MARK: - 分割（1 回のシャッターで、いくつものフィルタ）
 
-    /// 6分割に並べるモードと順番（左上から右へ、2 列 × 3 段）
-    static let contactModes: [LookMode] = [.film, .flash, .iwai, .cross, .harinezumi, .warmHarinezumi]
-
-    /// 同じ 1 枚に 6 つのフィルタをかけ、2 列 × 3 段に並べて 1 枚にする（フィルムのコンタクトシート風）
-    private static func contactSheet(_ image: CIImage, tileLongSide: CGFloat?, seed: CGPoint) -> CIImage {
+    /// 同じ 1 枚にコマごとのフィルタをかけ、指定の並べ方で 1 枚にする（フィルムのコンタクトシート風）
+    private static func contactSheet(_ image: CIImage, options: LookOptions) -> CIImage {
         let long = longSide(image.extent)
         guard long > 0 else { return image }
-        let target = tileLongSide ?? long / 3
+        let columns = options.contactLayout.columns
+        let rows = options.contactLayout.rows
+        let modes = options.contactModes.isEmpty ? ContactLayout.defaultModes : options.contactModes
+        // 指定がなければ、並べた全体が元の画像くらいの大きさに収まるようにする（プレビュー・動画用）
+        let target = options.contactTileLongSide ?? long / CGFloat(max(columns, rows))
         let scale = min(1, target / long)
         // 大きく縮めるのでギザギザが出ないよう、画質の良い縮小（Lanczos）を使う
         let lanczos = CIFilter.lanczosScaleTransform()
@@ -117,26 +117,26 @@ enum LookRenderer {
             translationX: -scaled.extent.minX, y: -scaled.extent.minY))
         let w = tile.extent.width
         let h = tile.extent.height
-        let gap = (w * 0.025).rounded()
-        let columns = 2
-        let rows = 3
+        let gap = (min(w, h) * 0.025).rounded()
         let sheetRect = CGRect(x: 0, y: 0,
                                width: CGFloat(columns) * w + CGFloat(columns + 1) * gap,
                                height: CGFloat(rows) * h + CGFloat(rows + 1) * gap)
         var sheet = CIImage(color: CIColor(red: 0.06, green: 0.06, blue: 0.06)).cropped(to: sheetRect)
 
-        for (index, mode) in contactModes.enumerated() {
-            var options = LookOptions(mode: mode, dateStamp: false)
-            options.grainSeed = seed
-            var look = apply(tile, options: options)
-            look = look.composited(over: label(mode.title, in: look.extent))
+        for index in 0..<(columns * rows) {
+            let mode = modes[index % modes.count]
+            var tileOptions = LookOptions(mode: mode, dateStamp: false)
+            tileOptions.grainSeed = options.grainSeed
+            var look = apply(tile, options: tileOptions)
+            if options.contactLabels {
+                look = look.composited(over: label(mode.title, in: look.extent))
+            }
             let column = index % columns
             let row = index / columns
             // Core Image は下が原点なので、上の段ほど y が大きい
             let x = gap + CGFloat(column) * (w + gap)
             let y = gap + CGFloat(rows - 1 - row) * (h + gap)
-            let placed = look.transformed(by: CGAffineTransform(translationX: x, y: y))
-            sheet = placed.composited(over: sheet)
+            sheet = look.transformed(by: CGAffineTransform(translationX: x, y: y)).composited(over: sheet)
         }
         return sheet.cropped(to: sheetRect)
     }

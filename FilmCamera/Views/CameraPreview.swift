@@ -68,7 +68,7 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
         let shrink = min(1, size.width / origin.extent.width, size.height / origin.extent.height)
         let small = origin.transformed(by: CGAffineTransform(scaleX: shrink, y: shrink))
 
-        var options = LookOptions(mode: model.mode, dateStamp: model.dateStamp)
+        var options = model.baseOptions
         if options.mode == .double {
             options.overlays = model.exposurePreviews
             options.exposureTotal = model.exposureCount
