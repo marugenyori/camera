@@ -60,6 +60,7 @@ final class CameraModel: NSObject, ObservableObject {
     private let frameLock = NSLock()
     private var _latestFrame: CIImage?
     private var _latestDepth: CIImage?
+    private var _subjectDistance: CGFloat?
     /// 距離の画像を接続側で縦向きにできたか（できなければ自分で回す）
     private var _depthRotatedByConnection = false
 
@@ -75,6 +76,13 @@ final class CameraModel: NSObject, ObservableObject {
         frameLock.lock()
         defer { frameLock.unlock() }
         return _latestDepth
+    }
+
+    /// 画面中央にあるもの（主な被写体）までの距離（メートル）。フラッシュの強さをこの距離に合わせる
+    var subjectDistance: CGFloat? {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        return _subjectDistance
     }
 
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
@@ -193,6 +201,7 @@ final class CameraModel: NSObject, ObservableObject {
         if !depthOn {
             frameLock.lock()
             _latestDepth = nil
+            _subjectDistance = nil
             frameLock.unlock()
         }
         DispatchQueue.main.async { self.isDepthActive = depthOn }
@@ -400,15 +409,17 @@ final class CameraModel: NSObject, ObservableObject {
                 settings.isDepthDataDeliveryEnabled = true
                 settings.embedsDepthDataInPhoto = false
             }
-            let processor = PhotoCaptureProcessor { [weak self] data, depth in
-                self?.finishCapture(data: data, depth: depth, options: options, id: settings.uniqueID)
+            let processor = PhotoCaptureProcessor { [weak self] data, depth, distance in
+                self?.finishCapture(data: data, depth: depth, distance: distance,
+                                    options: options, id: settings.uniqueID)
             }
             self.inFlight[settings.uniqueID] = processor
             self.photoOutput.capturePhoto(with: settings, delegate: processor)
         }
     }
 
-    private func finishCapture(data: Data?, depth: CIImage?, options: LookOptions, id: Int64) {
+    private func finishCapture(data: Data?, depth: CIImage?, distance: CGFloat?,
+                               options: LookOptions, id: Int64) {
         sessionQueue.async { self.inFlight[id] = nil }
 
         guard let data,
@@ -422,6 +433,7 @@ final class CameraModel: NSObject, ObservableObject {
 
         var options = options
         options.depth = depth
+        options.subjectDistance = distance
 
         processingQueue.async {
             // 撮影日時やカメラ・レンズの情報を残す（向きは適用済みなので「そのまま」にする）
@@ -490,12 +502,38 @@ final class CameraModel: NSObject, ObservableObject {
         }
     }
 
-    /// 距離データを、メートル単位の 1 チャンネル画像にする（色の変換はかけない）
-    static func depthImage(from depthData: AVDepthData) -> CIImage {
+    /// 距離データを、メートル単位の 1 チャンネル画像と、画面中央の被写体までの距離にする
+    static func depthImage(from depthData: AVDepthData) -> (image: CIImage, subject: CGFloat?) {
         let converted = depthData.depthDataType == kCVPixelFormatType_DepthFloat32
             ? depthData
             : depthData.converting(toDepthDataType: kCVPixelFormatType_DepthFloat32)
-        return CIImage(cvPixelBuffer: converted.depthDataMap, options: [.colorSpace: NSNull()])
+        let map = converted.depthDataMap
+        let image = CIImage(cvPixelBuffer: map, options: [.colorSpace: NSNull()])
+        return (image, centerDistance(of: map))
+    }
+
+    /// 画面中央（縦横それぞれ真ん中 40%）で測れた距離の中央値。
+    /// カメラのフラッシュが被写体に合わせて光の強さを決めるのと同じ考え方
+    private static func centerDistance(of map: CVPixelBuffer) -> CGFloat? {
+        CVPixelBufferLockBaseAddress(map, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(map) else { return nil }
+        let width = CVPixelBufferGetWidth(map)
+        let height = CVPixelBufferGetHeight(map)
+        let rowBytes = CVPixelBufferGetBytesPerRow(map)
+        var values: [Float] = []
+        values.reserveCapacity(width * height / 6)
+        for y in (height * 3 / 10)..<(height * 7 / 10) {
+            let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: Float32.self)
+            for x in (width * 3 / 10)..<(width * 7 / 10) {
+                let v = row[x]
+                if v.isFinite && v > 0.1 { values.append(v) }
+            }
+        }
+        guard values.count > 10 else { return nil }
+        values.sort()
+        let median = CGFloat(values[values.count / 2])
+        return min(max(median, 0.4), 4.0)
     }
 }
 
@@ -518,7 +556,8 @@ extension CameraModel: AVCaptureDepthDataOutputDelegate {
                          didOutput depthData: AVDepthData,
                          timestamp: CMTime,
                          connection: AVCaptureConnection) {
-        var depth = Self.depthImage(from: depthData)
+        let measured = Self.depthImage(from: depthData)
+        var depth = measured.image
         frameLock.lock()
         let rotated = _depthRotatedByConnection
         frameLock.unlock()
@@ -528,6 +567,10 @@ extension CameraModel: AVCaptureDepthDataOutputDelegate {
         }
         frameLock.lock()
         _latestDepth = depth
+        if let subject = measured.subject {
+            // 毎コマ少しずつ追いかけ、明るさがちらつかないようにする
+            _subjectDistance = _subjectDistance.map { $0 * 0.8 + subject * 0.2 } ?? subject
+        }
         frameLock.unlock()
     }
 }
@@ -535,9 +578,9 @@ extension CameraModel: AVCaptureDepthDataOutputDelegate {
 // MARK: - 写真の受け取り役
 
 private final class PhotoCaptureProcessor: NSObject, AVCapturePhotoCaptureDelegate {
-    private let completion: (Data?, CIImage?) -> Void
+    private let completion: (Data?, CIImage?, CGFloat?) -> Void
 
-    init(completion: @escaping (Data?, CIImage?) -> Void) {
+    init(completion: @escaping (Data?, CIImage?, CGFloat?) -> Void) {
         self.completion = completion
     }
 
@@ -545,18 +588,21 @@ private final class PhotoCaptureProcessor: NSObject, AVCapturePhotoCaptureDelega
                      didFinishProcessingPhoto photo: AVCapturePhoto,
                      error: Error?) {
         guard error == nil else {
-            completion(nil, nil)
+            completion(nil, nil, nil)
             return
         }
         // 写真と同じ向きにそろえた距離
         var depth: CIImage?
+        var distance: CGFloat?
         if var depthData = photo.depthData {
             if let raw = photo.metadata[kCGImagePropertyOrientation as String] as? UInt32,
                let orientation = CGImagePropertyOrientation(rawValue: raw) {
                 depthData = depthData.applyingExifOrientation(orientation)
             }
-            depth = CameraModel.depthImage(from: depthData)
+            let measured = CameraModel.depthImage(from: depthData)
+            depth = measured.image
+            distance = measured.subject
         }
-        completion(photo.fileDataRepresentation(), depth)
+        completion(photo.fileDataRepresentation(), depth, distance)
     }
 }

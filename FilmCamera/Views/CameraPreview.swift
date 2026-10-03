@@ -60,7 +60,10 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
         let small = origin.transformed(by: CGAffineTransform(scaleX: shrink, y: shrink))
 
         var options = LookOptions(mode: model.mode, dateStamp: model.dateStamp)
-        if options.mode.usesDepth { options.depth = model.latestDepth }
+        if options.mode.usesDepth {
+            options.depth = model.latestDepth
+            options.subjectDistance = model.subjectDistance
+        }
         let look = LookRenderer.apply(small, options: options)
 
         // 枠いっぱいに収まるよう拡大・縮小して中央に置く

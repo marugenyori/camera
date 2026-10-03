@@ -35,6 +35,8 @@ struct LookOptions {
     var dateStamp: Bool
     /// 距離（メートル）。写真や映像と同じ向き。大きさはそろっていなくてよい
     var depth: CIImage? = nil
+    /// 主な被写体までの距離（メートル）。フラッシュの光がちょうどよく当たる距離になる
+    var subjectDistance: CGFloat? = nil
     /// 粒子（グレイン）の模様をずらす量。毎フレーム変えると粒子が動いて見える
     var grainSeed: CGPoint = CGPoint(x: CGFloat.random(in: 0..<512), y: CGFloat.random(in: 0..<512))
 }

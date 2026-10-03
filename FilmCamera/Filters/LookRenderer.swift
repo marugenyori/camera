@@ -15,7 +15,7 @@ enum LookRenderer {
         var out: CIImage
         switch options.mode {
         case .film: out = film(image, seed: options.grainSeed)
-        case .flash: out = flash(image, depth: options.depth)
+        case .flash: out = flash(image, depth: options.depth, subject: options.subjectDistance)
         case .iwai: out = iwai(image, seed: options.grainSeed)
         }
         if options.dateStamp { out = stamp(date, on: out) }
@@ -50,7 +50,7 @@ enum LookRenderer {
 
     /// 手前の被写体が平たく明るく照らされ、白は飛び気味、黒はつぶれ、
     /// 背景は少し暗く沈む。色は濃く、くっきり
-    private static func flash(_ image: CIImage, depth: CIImage?) -> CIImage {
+    private static func flash(_ image: CIImage, depth: CIImage?, subject: CGFloat?) -> CIImage {
         let extent = image.extent
         // 人が来やすい、中央より少し上を中心にする（Core Image は下が原点）
         let center = CGPoint(x: extent.midX, y: extent.midY + extent.height * 0.05)
@@ -58,7 +58,7 @@ enum LookRenderer {
         let bright: CIImage
         let dark: CIImage
         let mask: CIImage
-        if let depth, let falloff = flashFalloff(depth: depth, guide: image) {
+        if let depth, let falloff = flashFalloff(depth: depth, subject: subject ?? 1.0, guide: image) {
             // 距離が分かるとき：近いものほど強く照らし、遠くは暗く沈める（本物のフラッシュと同じ）
             bright = exposure(image, ev: 0.6)
             dark = exposure(image, ev: -1.4)
@@ -107,17 +107,18 @@ enum LookRenderer {
     }
 
     /// 距離（メートル）から、フラッシュの光の当たり具合（1 = よく当たる、0 = 届かない）を作る。
-    /// 光は距離の 2 乗で弱まるので、0.6m で 1、1.2m で約半分、2〜3m でほぼ届かない。
+    /// 本物のカメラと同じく、主な被写体（subject）にちょうどよく当たるよう強さを合わせ、
+    /// そこから距離の 2 乗で弱める（被写体の 1.5 倍の距離で約半分、2 倍で 1/4、4 倍以上で届かない）。
     /// 距離の画像は粗いので、写真の輪郭に沿って拡大し、物の縁から光がはみ出さないようにする
-    private static func flashFalloff(depth: CIImage, guide: CIImage) -> CIImage? {
+    private static func flashFalloff(depth: CIImage, subject: CGFloat, guide: CIImage) -> CIImage? {
         let d = depth.extent
         guard d.width > 0, d.height > 0 else { return nil }
         let small = depth.transformed(by: CGAffineTransform(translationX: -d.minX, y: -d.minY))
 
-        // 0〜5m を 0〜1 にし、3 色とも同じ値にする
+        // 「被写体までの距離の何倍か」を 4 で割った値（0〜1）にし、3 色とも同じ値にする
         let normalize = CIFilter.colorMatrix()
         normalize.inputImage = small
-        let k: CGFloat = 1.0 / 5.0
+        let k: CGFloat = 1.0 / (max(subject, 0.3) * 4)
         normalize.rVector = CIVector(x: k, y: 0, z: 0, w: 0)
         normalize.gVector = CIVector(x: k, y: 0, z: 0, w: 0)
         normalize.bVector = CIVector(x: k, y: 0, z: 0, w: 0)
@@ -129,8 +130,9 @@ enum LookRenderer {
         clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
         guard let normalized = clamp.outputImage else { return nil }
 
+        // 横軸は（距離 ÷ 被写体の距離）÷ 4。0.25 が被写体の位置
         let falloff = toneCurve(normalized, [
-            (0.00, 1.00), (0.12, 1.00), (0.24, 0.45), (0.45, 0.12), (1.00, 0.00),
+            (0.00, 1.00), (0.18, 1.00), (0.375, 0.45), (0.50, 0.25), (1.00, 0.00),
         ])
 
         // 距離が測れなかった所（0m 扱い）は「近い」と誤解して白く飛ぶので、光を当てない
