@@ -212,29 +212,35 @@ enum LookRenderer {
 
     // MARK: - デジタルハリネズミ風（トイデジ）
 
-    /// 小さなトイデジカメ「Digital Harinezumi」の写り。
-    /// 硬いコントラストと濃い色、青緑に転ぶ影と黄色っぽく飛ぶハイライト、
-    /// 安いレンズらしい強い周辺減光と少しのにじみ。
+    /// 小さなトイデジカメ「Digital Harinezumi」の写り（持ち主が見せた馬の写真が目標）。
+    /// 空は真っ白に飛び、明るい部分はピンク〜マゼンタ、影は青紫に沈んでほぼ黒、
+    /// 緑や赤はどぎついほど濃く、輪郭はガリッと硬い。
     /// 本物は低画素でノイズも多いが、画質は落とさず色と光の癖だけをまねる
     private static func harinezumi(_ image: CIImage) -> CIImage {
         let extent = image.extent
 
         let controls = CIFilter.colorControls()
-        controls.inputImage = toSRGB(exposure(image, ev: 0.15))
-        controls.saturation = 1.30
-        controls.contrast = 1.20
+        controls.inputImage = toSRGB(exposure(image, ev: 0.35))
+        controls.saturation = 1.45
+        controls.contrast = 1.35
 
+        // 黒をつぶし、白を飛ばす
         let punchy = toneCurve(controls.outputImage, [
-            (0.00, 0.00), (0.20, 0.10), (0.50, 0.52), (0.80, 0.92), (1.00, 1.00),
+            (0.00, 0.00), (0.15, 0.04), (0.50, 0.50), (0.80, 0.95), (1.00, 1.00),
         ])
-        // 影は青緑（赤を抑える）、ハイライトは黄色（青を抑える）
+        // 明るい部分は緑を抑えてマゼンタに、影と中間は青を持ち上げて青紫に
         let toned = polynomial(punchy,
-                               r: (0.00, 0.92, 0.18, -0.10),
-                               g: (0.02, 1.00, 0.00, -0.02),
-                               b: (0.04, 0.95, -0.05, -0.08))
+                               r: (0.00, 0.95, 0.15, -0.08),
+                               g: (0.00, 0.98, 0.05, -0.12),
+                               b: (0.05, 1.05, -0.10, -0.02))
 
-        let soft = diffusion(toned, radius: longSide(extent) * 0.004, amount: 0.08)
-        return toLinear(vignette(soft, strength: 0.50, inner: 0.30))
+        // 安いデジカメの強い輪郭強調
+        let unsharp = CIFilter.unsharpMask()
+        unsharp.inputImage = toned
+        unsharp.radius = Float(max(1, longSide(extent) / 2000) * 2)
+        unsharp.intensity = 0.8
+        let crisp = (unsharp.outputImage ?? toned).cropped(to: extent)
+        return toLinear(vignette(crisp, strength: 0.15, inner: 0.45))
     }
 
     // MARK: - 多重露光

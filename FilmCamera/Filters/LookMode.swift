@@ -35,7 +35,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .warmFlash: return "暖かい色のフラッシュ写真"
         case .iwai: return "澄んだ青空・紺の影・にじむ光"
         case .cross: return "暖色と寒色がぶつかる、濃く硬い色"
-        case .harinezumi: return "トイデジ風：濃い色・青緑の影・強い周辺減光"
+        case .harinezumi: return "トイデジ風：白飛び・マゼンタ・どぎつい緑"
         case .double: return "何枚かを 1 枚に重ねる"
         }
     }
