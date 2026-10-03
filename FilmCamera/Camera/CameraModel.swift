@@ -82,6 +82,19 @@ final class CameraModel: NSObject, ObservableObject {
     @Published private(set) var isRecording = false
     @Published private(set) var recordingStartedAt: Date?
 
+    // MARK: 前後同時撮影
+
+    /// 外カメラと内カメラを同時に使うか（オンの間はふだんのセッションを止め、マルチカメラに切り替える）
+    @Published var isDual = false {
+        didSet {
+            guard isDual != oldValue else { return }
+            if isDual { captureKind = .photo }
+            switchDual(isDual)
+        }
+    }
+    static var isDualSupported: Bool { DualCameraSession.isSupported }
+    private let dual = DualCameraSession()
+
     // MARK: ズーム
 
     /// 画面に出す倍率（0.5×・1×・2× …）。広角カメラの 1 倍を 1× とする
@@ -120,6 +133,7 @@ final class CameraModel: NSObject, ObservableObject {
 
     private let frameLock = NSLock()
     private var _latestFrame: CIImage?
+    private var _latestFrontFrame: CIImage?
     private var _latestDepth: CIImage?
     private var _subjectDistance: CGFloat?
     /// 距離の画像を接続側で縦向きにできたか（できなければ自分で回す）
@@ -149,6 +163,13 @@ final class CameraModel: NSObject, ObservableObject {
         return _latestFrame
     }
 
+    /// 前後同時撮影の、内カメラの最新のコマ（縦向き・左右反転済み）
+    var latestFrontFrame: CIImage? {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        return _latestFrontFrame
+    }
+
     /// 最新の距離（メートル）。映像と同じ縦向き。距離を測っていないときは nil
     var latestDepth: CIImage? {
         frameLock.lock()
@@ -174,6 +195,12 @@ final class CameraModel: NSObject, ObservableObject {
         burstInterval = defaults.double(forKey: "burstInterval")
         captureKind = CaptureKind(rawValue: defaults.string(forKey: "captureKind") ?? "") ?? .photo
         super.init()
+        dual.onFrame = { [weak self] frame, isBack in
+            guard let self else { return }
+            self.frameLock.lock()
+            if isBack { self._latestFrame = frame } else { self._latestFrontFrame = frame }
+            self.frameLock.unlock()
+        }
     }
 
     // MARK: - 起動と停止
@@ -200,12 +227,36 @@ final class CameraModel: NSObject, ObservableObject {
     func stop() {
         sessionQueue.async {
             if self.session.isRunning { self.session.stopRunning() }
+            self.dual.stop()
+        }
+    }
+
+    /// ふだんのセッションとマルチカメラを切り替える
+    private func switchDual(_ on: Bool) {
+        guard isConfigured else { return }
+        sessionQueue.async {
+            if on {
+                if self.session.isRunning { self.session.stopRunning() }
+                if !self.dual.start() {
+                    DispatchQueue.main.async {
+                        self.message = "この機種では前後同時撮影が使えません"
+                        self.isDual = false
+                    }
+                }
+            } else {
+                self.dual.stop()
+                self.frameLock.lock()
+                self._latestFrontFrame = nil
+                self.frameLock.unlock()
+                if !self.session.isRunning { self.session.startRunning() }
+            }
         }
     }
 
     private func startSession() {
         let position = self.position
         let wantDepth = mode.usesDepth
+        let dualOn = isDual
         sessionQueue.async {
             if !self.isConfigured {
                 self.isConfigured = self.configure(position: position, wantDepth: wantDepth)
@@ -215,7 +266,11 @@ final class CameraModel: NSObject, ObservableObject {
                 return
             }
             self.refreshPhotoDepthDelivery()
-            if !self.session.isRunning { self.session.startRunning() }
+            if dualOn {
+                _ = self.dual.start()
+            } else if !self.session.isRunning {
+                self.session.startRunning()
+            }
             DispatchQueue.main.async {
                 self.status = .running
                 self.startZoomTracking()
@@ -681,6 +736,10 @@ final class CameraModel: NSObject, ObservableObject {
 
     func capture() {
         guard status == .running, !isSaving else { return }
+        if isDual {
+            captureDual()
+            return
+        }
         if mode == .double && burstInterval > 0 && exposures.isEmpty {
             startBurst()
             return
@@ -768,6 +827,27 @@ final class CameraModel: NSObject, ObservableObject {
             .max { $0.width * $0.height < $1.width * $1.height }
             ?? all.min { $0.width * $0.height < $1.width * $1.height }
             ?? photoOutput.maxPhotoDimensions
+    }
+
+    /// 前後同時撮影：外と内を同時に撮り、内カメラを左上に重ねて 1 枚にする
+    private func captureDual() {
+        isSaving = true
+        shotCount += 1
+        var options = LookOptions(mode: mode, dateStamp: dateStamp)
+        let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+        sessionQueue.async {
+            self.dual.capture(angle: angle) { back, front in
+                guard let back else {
+                    DispatchQueue.main.async {
+                        self.isSaving = false
+                        self.message = "撮影に失敗しました"
+                    }
+                    return
+                }
+                options.front = front
+                self.renderAndSave(back, options: options)
+            }
+        }
     }
 
     /// 背面の広角カメラ・最大解像度の設定に切り替え、露出が落ち着くまで少し待つ（sessionQueue で呼ぶ）

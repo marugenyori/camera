@@ -16,8 +16,10 @@ struct ContentView: View {
                 ZStack(alignment: .bottom) {
                     preview
                     VStack(spacing: 10) {
-                        if camera.mode == .double && camera.captureKind == .photo { exposureOptions }
-                        zoomBar
+                        if camera.mode == .double && camera.captureKind == .photo && !camera.isDual {
+                            exposureOptions
+                        }
+                        if !camera.isDual { zoomBar }
                     }
                     .padding(.bottom, 14)
                 }
@@ -76,6 +78,13 @@ struct ContentView: View {
             GlassIconButton(systemImage: "squareshape.split.3x3", isOn: showGrid, label: "グリッド") {
                 showGrid.toggle()
             }
+            if CameraModel.isDualSupported {
+                GlassIconButton(systemImage: "rectangle.inset.topleft.filled", isOn: camera.isDual,
+                                label: "前後同時") {
+                    camera.isDual.toggle()
+                }
+                .disabled(camera.isRecording || camera.isSaving)
+            }
             Spacer()
             statusChip
         }
@@ -103,6 +112,9 @@ struct ContentView: View {
                       systemImage: "arrow.uturn.backward")
                     .chipStyle()
             }
+        } else if camera.isDual {
+            Label("前後同時", systemImage: "rectangle.inset.topleft.filled")
+                .chipStyle(tinted: true)
         } else if camera.mode.usesDepth && camera.isDepthActive {
             Label("距離で光を調整", systemImage: "dot.radiowaves.left.and.right")
                 .chipStyle(tinted: true)
@@ -141,7 +153,7 @@ struct ContentView: View {
                 }
             )
             .onTapGesture(count: 2) {
-                guard !camera.isRecording else { return }
+                guard !camera.isRecording && !camera.isDual else { return }
                 camera.switchCamera()
             }
     }
@@ -254,6 +266,8 @@ struct ContentView: View {
         HStack(spacing: 28) {
             kindButton("写真", kind: .photo)
             kindButton("ビデオ", kind: .video)
+                .disabled(camera.isDual)
+                .opacity(camera.isDual ? 0.35 : 1)
         }
         .disabled(camera.isRecording || camera.isSaving)
         .padding(.top, 10)
@@ -360,7 +374,7 @@ struct ContentView: View {
                     .frame(width: 50, height: 50)
                     .background(.ultraThinMaterial, in: Circle())
             }
-            .disabled(camera.status != .running || camera.isRecording)
+            .disabled(camera.status != .running || camera.isRecording || camera.isDual)
             .accessibilityLabel("カメラを切り替え")
         }
         .padding(.horizontal, 30)

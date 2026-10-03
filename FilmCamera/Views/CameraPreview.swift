@@ -73,7 +73,10 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
             options.overlays = model.exposurePreviews
             options.exposureTotal = model.exposureCount
         }
-        if options.mode.usesDepth {
+        if model.isDual, let front = model.latestFrontFrame {
+            // 内カメラも同じだけ縮めてから重ねる
+            options.front = front.transformed(by: CGAffineTransform(scaleX: shrink, y: shrink))
+        } else if options.mode.usesDepth {
             options.depth = model.latestDepth
             options.subjectDistance = model.subjectDistance
         }

@@ -61,6 +61,8 @@ struct LookOptions {
     var exposureTotal: Int = 2
     /// 6分割で、1 コマの長い辺（ピクセル）。nil なら元の画像の 1/3（プレビュー・動画用）
     var contactTileLongSide: CGFloat? = nil
+    /// 前後同時撮影の内カメラの画像。あれば同じフィルタをかけて左上に小さく重ねる
+    var front: CIImage? = nil
     /// 粒子（グレイン）の模様をずらす量。毎フレーム変えると粒子が動いて見える
     var grainSeed: CGPoint = CGPoint(x: CGFloat.random(in: 0..<512), y: CGFloat.random(in: 0..<512))
 }

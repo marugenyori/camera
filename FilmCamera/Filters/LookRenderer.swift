@@ -8,6 +8,22 @@ import Foundation
 enum LookRenderer {
 
     static func apply(_ input: CIImage, options: LookOptions, date: Date = Date()) -> CIImage {
+        // 前後同時撮影：外カメラと内カメラにそれぞれ同じフィルタをかけ、内カメラを左上に重ねる
+        // （6分割と多重露光は、前後同時ではフィルムの色にする）
+        if let front = options.front {
+            var single = options
+            single.front = nil
+            single.dateStamp = false
+            if single.mode == .contact || single.mode == .double { single.mode = .film }
+            var frontOptions = single
+            frontOptions.depth = nil
+            frontOptions.subjectDistance = nil
+            var out = pictureInPicture(main: apply(input, options: single, date: date),
+                                       inset: apply(front, options: frontOptions, date: date))
+            if options.dateStamp { out = stamp(date, on: out) }
+            return out
+        }
+
         // 原点を (0, 0) にそろえる
         let image = input.transformed(by: CGAffineTransform(
             translationX: -input.extent.minX, y: -input.extent.minY))
@@ -28,6 +44,56 @@ enum LookRenderer {
         }
         if options.dateStamp { out = stamp(date, on: out) }
         return out
+    }
+
+    // MARK: - 前後同時撮影
+
+    /// 外カメラの写真の左上に、内カメラの写真を角の丸い白フチ付きで小さく重ねる
+    private static func pictureInPicture(main: CIImage, inset: CIImage) -> CIImage {
+        let extent = main.extent
+        let insetExtent = inset.extent
+        guard insetExtent.width > 0, insetExtent.height > 0 else { return main }
+
+        let targetWidth = shortSide(extent) * 0.30
+        let scale = targetWidth / insetExtent.width
+        let small = inset
+            .transformed(by: CGAffineTransform(translationX: -insetExtent.minX, y: -insetExtent.minY))
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let w = small.extent.width
+        let h = small.extent.height
+        let margin = shortSide(extent) * 0.04
+        let border = shortSide(extent) * 0.008
+        let radius = w * 0.08
+        // 左上（Core Image は下が原点）
+        let origin = CGPoint(x: extent.minX + margin, y: extent.maxY - margin - h)
+
+        let photoRect = CGRect(origin: origin, size: CGSize(width: w, height: h))
+        let photo = small.transformed(by: CGAffineTransform(translationX: origin.x, y: origin.y))
+        let frameRect = photoRect.insetBy(dx: -border, dy: -border)
+
+        let frame = roundedRect(frameRect, radius: radius + border,
+                                color: CIColor(red: 1, green: 1, blue: 1))
+        let mask = roundedRect(photoRect, radius: radius, color: CIColor(red: 1, green: 1, blue: 1))
+        let clip = CIFilter.blendWithMask()
+        clip.inputImage = photo
+        clip.backgroundImage = frame
+        clip.maskImage = mask
+        let card = (clip.outputImage ?? photo).cropped(to: frameRect)
+
+        // うっすら影を落として浮かせる
+        let shadow = roundedRect(frameRect, radius: radius + border,
+                                 color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.45))
+            .applyingGaussianBlur(sigma: Double(border * 2))
+            .transformed(by: CGAffineTransform(translationX: 0, y: -border))
+        return card.composited(over: shadow.composited(over: main)).cropped(to: extent)
+    }
+
+    private static func roundedRect(_ rect: CGRect, radius: CGFloat, color: CIColor) -> CIImage {
+        let generator = CIFilter.roundedRectangleGenerator()
+        generator.extent = rect
+        generator.radius = Float(radius)
+        generator.color = color
+        return generator.outputImage?.cropped(to: rect) ?? CIImage.empty()
     }
 
     // MARK: - 6分割（1 回のシャッターで 6 つのフィルタ）
