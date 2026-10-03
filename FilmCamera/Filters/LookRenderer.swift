@@ -30,20 +30,20 @@ enum LookRenderer {
         let extent = image.extent
 
         let controls = CIFilter.colorControls()
-        controls.inputImage = exposure(image, ev: 0.15)
+        controls.inputImage = toSRGB(exposure(image, ev: 0.15))
         controls.saturation = 0.80
         controls.contrast = 0.95
 
         // 色ごとのトーンカーブ（入力 x に対する 3 次式）
         // 赤：ハイライトを持ち上げる／緑：影を持ち上げ、ハイライトを抑える／青：ハイライトを抑える
         let toned = polynomial(controls.outputImage ?? image,
-                               r: (0.05, 0.85, 0.25, -0.17),
-                               g: (0.07, 0.92, -0.02, -0.07),
-                               b: (0.06, 0.80, 0.06, -0.04))
+                               r: (0.04, 0.86, 0.25, -0.17),
+                               g: (0.055, 0.93, -0.02, -0.07),
+                               b: (0.05, 0.81, 0.06, -0.04))
 
-        let hazy = diffusion(toned, radius: longSide(extent) * 0.006, amount: 0.22)
-        let grained = grain(hazy, amount: 0.07, seed: seed)
-        return vignette(grained, strength: 0.35, inner: 0.40)
+        let hazy = diffusion(toned, radius: longSide(extent) * 0.006, amount: 0.18)
+        let grained = grain(hazy, amount: 0.06, seed: seed)
+        return toLinear(vignette(grained, strength: 0.35, inner: 0.40))
     }
 
     // MARK: - フラッシュ風（2000年代のコンデジの直射フラッシュ）
@@ -74,9 +74,9 @@ enum LookRenderer {
         let lit = blend.outputImage ?? image
 
         let controls = CIFilter.colorControls()
-        controls.inputImage = lit
-        controls.saturation = 1.20
-        controls.contrast = 1.08
+        controls.inputImage = toSRGB(lit)
+        controls.saturation = 1.12
+        controls.contrast = 1.04
 
         // 黒をつぶし、白を飛ばす
         let punchy = toneCurve(controls.outputImage, [
@@ -88,11 +88,11 @@ enum LookRenderer {
 
         let sharpen = CIFilter.sharpenLuminance()
         sharpen.inputImage = cool
-        sharpen.sharpness = 0.6
+        sharpen.sharpness = 0.35
         let sharp = (sharpen.outputImage ?? cool).cropped(to: extent)
 
         let grained = grain(sharp, amount: 0.03, seed: seed)
-        return vignette(grained, strength: 0.12, inner: 0.55)
+        return toLinear(vignette(grained, strength: 0.12, inner: 0.55))
     }
 
     // MARK: - 岩井俊二風（淡い水色・白飛び・やわらかな光）
@@ -103,7 +103,7 @@ enum LookRenderer {
         let extent = image.extent
 
         let controls = CIFilter.colorControls()
-        controls.inputImage = exposure(image, ev: 0.35)
+        controls.inputImage = toSRGB(exposure(image, ev: 0.30))
         controls.saturation = 0.62
         controls.contrast = 0.90
 
@@ -115,7 +115,7 @@ enum LookRenderer {
 
         let hazy = diffusion(toned, radius: longSide(extent) * 0.012, amount: 0.35)
         let grained = grain(hazy, amount: 0.04, seed: seed)
-        return vignette(grained, strength: 0.10, inner: 0.55)
+        return toLinear(vignette(grained, strength: 0.10, inner: 0.55))
     }
 
     // MARK: - 日付の写し込み（オレンジの文字）
@@ -260,6 +260,17 @@ enum LookRenderer {
         f.inputImage = image
         f.ev = ev
         return f.outputImage ?? image
+    }
+
+    /// Core Image は明るさを「光の量に比例する値（リニア）」で計算するため、
+    /// 色の調整は見た目どおりの明るさ（sRGB）に変換してから行い、最後に戻す。
+    /// リニアのまま黒を持ち上げると、画面全体が白っぽく霞んでしまう
+    private static func toSRGB(_ image: CIImage) -> CIImage {
+        image.applyingFilter("CILinearToSRGBToneCurve")
+    }
+
+    private static func toLinear(_ image: CIImage) -> CIImage {
+        image.applyingFilter("CISRGBToneCurveToLinear")
     }
 
     private static func longSide(_ r: CGRect) -> CGFloat { max(r.width, r.height) }
