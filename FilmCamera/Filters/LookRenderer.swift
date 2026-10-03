@@ -37,12 +37,12 @@ enum LookRenderer {
         // 色ごとのトーンカーブ（入力 x に対する 3 次式）
         // 赤：ハイライトを持ち上げる／緑：影を持ち上げ、ハイライトを抑える／青：ハイライトを抑える
         let toned = polynomial(controls.outputImage ?? image,
-                               r: (0.04, 0.86, 0.25, -0.17),
-                               g: (0.055, 0.93, -0.02, -0.07),
-                               b: (0.05, 0.81, 0.06, -0.04))
+                               r: (0.03, 0.87, 0.25, -0.17),
+                               g: (0.045, 0.94, -0.02, -0.07),
+                               b: (0.04, 0.82, 0.06, -0.04))
 
-        let hazy = diffusion(toned, radius: longSide(extent) * 0.006, amount: 0.18)
-        let grained = grain(hazy, amount: 0.06, seed: seed)
+        let hazy = diffusion(toned, radius: longSide(extent) * 0.006, amount: 0.14)
+        let grained = grain(hazy, amount: 0.05, seed: seed)
         return toLinear(vignette(grained, strength: 0.35, inner: 0.40))
     }
 
@@ -55,8 +55,8 @@ enum LookRenderer {
         // 人が来やすい、中央より少し上を中心にする（Core Image は下が原点）
         let center = CGPoint(x: extent.midX, y: extent.midY + extent.height * 0.05)
 
-        let bright = exposure(image, ev: 0.8)
-        let dark = exposure(image, ev: -0.5)
+        let bright = exposure(image, ev: 0.45)
+        let dark = exposure(image, ev: -0.9)
 
         // 中央は明るく、外側はゆるやかに暗くなるマスク
         let gradient = CIFilter.radialGradient()
@@ -75,12 +75,12 @@ enum LookRenderer {
 
         let controls = CIFilter.colorControls()
         controls.inputImage = toSRGB(lit)
-        controls.saturation = 1.12
-        controls.contrast = 1.04
+        controls.saturation = 1.05
+        controls.contrast = 1.02
 
         // 黒をつぶし、白を飛ばす
         let punchy = toneCurve(controls.outputImage, [
-            (0.00, 0.00), (0.20, 0.11), (0.50, 0.52), (0.80, 0.93), (1.00, 1.00),
+            (0.00, 0.00), (0.20, 0.15), (0.50, 0.51), (0.80, 0.90), (1.00, 1.00),
         ])
 
         // フラッシュ光のやや青白い色
@@ -91,7 +91,7 @@ enum LookRenderer {
         sharpen.sharpness = 0.35
         let sharp = (sharpen.outputImage ?? cool).cropped(to: extent)
 
-        let grained = grain(sharp, amount: 0.03, seed: seed)
+        let grained = grain(sharp, amount: 0.02, seed: seed)
         return toLinear(vignette(grained, strength: 0.12, inner: 0.55))
     }
 
@@ -103,18 +103,18 @@ enum LookRenderer {
         let extent = image.extent
 
         let controls = CIFilter.colorControls()
-        controls.inputImage = toSRGB(exposure(image, ev: 0.30))
-        controls.saturation = 0.62
-        controls.contrast = 0.90
+        controls.inputImage = toSRGB(exposure(image, ev: 0.25))
+        controls.saturation = 0.70
+        controls.contrast = 0.95
 
         // 赤を抑え、緑と青の影を持ち上げる
         let toned = polynomial(controls.outputImage ?? image,
-                               r: (0.06, 0.82, 0.10, -0.05),
-                               g: (0.09, 0.88, 0.05, -0.04),
-                               b: (0.12, 0.86, 0.04, -0.04))
+                               r: (0.03, 0.86, 0.10, -0.05),
+                               g: (0.05, 0.91, 0.05, -0.04),
+                               b: (0.08, 0.89, 0.04, -0.04))
 
-        let hazy = diffusion(toned, radius: longSide(extent) * 0.012, amount: 0.35)
-        let grained = grain(hazy, amount: 0.04, seed: seed)
+        let hazy = diffusion(toned, radius: longSide(extent) * 0.012, amount: 0.25)
+        let grained = grain(hazy, amount: 0.03, seed: seed)
         return toLinear(vignette(grained, strength: 0.10, inner: 0.55))
     }
 
@@ -165,10 +165,13 @@ enum LookRenderer {
         let noise = random
             .transformed(by: CGAffineTransform(translationX: seed.x, y: seed.y))
             .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            // 1画素ずつの白い点にならないよう、少しぼかして粒にする
+            .applyingGaussianBlur(sigma: Double(scale * 0.6))
             .cropped(to: extent)
 
         // 白黒の、0.5 を中心にした弱いノイズにする
-        let a = amount
+        // ぼかすと揺れ幅が小さくなるので、その分を補う
+        let a = amount * 2
         let mono = CIFilter.colorMatrix()
         mono.inputImage = noise
         mono.rVector = CIVector(x: a, y: 0, z: 0, w: 0)
