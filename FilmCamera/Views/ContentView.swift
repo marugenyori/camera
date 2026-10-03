@@ -67,9 +67,15 @@ struct ContentView: View {
                     .foregroundStyle(camera.dateStamp ? .black : .white)
             }
             Spacer()
-            Text(camera.mode.caption)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.7))
+            if camera.mode.usesDepth && camera.isDepthActive {
+                Label("距離を測って光を当てています", systemImage: "dot.radiowaves.left.and.right")
+                    .font(.caption)
+                    .foregroundStyle(.tint)
+            } else {
+                Text(camera.mode.caption)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)

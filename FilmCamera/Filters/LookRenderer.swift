@@ -15,7 +15,7 @@ enum LookRenderer {
         var out: CIImage
         switch options.mode {
         case .film: out = film(image, seed: options.grainSeed)
-        case .flash: out = flash(image, seed: options.grainSeed)
+        case .flash: out = flash(image, depth: options.depth)
         case .iwai: out = iwai(image, seed: options.grainSeed)
         }
         if options.dateStamp { out = stamp(date, on: out) }
@@ -50,22 +50,33 @@ enum LookRenderer {
 
     /// 手前の被写体が平たく明るく照らされ、白は飛び気味、黒はつぶれ、
     /// 背景は少し暗く沈む。色は濃く、くっきり
-    private static func flash(_ image: CIImage, seed: CGPoint) -> CIImage {
+    private static func flash(_ image: CIImage, depth: CIImage?) -> CIImage {
         let extent = image.extent
         // 人が来やすい、中央より少し上を中心にする（Core Image は下が原点）
         let center = CGPoint(x: extent.midX, y: extent.midY + extent.height * 0.05)
 
-        let bright = exposure(image, ev: 0.15)
-        let dark = exposure(image, ev: -1.2)
-
-        // 中央は明るく、外側はゆるやかに暗くなるマスク
-        let gradient = CIFilter.radialGradient()
-        gradient.center = center
-        gradient.radius0 = Float(shortSide(extent) * 0.22)
-        gradient.radius1 = Float(longSide(extent) * 0.80)
-        gradient.color0 = CIColor(red: 1, green: 1, blue: 1)
-        gradient.color1 = CIColor(red: 0, green: 0, blue: 0)
-        let mask = (gradient.outputImage ?? image).cropped(to: extent)
+        let bright: CIImage
+        let dark: CIImage
+        let mask: CIImage
+        if let depth, let falloff = flashFalloff(depth: depth, extent: extent) {
+            // 距離が分かるとき：近いものほど強く照らし、遠くは暗く沈める（本物のフラッシュと同じ）
+            bright = exposure(image, ev: 0.6)
+            dark = exposure(image, ev: -1.4)
+            let beam = radialMask(center: center, extent: extent,
+                                  inner: shortSide(extent) * 0.35, outer: longSide(extent) * 0.9,
+                                  edge: 0.6)
+            let multiply = CIFilter.multiplyCompositing()
+            multiply.inputImage = falloff
+            multiply.backgroundImage = beam
+            mask = (multiply.outputImage ?? falloff).cropped(to: extent)
+        } else {
+            // 距離が分からないとき：中央を近いとみなし、外側ほど暗くする
+            bright = exposure(image, ev: 0.15)
+            dark = exposure(image, ev: -1.2)
+            mask = radialMask(center: center, extent: extent,
+                              inner: shortSide(extent) * 0.22, outer: longSide(extent) * 0.80,
+                              edge: 0)
+        }
 
         let blend = CIFilter.blendWithMask()
         blend.inputImage = bright
@@ -93,6 +104,52 @@ enum LookRenderer {
 
         let grained = sharp
         return toLinear(vignette(grained, strength: 0.12, inner: 0.55))
+    }
+
+    /// 距離（メートル）から、フラッシュの光の当たり具合（1 = よく当たる、0 = 届かない）を作る。
+    /// 光は距離の 2 乗で弱まるので、0.6m で 1、1.2m で約半分、2〜3m でほぼ届かない
+    private static func flashFalloff(depth: CIImage, extent: CGRect) -> CIImage? {
+        let d = depth.extent
+        guard d.width > 0, d.height > 0 else { return nil }
+        let scaled = depth
+            .transformed(by: CGAffineTransform(translationX: -d.minX, y: -d.minY))
+            .transformed(by: CGAffineTransform(scaleX: extent.width / d.width,
+                                               y: extent.height / d.height))
+
+        // 0〜5m を 0〜1 にし、3 色とも同じ値にする
+        let normalize = CIFilter.colorMatrix()
+        normalize.inputImage = scaled
+        let k: CGFloat = 1.0 / 5.0
+        normalize.rVector = CIVector(x: k, y: 0, z: 0, w: 0)
+        normalize.gVector = CIVector(x: k, y: 0, z: 0, w: 0)
+        normalize.bVector = CIVector(x: k, y: 0, z: 0, w: 0)
+        normalize.aVector = CIVector(x: 0, y: 0, z: 0, w: 0)
+        normalize.biasVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+        let clamp = CIFilter.colorClamp()
+        clamp.inputImage = normalize.outputImage
+        clamp.minComponents = CIVector(x: 0, y: 0, z: 0, w: 1)
+        clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
+
+        let falloff = toneCurve(clamp.outputImage, [
+            (0.00, 1.00), (0.12, 1.00), (0.24, 0.45), (0.45, 0.12), (1.00, 0.00),
+        ])
+        // 距離の画像は粗いので、境目がカクつかないよう少しぼかす
+        return falloff
+            .clampedToExtent()
+            .applyingGaussianBlur(sigma: Double(longSide(extent) * 0.004))
+            .cropped(to: extent)
+    }
+
+    /// 中央が 1、外側が edge になる円形のマスク
+    private static func radialMask(center: CGPoint, extent: CGRect,
+                                   inner: CGFloat, outer: CGFloat, edge: CGFloat) -> CIImage {
+        let gradient = CIFilter.radialGradient()
+        gradient.center = center
+        gradient.radius0 = Float(inner)
+        gradient.radius1 = Float(outer)
+        gradient.color0 = CIColor(red: 1, green: 1, blue: 1)
+        gradient.color1 = CIColor(red: edge, green: edge, blue: edge)
+        return (gradient.outputImage ?? CIImage(color: .white)).cropped(to: extent)
     }
 
     // MARK: - 岩井俊二風（淡い水色・白飛び・やわらかな光）
