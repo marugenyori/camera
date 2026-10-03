@@ -69,6 +69,32 @@ final class CameraModel: NSObject, ObservableObject {
         didSet { UserDefaults.standard.set(dateStamp, forKey: "dateStamp") }
     }
 
+    // MARK: 写真と動画
+
+    enum CaptureKind: String {
+        case photo
+        case video
+    }
+
+    @Published var captureKind: CaptureKind {
+        didSet { UserDefaults.standard.set(captureKind.rawValue, forKey: "captureKind") }
+    }
+    @Published private(set) var isRecording = false
+    @Published private(set) var recordingStartedAt: Date?
+
+    // MARK: ズーム
+
+    /// 画面に出す倍率（0.5×・1×・2× …）。広角カメラの 1 倍を 1× とする
+    @Published private(set) var zoom: CGFloat = 1
+    /// 使える倍率の範囲（表示上の倍率）
+    @Published private(set) var zoomRange: ClosedRange<CGFloat> = 1...1
+    /// 表示上の倍率 = カメラの倍率 × これ（超広角から始まるカメラでは 0.5）。メインスレッドで使う
+    private var zoomMultiplier: CGFloat = 1
+    private weak var zoomDevice: AVCaptureDevice?
+    private var zoomTimer: Timer?
+    /// ズームの上限（2× を超える分はセンサーの切り出しではなく拡大になるので、控えめにする）
+    static let maxDisplayZoom: CGFloat = 5
+
     private let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "camera.session")
     private let videoQueue = DispatchQueue(label: "camera.video")
@@ -76,6 +102,9 @@ final class CameraModel: NSObject, ObservableObject {
     private let videoOutput = AVCaptureVideoDataOutput()
     private let depthOutput = AVCaptureDepthDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
+    private let audioOutput = AVCaptureAudioDataOutput()
+    /// マイクをセッションに追加済みか（sessionQueue で触る）
+    private var hasAudio = false
     private var videoInput: AVCaptureDeviceInput?
     private var isConfigured = false
     /// 距離の出力をセッションに追加できたか（sessionQueue で触る）
@@ -95,6 +124,18 @@ final class CameraModel: NSObject, ObservableObject {
     private var _subjectDistance: CGFloat?
     /// 距離の画像を接続側で縦向きにできたか（できなければ自分で回す）
     private var _depthRotatedByConnection = false
+    /// 設定が変わってもズームを保つための、表示上の倍率
+    private var _desiredZoom: CGFloat = 1
+    /// 録画を続けたいか（開始の準備中に停止されたときのため）
+    private var _wantsRecording = false
+
+    // 録画中の状態（videoQueue で触る）
+    private var recorder: VideoRecorder?
+    private var recordingOptions: LookOptions?
+    private var recordingTransform: CGAffineTransform = .identity
+    private var recordingWithAudio = false
+    private var lastRecordedFrame: CIImage?
+    private let videoContext = CIContext(options: [.cacheIntermediates: false])
 
     /// 最新の映像フレーム（縦向き・インカメラは左右反転済み）
     var latestFrame: CIImage? {
@@ -126,6 +167,7 @@ final class CameraModel: NSObject, ObservableObject {
         let count = defaults.integer(forKey: "exposureCount")
         exposureCount = (2...4).contains(count) ? count : 2
         burstInterval = defaults.double(forKey: "burstInterval")
+        captureKind = CaptureKind(rawValue: defaults.string(forKey: "captureKind") ?? "") ?? .photo
         super.init()
     }
 
@@ -169,7 +211,10 @@ final class CameraModel: NSObject, ObservableObject {
             }
             self.refreshPhotoDepthDelivery()
             if !self.session.isRunning { self.session.startRunning() }
-            DispatchQueue.main.async { self.status = .running }
+            DispatchQueue.main.async {
+                self.status = .running
+                self.startZoomTracking()
+            }
         }
     }
 
@@ -342,14 +387,105 @@ final class CameraModel: NSObject, ObservableObject {
         _depthRotatedByConnection = depthRotated
         frameLock.unlock()
 
+        applyZoom(on: device)
+
         DispatchQueue.main.async {
             self.rotationCoordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
         }
     }
 
+    // MARK: - ズーム（一眼のズームレンズのように、一定の速さでググッと動かす）
+
+    private static func zoomMultiplier(for device: AVCaptureDevice) -> CGFloat {
+        if #available(iOS 18.0, *) { return device.displayVideoZoomFactorMultiplier }
+        switch device.deviceType {
+        case .builtInDualWideCamera, .builtInTripleCamera: return 0.5
+        default: return 1
+        }
+    }
+
+    private static func zoomLimits(of device: AVCaptureDevice) -> (min: CGFloat, max: CGFloat) {
+        let multiplier = zoomMultiplier(for: device)
+        let maxFactor = min(device.maxAvailableVideoZoomFactor, maxDisplayZoom / multiplier)
+        return (device.minAvailableVideoZoomFactor, max(device.minAvailableVideoZoomFactor, maxFactor))
+    }
+
+    /// カメラや設定を変えたあと、前と同じ倍率に戻す（sessionQueue で呼ぶ）
+    private func applyZoom(on device: AVCaptureDevice) {
+        let multiplier = Self.zoomMultiplier(for: device)
+        let limits = Self.zoomLimits(of: device)
+        frameLock.lock()
+        let desired = _desiredZoom
+        frameLock.unlock()
+        let factor = min(max(desired / multiplier, limits.min), limits.max)
+        if (try? device.lockForConfiguration()) != nil {
+            device.videoZoomFactor = factor
+            device.unlockForConfiguration()
+        }
+        DispatchQueue.main.async {
+            self.zoomMultiplier = multiplier
+            self.zoomDevice = device
+            self.zoomRange = (limits.min * multiplier)...(limits.max * multiplier)
+            self.zoom = factor * multiplier
+        }
+    }
+
+    /// ズームレバー：押している間、一定の速さで望遠（+1）／広角（-1）へ動かす。0 で止める
+    func zoomLever(_ direction: Int) {
+        sessionQueue.async {
+            guard let device = self.videoInput?.device,
+                  (try? device.lockForConfiguration()) != nil else { return }
+            defer { device.unlockForConfiguration() }
+            if direction == 0 {
+                device.cancelVideoZoomRamp()
+            } else {
+                let limits = Self.zoomLimits(of: device)
+                // rate は「1 秒に何段（2 倍）進むか」。ゆっくり一定の速さで動かす
+                device.ramp(toVideoZoomFactor: direction > 0 ? limits.max : limits.min, withRate: 1.0)
+            }
+        }
+    }
+
+    /// 0.5× / 1× / 2× などのボタン：その倍率まで、一定の速さで動かす
+    func zoom(to display: CGFloat) {
+        sessionQueue.async {
+            guard let device = self.videoInput?.device,
+                  (try? device.lockForConfiguration()) != nil else { return }
+            defer { device.unlockForConfiguration() }
+            let limits = Self.zoomLimits(of: device)
+            let factor = min(max(display / Self.zoomMultiplier(for: device), limits.min), limits.max)
+            device.ramp(toVideoZoomFactor: factor, withRate: 1.6)
+        }
+    }
+
+    /// 今の倍率を画面に出すため、こまめに読む（ズームは少しずつ動くので）
+    private func startZoomTracking() {
+        guard zoomTimer == nil else { return }
+        zoomTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            guard let self, let device = self.zoomDevice else { return }
+            let current = device.videoZoomFactor * self.zoomMultiplier
+            if abs(current - self.zoom) > 0.004 {
+                self.zoom = current
+                self.frameLock.lock()
+                self._desiredZoom = current
+                self.frameLock.unlock()
+            }
+        }
+    }
+
     /// 距離を使うときの背面は、距離を測れるカメラを優先する（LiDAR → デュアルカメラ → 広角）。
-    /// それ以外はふつうの広角カメラ（4800万画素で撮れるのはこちら）
+    /// それ以外の背面は、超広角（0.5×）までズームできるデュアルカメラを、
+    /// 広角カメラと同じ大きさの写真が撮れるときだけ使う（画質を落とさないため）
     private static func camera(at position: AVCaptureDevice.Position, wantDepth: Bool) -> AVCaptureDevice? {
+        if position == .back && !wantDepth {
+            let wide = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+            if let dual = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back) {
+                let dualArea = bestPhotoFormat(of: dual).map { photoArea($0) } ?? 0
+                let wideArea = wide.flatMap { bestPhotoFormat(of: $0) }.map { photoArea($0) } ?? 0
+                if dualArea >= wideArea { return dual }
+            }
+            return wide
+        }
         let types: [AVCaptureDevice.DeviceType] = position == .back && wantDepth
             ? [.builtInLiDARDepthCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
             : [.builtInWideAngleCamera]
@@ -417,6 +553,124 @@ final class CameraModel: NSObject, ObservableObject {
     }
 
     // MARK: - 撮影
+
+    /// シャッター（画面のボタン・音量ボタン）。写真なら撮影、動画なら録画の開始／停止
+    func shutterPressed() {
+        switch captureKind {
+        case .photo: capture()
+        case .video: isRecording ? stopRecording() : startRecording()
+        }
+    }
+
+    // MARK: - 動画
+
+    /// 撮影中の画面と同じフィルタをかけた映像を録画する（多重露光はフィルムの色で録る）
+    func startRecording() {
+        guard status == .running, !isRecording, !isSaving else { return }
+        let options = LookOptions(mode: mode == .double ? .film : mode, dateStamp: dateStamp)
+        // 端末を横にして撮ったら、横向きで再生されるようにする
+        let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+        let transform = CGAffineTransform(rotationAngle: (angle - 90) * .pi / 180)
+        isRecording = true
+        recordingStartedAt = Date()
+        frameLock.lock()
+        _wantsRecording = true
+        frameLock.unlock()
+
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            self.sessionQueue.async {
+                if granted && !self.hasAudio { self.addMicrophone() }
+                let withAudio = self.hasAudio
+                self.videoQueue.async {
+                    self.frameLock.lock()
+                    let wants = self._wantsRecording
+                    self.frameLock.unlock()
+                    guard wants else { return }
+                    self.recorder = nil
+                    self.recordingOptions = options
+                    self.recordingTransform = transform
+                    self.recordingWithAudio = withAudio
+                }
+            }
+        }
+    }
+
+    func stopRecording() {
+        guard isRecording else { return }
+        isRecording = false
+        recordingStartedAt = nil
+        isSaving = true
+        frameLock.lock()
+        _wantsRecording = false
+        frameLock.unlock()
+
+        videoQueue.async {
+            let recorder = self.recorder
+            let lastFrame = self.lastRecordedFrame
+            self.recorder = nil
+            self.recordingOptions = nil
+            self.lastRecordedFrame = nil
+            guard let recorder else {
+                DispatchQueue.main.async {
+                    self.isSaving = false
+                    self.message = "短すぎて保存できませんでした"
+                }
+                return
+            }
+            recorder.finish { url in
+                let thumbnail = lastFrame.flatMap { self.previewImage(of: $0) }
+                guard let url else {
+                    DispatchQueue.main.async {
+                        self.isSaving = false
+                        self.message = "動画の保存に失敗しました"
+                    }
+                    return
+                }
+                self.saveVideoToLibrary(url)
+                DispatchQueue.main.async {
+                    if let thumbnail { self.lastPhoto = thumbnail }
+                    self.isSaving = false
+                }
+            }
+        }
+    }
+
+    /// マイクをセッションに追加する（初めて録画するときだけ。sessionQueue で呼ぶ）
+    private func addMicrophone() {
+        guard let mic = AVCaptureDevice.default(for: .audio),
+              let input = try? AVCaptureDeviceInput(device: mic) else { return }
+        session.beginConfiguration()
+        if session.canAddInput(input) && session.canAddOutput(audioOutput) {
+            session.addInput(input)
+            audioOutput.setSampleBufferDelegate(self, queue: videoQueue)
+            session.addOutput(audioOutput)
+            hasAudio = true
+        }
+        session.commitConfiguration()
+    }
+
+    private func saveVideoToLibrary(_ url: URL) {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                DispatchQueue.main.async {
+                    self.message = "写真への保存が許可されていません（設定 → フィルムカメラ → 写真）"
+                }
+                return
+            }
+            PHPhotoLibrary.shared().performChanges({
+                let request = PHAssetCreationRequest.forAsset()
+                let options = PHAssetResourceCreationOptions()
+                options.shouldMoveFile = true
+                request.addResource(with: .video, fileURL: url, options: options)
+            }) { success, _ in
+                DispatchQueue.main.async {
+                    self.message = success ? "動画を保存しました" : "動画の保存に失敗しました"
+                }
+            }
+        }
+    }
+
+    // MARK: - 写真
 
     func capture() {
         guard status == .running, !isSaving else { return }
@@ -687,15 +941,35 @@ final class CameraModel: NSObject, ObservableObject {
 
 // MARK: - 映像フレームと距離の受け取り
 
-extension CameraModel: AVCaptureVideoDataOutputSampleBufferDelegate {
+extension CameraModel: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput,
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
+        if output === audioOutput {
+            if recordingOptions != nil { recorder?.append(audio: sampleBuffer) }
+            return
+        }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let frame = CIImage(cvPixelBuffer: pixelBuffer)
         frameLock.lock()
         _latestFrame = frame
+        let depth = _latestDepth
+        let subject = _subjectDistance
         frameLock.unlock()
+
+        // 録画中は、撮影中の画面と同じフィルタをかけて書き込む
+        guard var options = recordingOptions else { return }
+        if recorder == nil {
+            recorder = VideoRecorder(size: frame.extent.size, transform: recordingTransform,
+                                     withAudio: recordingWithAudio)
+        }
+        if options.mode.usesDepth {
+            options.depth = depth
+            options.subjectDistance = subject
+        }
+        let look = LookRenderer.apply(frame, options: options)
+        recorder?.append(look, at: CMSampleBufferGetPresentationTimeStamp(sampleBuffer), context: videoContext)
+        lastRecordedFrame = look
     }
 }
 

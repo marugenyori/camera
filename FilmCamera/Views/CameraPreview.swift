@@ -21,11 +21,11 @@ struct CameraPreview: UIViewRepresentable {
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         view.backgroundColor = .black
         view.delegate = context.coordinator
-        // 音量ボタン（iPhone 16 はカメラコントロールも）でシャッターを切る。
+        // 音量ボタン（iPhone 16 はカメラコントロールも）でシャッターを切る（動画なら録画の開始／停止）。
         // カメラが動いている画面にこの仕組みを付けると、音量は変わらずに撮影の合図になる
         if #available(iOS 17.2, *) {
             let interaction = AVCaptureEventInteraction { [weak model] event in
-                if event.phase == .ended { model?.capture() }
+                if event.phase == .ended { model?.shutterPressed() }
             }
             view.addInteraction(interaction)
         }
