@@ -377,27 +377,48 @@ final class CameraModel: NSObject, ObservableObject {
         options.depth = depth
 
         processingQueue.async {
-            let output = LookRenderer.apply(image, options: options)
-            let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+            let output = LookRenderer.upscaleForSaving(LookRenderer.apply(image, options: options))
+            // 10 ビットの HEIF で保存する（JPEG の 8 ビットより階調がなめらかで、ファイルも小さい）
+            let p3 = CGColorSpace(name: CGColorSpace.displayP3)!
             let quality = kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption
-            guard let jpeg = self.ciContext.jpegRepresentation(
-                of: output, colorSpace: colorSpace, options: [quality: 0.97]) else {
+            let file: (data: Data, type: String)
+            if let heif = try? self.ciContext.heif10Representation(of: output, colorSpace: p3,
+                                                                   options: [quality: 0.95]) {
+                file = (heif, "public.heic")
+            } else if let jpeg = self.ciContext.jpegRepresentation(of: output, colorSpace: p3,
+                                                                    options: [quality: 0.97]) {
+                file = (jpeg, "public.jpeg")
+            } else {
                 DispatchQueue.main.async {
                     self.isSaving = false
                     self.message = "画像の作成に失敗しました"
                 }
                 return
             }
-            let thumbnail = UIImage(data: jpeg)
+            let thumbnail = self.previewImage(of: output)
             DispatchQueue.main.async {
                 self.lastPhoto = thumbnail
                 self.isSaving = false
             }
-            self.saveToLibrary(jpeg)
+            self.saveToLibrary(file.data, type: file.type)
         }
     }
 
-    private func saveToLibrary(_ jpeg: Data) {
+    /// 撮った写真を画面で見る用に縮小する（大きな写真をそのまま読み込まないため）
+    private func previewImage(of image: CIImage) -> UIImage? {
+        let long = max(image.extent.width, image.extent.height)
+        guard long > 0 else { return nil }
+        let scale = min(1, 2400 / long)
+        let small = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        guard let cg = ciContext.createCGImage(small, from: small.extent,
+                                               format: .RGBA8,
+                                               colorSpace: CGColorSpace(name: CGColorSpace.displayP3)) else {
+            return nil
+        }
+        return UIImage(cgImage: cg)
+    }
+
+    private func saveToLibrary(_ data: Data, type: String) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
                 DispatchQueue.main.async {
@@ -407,7 +428,9 @@ final class CameraModel: NSObject, ObservableObject {
             }
             PHPhotoLibrary.shared().performChanges({
                 let request = PHAssetCreationRequest.forAsset()
-                request.addResource(with: .photo, data: jpeg, options: nil)
+                let options = PHAssetResourceCreationOptions()
+                options.uniformTypeIdentifier = type
+                request.addResource(with: .photo, data: data, options: options)
             }) { success, _ in
                 if !success {
                     DispatchQueue.main.async { self.message = "写真の保存に失敗しました" }

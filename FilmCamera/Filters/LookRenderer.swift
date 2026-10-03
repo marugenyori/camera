@@ -43,7 +43,7 @@ enum LookRenderer {
 
         // 粒子は画質が落ちて見えるため入れない（`grain` は残してある）
         let grained = diffusion(toned, radius: longSide(extent) * 0.006, amount: 0.10)
-        return toLinear(vignette(grained, strength: 0.28, inner: 0.42))
+        return toLinear(vignette(detail(grained), strength: 0.28, inner: 0.42))
     }
 
     // MARK: - フラッシュ風（2000年代のコンデジの直射フラッシュ）
@@ -171,7 +171,7 @@ enum LookRenderer {
                                b: (0.08, 0.89, 0.04, -0.04))
 
         let grained = diffusion(toned, radius: longSide(extent) * 0.010, amount: 0.18)
-        return toLinear(vignette(grained, strength: 0.10, inner: 0.55))
+        return toLinear(vignette(detail(grained), strength: 0.10, inner: 0.55))
     }
 
     // MARK: - 日付の写し込み（オレンジの文字）
@@ -278,6 +278,40 @@ enum LookRenderer {
 
     /// ぼかした像をスクリーン合成で薄く重ね、明るい部分をふんわりにじませる。
     /// 元の像はぼかさないので、細部は残る
+    /// にじみで甘くなった輪郭を、明るさだけ少し締める（色ノイズは強調しない）
+    private static func detail(_ image: CIImage) -> CIImage {
+        let extent = image.extent
+        let sharpen = CIFilter.sharpenLuminance()
+        sharpen.inputImage = image
+        sharpen.sharpness = 0.45
+        sharpen.radius = Float(max(1, longSide(extent) / 2000) * 1.2)
+        return (sharpen.outputImage ?? image).cropped(to: extent)
+    }
+
+    // MARK: - 保存用の拡大
+
+    /// 保存する写真の長い辺がこれより小さければ、高品質な拡大（Lanczos）で大きくする
+    static let savedLongSide: CGFloat = 6048
+
+    /// 写真を保存用に拡大する。拡大で増えるのは画素数で、写っている情報は増えないため、
+    /// 拡大後に輪郭を軽く締めて見た目の細かさを補う
+    static func upscaleForSaving(_ image: CIImage) -> CIImage {
+        let extent = image.extent
+        let long = longSide(extent)
+        guard long > 0, long < savedLongSide * 0.95 else { return image }
+        let scale = savedLongSide / long
+        let lanczos = CIFilter.lanczosScaleTransform()
+        lanczos.inputImage = image
+        lanczos.scale = Float(scale)
+        lanczos.aspectRatio = 1
+        guard let up = lanczos.outputImage else { return image }
+        let sharpen = CIFilter.sharpenLuminance()
+        sharpen.inputImage = up
+        sharpen.sharpness = 0.3
+        sharpen.radius = Float(scale * 1.2)
+        return (sharpen.outputImage ?? up).cropped(to: up.extent)
+    }
+
     private static func diffusion(_ image: CIImage, radius: CGFloat, amount: CGFloat) -> CIImage {
         let extent = image.extent
         let blurred = image
