@@ -17,6 +17,7 @@ enum LookRenderer {
         case .film: out = film(image, seed: options.grainSeed)
         case .flash: out = flash(image, depth: options.depth, subject: options.subjectDistance)
         case .iwai: out = iwai(image, seed: options.grainSeed)
+        case .cross: out = cross(image)
         }
         if options.dateStamp { out = stamp(date, on: out) }
         return out
@@ -163,6 +164,43 @@ enum LookRenderer {
         gradient.color0 = CIColor(red: 1, green: 1, blue: 1)
         gradient.color1 = CIColor(red: edge, green: edge, blue: edge)
         return (gradient.outputImage ?? CIImage(color: .white)).cropped(to: extent)
+    }
+
+    // MARK: - クロス（クロスプロセス風）
+
+    /// 持ち主が気に入った「アンバランスな色」。初期のフラッシュの処理をそのまま残したもの。
+    /// 色の調整をあえてリニアのまま行うので、暖色（床や木）はより黄色く、
+    /// 影や奥は青く沈み、暖色と寒色がぶつかる濃く硬い色になる。粒子は入れない
+    private static func cross(_ image: CIImage) -> CIImage {
+        let extent = image.extent
+        let center = CGPoint(x: extent.midX, y: extent.midY + extent.height * 0.05)
+
+        let bright = exposure(image, ev: 0.8)
+        let dark = exposure(image, ev: -0.5)
+        let mask = radialMask(center: center, extent: extent,
+                              inner: shortSide(extent) * 0.30, outer: longSide(extent) * 0.95,
+                              edge: 0)
+        let blend = CIFilter.blendWithMask()
+        blend.inputImage = bright
+        blend.backgroundImage = dark
+        blend.maskImage = mask
+        let lit = blend.outputImage ?? image
+
+        let controls = CIFilter.colorControls()
+        controls.inputImage = lit
+        controls.saturation = 1.20
+        controls.contrast = 1.08
+
+        let punchy = toneCurve(controls.outputImage, [
+            (0.00, 0.00), (0.20, 0.11), (0.50, 0.52), (0.80, 0.93), (1.00, 1.00),
+        ])
+        let cool = colorMatrix(punchy, r: 0.97, g: 1.00, b: 1.04, bias: (0, 0, 0.005))
+
+        let sharpen = CIFilter.sharpenLuminance()
+        sharpen.inputImage = cool
+        sharpen.sharpness = 0.6
+        let sharp = (sharpen.outputImage ?? cool).cropped(to: extent)
+        return vignette(sharp, strength: 0.12, inner: 0.55)
     }
 
     // MARK: - 岩井俊二風（淡い水色・白飛び・やわらかな光）

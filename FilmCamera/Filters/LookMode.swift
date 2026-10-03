@@ -6,6 +6,7 @@ enum LookMode: String, CaseIterable, Identifiable {
     case film
     case flash
     case iwai
+    case cross
 
     var id: String { rawValue }
 
@@ -14,6 +15,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .film: return "フィルム"
         case .flash: return "フラッシュ"
         case .iwai: return "岩井俊二風"
+        case .cross: return "クロス"
         }
     }
 
@@ -25,6 +27,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .film: return "低いコントラスト・暖かい白・にじむ光"
         case .flash: return "直射フラッシュのコンデジ写真"
         case .iwai: return "淡い水色・白飛び・やわらかな光"
+        case .cross: return "暖色と寒色がぶつかる、濃く硬い色"
         }
     }
 }
