@@ -12,70 +12,57 @@ enum LookRenderer {
         let image = input.transformed(by: CGAffineTransform(
             translationX: -input.extent.minX, y: -input.extent.minY))
 
+        var out: CIImage
         switch options.mode {
-        case .film:
-            var out = film(image, seed: options.grainSeed)
-            if options.dateStamp { out = stamp(date, on: out) }
-            return out
-        case .flash:
-            var out = flash(image, seed: options.grainSeed)
-            if options.dateStamp { out = stamp(date, on: out) }
-            return out
-        case .instant:
-            var out = instant(image, seed: options.grainSeed)
-            if options.dateStamp { out = stamp(date, on: out) }
-            return instantFrame(out)
+        case .film: out = film(image, seed: options.grainSeed)
+        case .flash: out = flash(image, seed: options.grainSeed)
+        case .iwai: out = iwai(image, seed: options.grainSeed)
         }
+        if options.dateStamp { out = stamp(date, on: out) }
+        return out
     }
 
-    // MARK: - フィルム風（写ルンです・ポートラ風）
+    // MARK: - フィルム風（写ルンです・ネガフィルム）
 
+    /// 黒が締まりきらない低いコントラスト、クリーム〜ピンクがかったハイライト、
+    /// 緑っぽい影、くすんだ緑、ハイライトのふんわりしたにじみ、細かい粒子
     private static func film(_ image: CIImage, seed: CGPoint) -> CIImage {
         let extent = image.extent
 
-        // 彩度とコントラストを少し下げる
         let controls = CIFilter.colorControls()
-        controls.inputImage = image
-        controls.saturation = 0.82
-        controls.contrast = 0.94
-        controls.brightness = 0.0
+        controls.inputImage = exposure(image, ev: 0.15)
+        controls.saturation = 0.80
+        controls.contrast = 0.95
 
-        // 黒を持ち上げ、白を少し抑える（色あせた感じ）
-        let curve = toneCurve(controls.outputImage, [
-            (0.00, 0.07), (0.25, 0.25), (0.50, 0.53), (0.75, 0.79), (1.00, 0.96),
-        ])
+        // 色ごとのトーンカーブ（入力 x に対する 3 次式）
+        // 赤：ハイライトを持ち上げる／緑：影を持ち上げ、ハイライトを抑える／青：ハイライトを抑える
+        let toned = polynomial(controls.outputImage ?? image,
+                               r: (0.05, 0.85, 0.25, -0.17),
+                               g: (0.07, 0.92, -0.02, -0.07),
+                               b: (0.06, 0.80, 0.06, -0.04))
 
-        // 暖色寄りにし、影に少し緑を足す
-        let warm = colorMatrix(curve,
-                               r: 1.06, g: 1.00, b: 0.88,
-                               bias: (0.010, 0.016, 0.000))
-
-        // ハイライトのにじみ（ハレーション）
-        let bloom = CIFilter.bloom()
-        bloom.inputImage = warm
-        bloom.radius = Float(longSide(extent) * 0.006)
-        bloom.intensity = 0.15
-        let glowed = (bloom.outputImage ?? warm).cropped(to: extent)
-
-        let grained = grain(glowed, amount: 0.06, seed: seed)
-        return vignette(grained, strength: 0.42, inner: 0.40)
+        let hazy = diffusion(toned, radius: longSide(extent) * 0.006, amount: 0.22)
+        let grained = grain(hazy, amount: 0.07, seed: seed)
+        return vignette(grained, strength: 0.35, inner: 0.40)
     }
 
-    // MARK: - フラッシュ風（直射フラッシュ）
+    // MARK: - フラッシュ風（2000年代のコンデジの直射フラッシュ）
 
+    /// 手前の被写体が平たく明るく照らされ、白は飛び気味、黒はつぶれ、
+    /// 背景は少し暗く沈む。色は濃く、くっきり
     private static func flash(_ image: CIImage, seed: CGPoint) -> CIImage {
         let extent = image.extent
-        // 人の顔が来やすい、中央より少し上を中心にする（Core Image は下が原点）
-        let center = CGPoint(x: extent.midX, y: extent.midY + extent.height * 0.06)
+        // 人が来やすい、中央より少し上を中心にする（Core Image は下が原点）
+        let center = CGPoint(x: extent.midX, y: extent.midY + extent.height * 0.05)
 
-        let bright = exposure(image, ev: 0.9)
-        let dark = exposure(image, ev: -1.3)
+        let bright = exposure(image, ev: 0.8)
+        let dark = exposure(image, ev: -0.5)
 
-        // 中央は明るく、外側ほど暗くなるマスク
+        // 中央は明るく、外側はゆるやかに暗くなるマスク
         let gradient = CIFilter.radialGradient()
         gradient.center = center
-        gradient.radius0 = Float(shortSide(extent) * 0.22)
-        gradient.radius1 = Float(longSide(extent) * 0.78)
+        gradient.radius0 = Float(shortSide(extent) * 0.30)
+        gradient.radius1 = Float(longSide(extent) * 0.95)
         gradient.color0 = CIColor(red: 1, green: 1, blue: 1)
         gradient.color1 = CIColor(red: 0, green: 0, blue: 0)
         let mask = (gradient.outputImage ?? image).cropped(to: extent)
@@ -86,70 +73,49 @@ enum LookRenderer {
         blend.maskImage = mask
         let lit = blend.outputImage ?? image
 
-        // コントラスト強め・白飛び気味
         let controls = CIFilter.colorControls()
         controls.inputImage = lit
-        controls.saturation = 1.08
-        controls.contrast = 1.15
+        controls.saturation = 1.20
+        controls.contrast = 1.08
+
+        // 黒をつぶし、白を飛ばす
         let punchy = toneCurve(controls.outputImage, [
-            (0.00, 0.00), (0.25, 0.19), (0.50, 0.52), (0.75, 0.86), (1.00, 1.00),
+            (0.00, 0.00), (0.20, 0.11), (0.50, 0.52), (0.80, 0.93), (1.00, 1.00),
         ])
 
-        // フラッシュ光の少し青白い色
-        let cool = colorMatrix(punchy, r: 0.98, g: 1.00, b: 1.05, bias: (0, 0, 0.01))
+        // フラッシュ光のやや青白い色
+        let cool = colorMatrix(punchy, r: 0.97, g: 1.00, b: 1.04, bias: (0, 0, 0.005))
 
         let sharpen = CIFilter.sharpenLuminance()
         sharpen.inputImage = cool
-        sharpen.sharpness = 0.5
+        sharpen.sharpness = 0.6
         let sharp = (sharpen.outputImage ?? cool).cropped(to: extent)
 
-        let grained = grain(sharp, amount: 0.04, seed: seed)
-        return vignette(grained, strength: 0.20, inner: 0.50)
+        let grained = grain(sharp, amount: 0.03, seed: seed)
+        return vignette(grained, strength: 0.12, inner: 0.55)
     }
 
-    // MARK: - インスタント風（チェキ・ポラロイド風）
+    // MARK: - 岩井俊二風（淡い水色・白飛び・やわらかな光）
 
-    private static func instant(_ image: CIImage, seed: CGPoint) -> CIImage {
-        // 中央を正方形に切り抜く
-        let side = shortSide(image.extent)
-        let square = image
-            .cropped(to: CGRect(x: (image.extent.width - side) / 2,
-                                y: (image.extent.height - side) / 2,
-                                width: side, height: side))
-        let base = square.transformed(by: CGAffineTransform(
-            translationX: -square.extent.minX, y: -square.extent.minY))
+    /// 明るめの露出、持ち上がった青緑の影、水色がかった白、
+    /// 低い彩度、ハイライトが大きくにじむ空気感
+    private static func iwai(_ image: CIImage, seed: CGPoint) -> CIImage {
+        let extent = image.extent
 
         let controls = CIFilter.colorControls()
-        controls.inputImage = base
-        controls.saturation = 0.72
-        controls.contrast = 0.86
-        controls.brightness = 0.03
+        controls.inputImage = exposure(image, ev: 0.35)
+        controls.saturation = 0.62
+        controls.contrast = 0.90
 
-        let curve = toneCurve(controls.outputImage, [
-            (0.00, 0.10), (0.25, 0.31), (0.50, 0.57), (0.75, 0.81), (1.00, 0.94),
-        ])
+        // 赤を抑え、緑と青の影を持ち上げる
+        let toned = polynomial(controls.outputImage ?? image,
+                               r: (0.06, 0.82, 0.10, -0.05),
+                               g: (0.09, 0.88, 0.05, -0.04),
+                               b: (0.12, 0.86, 0.04, -0.04))
 
-        // 影は青緑寄り、全体はやや黄みのある淡い色
-        let tinted = colorMatrix(curve,
-                                 r: 1.03, g: 1.01, b: 0.93,
-                                 bias: (-0.010, 0.020, 0.045))
-
-        let grained = grain(tinted, amount: 0.04, seed: seed)
-        return vignette(grained, strength: 0.30, inner: 0.45)
-    }
-
-    /// 白フチを付ける（下だけ太い）
-    private static func instantFrame(_ photo: CIImage) -> CIImage {
-        let side = photo.extent.width
-        let border = side * 0.06
-        let bottom = side * 0.24
-        let canvasRect = CGRect(x: 0, y: 0,
-                                width: side + border * 2,
-                                height: photo.extent.height + border + bottom)
-        let paper = CIImage(color: CIColor(red: 0.97, green: 0.96, blue: 0.93))
-            .cropped(to: canvasRect)
-        let placed = photo.transformed(by: CGAffineTransform(translationX: border, y: bottom))
-        return placed.composited(over: paper)
+        let hazy = diffusion(toned, radius: longSide(extent) * 0.012, amount: 0.35)
+        let grained = grain(hazy, amount: 0.04, seed: seed)
+        return vignette(grained, strength: 0.10, inner: 0.55)
     }
 
     // MARK: - 日付の写し込み（オレンジの文字）
@@ -235,6 +201,35 @@ enum LookRenderer {
         multiply.inputImage = shade
         multiply.backgroundImage = image
         return (multiply.outputImage ?? image).cropped(to: extent)
+    }
+
+    /// 色ごとに out = a0 + a1·x + a2·x² + a3·x³ をかける
+    private static func polynomial(_ image: CIImage,
+                                   r: (CGFloat, CGFloat, CGFloat, CGFloat),
+                                   g: (CGFloat, CGFloat, CGFloat, CGFloat),
+                                   b: (CGFloat, CGFloat, CGFloat, CGFloat)) -> CIImage {
+        let f = CIFilter.colorPolynomial()
+        f.inputImage = image
+        f.redCoefficients = CIVector(x: r.0, y: r.1, z: r.2, w: r.3)
+        f.greenCoefficients = CIVector(x: g.0, y: g.1, z: g.2, w: g.3)
+        f.blueCoefficients = CIVector(x: b.0, y: b.1, z: b.2, w: b.3)
+        f.alphaCoefficients = CIVector(x: 0, y: 1, z: 0, w: 0)
+        return f.outputImage ?? image
+    }
+
+    /// ぼかした像をスクリーン合成で薄く重ね、明るい部分をふんわりにじませる。
+    /// 元の像はぼかさないので、細部は残る
+    private static func diffusion(_ image: CIImage, radius: CGFloat, amount: CGFloat) -> CIImage {
+        let extent = image.extent
+        let blurred = image
+            .clampedToExtent()
+            .applyingGaussianBlur(sigma: Double(radius))
+            .cropped(to: extent)
+        let faded = colorMatrix(blurred, r: amount, g: amount, b: amount, bias: (0, 0, 0))
+        let screen = CIFilter.screenBlendMode()
+        screen.inputImage = faded
+        screen.backgroundImage = image
+        return (screen.outputImage ?? image).cropped(to: extent)
     }
 
     private static func toneCurve(_ image: CIImage?, _ p: [(CGFloat, CGFloat)]) -> CIImage {

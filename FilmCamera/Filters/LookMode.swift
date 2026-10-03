@@ -4,7 +4,7 @@ import CoreGraphics
 enum LookMode: String, CaseIterable, Identifiable {
     case film
     case flash
-    case instant
+    case iwai
 
     var id: String { rawValue }
 
@@ -12,15 +12,15 @@ enum LookMode: String, CaseIterable, Identifiable {
         switch self {
         case .film: return "フィルム"
         case .flash: return "フラッシュ"
-        case .instant: return "インスタント"
+        case .iwai: return "岩井俊二風"
         }
     }
 
     var caption: String {
         switch self {
-        case .film: return "色あせ・粒子・周辺減光"
-        case .flash: return "中央が明るく、背景が落ちる"
-        case .instant: return "淡い色と白フチ（正方形）"
+        case .film: return "低いコントラスト・暖かい白・粒子"
+        case .flash: return "直射フラッシュのコンデジ写真"
+        case .iwai: return "淡い水色・白飛び・やわらかな光"
         }
     }
 }

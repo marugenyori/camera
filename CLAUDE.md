@@ -1,6 +1,6 @@
 # このリポジトリについて（Claude 向けの作業メモ）
 
-撮った後ではなく、**撮影中のプレビューの時点で**フィルム風・フラッシュ風・インスタント風に見えるカメラアプリ「フィルムカメラ」（SwiftUI）です。
+撮った後ではなく、**撮影中のプレビューの時点で**フィルム風・フラッシュ風・岩井俊二風に見えるカメラアプリ「フィルムカメラ」（SwiftUI）です。
 持ち主は Mac を持っておらず、Windows PC と iPhone から作業します。ビルドの確認も配信も、すべて GitHub Actions（macOS ランナー）で行います。
 仕組みは `marugenyori/claud_code`（PCIe学習アプリ）と同じです。
 
@@ -16,7 +16,7 @@
 |---|---|
 | `FilmCamera/App/` | `@main` の App |
 | `FilmCamera/Camera/CameraModel.swift` | AVFoundation でカメラを動かす。映像フレームを `latestFrame` に置き、撮影した写真にフィルタをかけて写真アプリに保存する |
-| `FilmCamera/Filters/LookMode.swift` | モードの一覧（フィルム／フラッシュ／インスタント） |
+| `FilmCamera/Filters/LookMode.swift` | モードの一覧（フィルム／フラッシュ／岩井俊二風） |
 | `FilmCamera/Filters/LookRenderer.swift` | 各モードの見え方（Core Image のフィルタの組み合わせ）。**プレビューと保存の両方で同じ関数を使う** |
 | `FilmCamera/Views/CameraPreview.swift` | MTKView（Metal）で、フィルタをかけた映像を毎秒30コマ描く |
 | `FilmCamera/Views/ContentView.swift` | 画面（モード切り替え、シャッター、日付、カメラ切り替え） |
@@ -32,7 +32,11 @@
 - プレビュー：カメラのフレーム → 画面サイズに縮小 → `LookRenderer.apply` → MTKView に描画
 - 保存：フル解像度の写真 → 同じ `LookRenderer.apply` → JPEG → 写真アプリ
 - 粒子の大きさ・周辺減光・日付の文字サイズは**画像サイズに対する割合**で決めているので、プレビューと保存で見た目がそろう。新しいモードを足すときも、ピクセルの固定値ではなく割合で書く
-- インスタントは正方形に切り抜いて白フチを付ける（プレビューにもフチが出る）
+- 目標の見え方（持ち主が見せた参考写真より）
+  - フィルム：ネガフィルムで撮った川遊びの写真。低いコントラスト、クリーム〜ピンクの白、緑っぽい影、くすんだ緑、ふんわりしたにじみ
+  - フラッシュ：2000年代のコンデジで夜に直射フラッシュを使った写真。手前が平たく明るく、白飛び・黒つぶれ、色が濃い
+  - 岩井俊二風：明るめ、淡い水色、低い彩度、ハイライトが大きくにじむ
+- 色ごとのトーンカーブは `CIColorPolynomial`（3次式）、にじみはぼかした像のスクリーン合成（`diffusion`）で作っている
 - 新しいモードは `LookMode` に case を足し、`LookRenderer.apply` の switch に処理を足すだけでよい
 
 ## ビルドと配信
