@@ -242,26 +242,27 @@ enum LookRenderer {
         return scaled.transformed(by: CGAffineTransform(translationX: dx, y: dy)).cropped(to: extent)
     }
 
-    // MARK: - 岩井俊二風（淡い水色・白飛び・やわらかな光）
+    // MARK: - 岩井俊二風（『リリイ・シュシュのすべて』のポスターのような色）
 
-    /// 明るめの露出、持ち上がった青緑の影、水色がかった白、
-    /// 低い彩度、ハイライトが大きくにじむ空気感
+    /// 澄んだシアン寄りの青空、紺に沈む影（鉄塔や人のシルエット）、
+    /// 白く光ってにじむ太陽まわり。全体をやや青緑に寄せ、色は淡くせずしっかり残す
     private static func iwai(_ image: CIImage, seed: CGPoint) -> CIImage {
         let extent = image.extent
 
         let controls = CIFilter.colorControls()
-        controls.inputImage = toSRGB(exposure(image, ev: 0.25))
-        controls.saturation = 0.70
-        controls.contrast = 0.95
+        controls.inputImage = toSRGB(exposure(image, ev: 0.30))
+        controls.saturation = 1.10
+        controls.contrast = 1.00
 
-        // 赤を抑え、緑と青の影を持ち上げる
+        // 赤を抑えて全体を青緑に寄せ、青は中間〜影で持ち上げて空を澄んだ青に、影を紺にする
         let toned = polynomial(controls.outputImage ?? image,
-                               r: (0.03, 0.86, 0.10, -0.05),
-                               g: (0.05, 0.91, 0.05, -0.04),
-                               b: (0.08, 0.89, 0.04, -0.04))
+                               r: (0.00, 0.80, 0.12, -0.02),
+                               g: (0.03, 0.96, 0.05, -0.04),
+                               b: (0.07, 1.02, 0.00, -0.09))
 
-        let grained = diffusion(toned, radius: longSide(extent) * 0.010, amount: 0.18)
-        return toLinear(vignette(detail(grained), strength: 0.10, inner: 0.55))
+        // 明るい空や光のまわりを大きくにじませる（細部はぼかさない）
+        let glowing = diffusion(toned, radius: longSide(extent) * 0.020, amount: 0.28)
+        return toLinear(detail(glowing))
     }
 
     // MARK: - 日付の写し込み（オレンジの文字）
