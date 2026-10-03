@@ -137,7 +137,7 @@ final class CameraModel: NSObject, ObservableObject {
 
         session.sessionPreset = .photo
 
-        guard let device = Self.camera(at: position),
+        guard let device = Self.camera(at: position, wantDepth: wantDepth),
               let input = try? AVCaptureDeviceInput(device: device),
               session.canAddInput(input) else { return false }
         session.addInput(input)
@@ -153,10 +153,6 @@ final class CameraModel: NSObject, ObservableObject {
         depthOutput.isFilteringEnabled = true   // 穴やノイズをならした距離をもらう
         depthOutput.alwaysDiscardsLateDepthData = true
         depthOutput.setDelegate(self, callbackQueue: videoQueue)
-        if session.canAddOutput(depthOutput) {
-            session.addOutput(depthOutput)
-            hasDepthOutput = true
-        }
 
         applyFormat(for: device, wantDepth: wantDepth)
         setUpConnections(for: device)
@@ -164,24 +160,31 @@ final class CameraModel: NSObject, ObservableObject {
     }
 
     /// 写真用の最高画質の設定と、距離を測る設定を切り替える。
-    /// 距離を測れる設定は写真の最大解像度が下がる機種があるため、フラッシュモードのときだけ使う。
+    /// 距離を測れる設定は写真の最大解像度が下がる（4800万画素で撮れない）ため、フラッシュモードのときだけ使う。
     /// sessionQueue の beginConfiguration〜commitConfiguration の中で呼ぶ
     private func applyFormat(for device: AVCaptureDevice, wantDepth: Bool) {
         var depthOn = false
-        if wantDepth, hasDepthOutput, let format = Self.bestDepthFormat(of: device),
-           let depthFormat = Self.bestDepthDataFormat(of: format) {
-            do {
-                try device.lockForConfiguration()
-                device.activeFormat = format
-                device.activeDepthDataFormat = depthFormat
-                device.unlockForConfiguration()
-                depthOn = true
-            } catch {
-                depthOn = false
+        if wantDepth {
+            if !hasDepthOutput, session.canAddOutput(depthOutput) {
+                session.addOutput(depthOutput)
+                hasDepthOutput = true
+            }
+            if hasDepthOutput, let format = Self.bestDepthFormat(of: device),
+               let depthFormat = Self.bestDepthDataFormat(of: format) {
+                depthOn = setFormat(format, depthFormat: depthFormat, on: device)
             }
         }
         if !depthOn {
-            session.sessionPreset = .photo
+            if hasDepthOutput {
+                session.removeOutput(depthOutput)
+                hasDepthOutput = false
+            }
+            // 写真がいちばん大きく撮れる設定を自分で選ぶ（標準の設定だと 1200万画素になる機種がある）
+            let photoFormatSet = Self.bestPhotoFormat(of: device)
+                .map { setFormat($0, depthFormat: nil, on: device) } ?? false
+            if !photoFormatSet {
+                session.sessionPreset = .photo
+            }
         }
 
         isDepthOn = depthOn
@@ -195,6 +198,43 @@ final class CameraModel: NSObject, ObservableObject {
         DispatchQueue.main.async { self.isDepthActive = depthOn }
     }
 
+    private func setFormat(_ format: AVCaptureDevice.Format, depthFormat: AVCaptureDevice.Format?,
+                           on device: AVCaptureDevice) -> Bool {
+        do {
+            try device.lockForConfiguration()
+            device.activeFormat = format
+            if let depthFormat { device.activeDepthDataFormat = depthFormat }
+            device.unlockForConfiguration()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// 写真がいちばん大きく撮れる設定（映像は 30fps 以上・8 ビットのもの）。
+    /// 同じ大きさなら、プレビューの映像が 1920×1440 に近いものを選ぶ
+    private static func bestPhotoFormat(of device: AVCaptureDevice) -> AVCaptureDevice.Format? {
+        let target: Int32 = 1920 * 1440
+        let eightBit: Set<OSType> = [kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                                     kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+        let candidates = device.formats.filter { format in
+            eightBit.contains(CMFormatDescriptionGetMediaSubType(format.formatDescription))
+                && format.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 30 }
+        }
+        return candidates.max { a, b in
+            (photoArea(a), -abs(videoArea(a) - target)) < (photoArea(b), -abs(videoArea(b) - target))
+        }
+    }
+
+    private static func photoArea(_ f: AVCaptureDevice.Format) -> Int32 {
+        f.supportedMaxPhotoDimensions.map { $0.width * $0.height }.max() ?? 0
+    }
+
+    private static func videoArea(_ f: AVCaptureDevice.Format) -> Int32 {
+        let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+        return d.width * d.height
+    }
+
     /// 写真にも距離を付けるか。対応しているかどうかは設定を変えた後に決まるので、
     /// 設定の確定後にもう一度呼ぶ（sessionQueue で呼ぶ）
     private func refreshPhotoDepthDelivery() {
@@ -203,13 +243,6 @@ final class CameraModel: NSObject, ObservableObject {
 
     /// 距離を測れる設定のうち、写真がいちばん大きく撮れるもの
     private static func bestDepthFormat(of device: AVCaptureDevice) -> AVCaptureDevice.Format? {
-        func photoArea(_ f: AVCaptureDevice.Format) -> Int32 {
-            f.supportedMaxPhotoDimensions.map { $0.width * $0.height }.max() ?? 0
-        }
-        func videoArea(_ f: AVCaptureDevice.Format) -> Int32 {
-            let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
-            return d.width * d.height
-        }
         let candidates = device.formats.filter { format in
             !format.supportedDepthDataFormats.isEmpty
                 && format.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 30 }
@@ -270,9 +303,10 @@ final class CameraModel: NSObject, ObservableObject {
         }
     }
 
-    /// 背面は距離を測れるカメラを優先する（LiDAR → デュアルカメラ → ふつうの広角）
-    private static func camera(at position: AVCaptureDevice.Position) -> AVCaptureDevice? {
-        let types: [AVCaptureDevice.DeviceType] = position == .back
+    /// 距離を使うときの背面は、距離を測れるカメラを優先する（LiDAR → デュアルカメラ → 広角）。
+    /// それ以外はふつうの広角カメラ（4800万画素で撮れるのはこちら）
+    private static func camera(at position: AVCaptureDevice.Position, wantDepth: Bool) -> AVCaptureDevice? {
+        let types: [AVCaptureDevice.DeviceType] = position == .back && wantDepth
             ? [.builtInLiDARDepthCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
             : [.builtInWideAngleCamera]
         for type in types {
@@ -289,8 +323,9 @@ final class CameraModel: NSObject, ObservableObject {
         guard isConfigured else { return }
         let wantDepth = mode.usesDepth
         sessionQueue.async {
-            guard let device = self.videoInput?.device else { return }
+            guard let current = self.videoInput?.device else { return }
             self.session.beginConfiguration()
+            let device = self.useCamera(at: current.position, wantDepth: wantDepth) ?? current
             self.applyFormat(for: device, wantDepth: wantDepth)
             self.setUpConnections(for: device)
             self.session.commitConfiguration()
@@ -298,24 +333,36 @@ final class CameraModel: NSObject, ObservableObject {
         }
     }
 
+    /// 使うカメラを切り替える（同じなら何もしない）。切り替えたカメラ、または今のカメラを返す。
+    /// sessionQueue の beginConfiguration〜commitConfiguration の中で呼ぶ
+    private func useCamera(at position: AVCaptureDevice.Position, wantDepth: Bool) -> AVCaptureDevice? {
+        guard let device = Self.camera(at: position, wantDepth: wantDepth) else {
+            return videoInput?.device
+        }
+        if device.uniqueID == videoInput?.device.uniqueID { return device }
+        guard let input = try? AVCaptureDeviceInput(device: device) else { return videoInput?.device }
+        // 前の設定のままだと新しいカメラで使えないことがあるので、いったん標準に戻す
+        session.sessionPreset = .photo
+        if let current = videoInput { session.removeInput(current) }
+        if session.canAddInput(input) {
+            session.addInput(input)
+            videoInput = input
+        } else if let current = videoInput {
+            session.addInput(current)
+        }
+        return videoInput?.device
+    }
+
     func switchCamera() {
         guard status == .running else { return }
         let next: AVCaptureDevice.Position = position == .back ? .front : .back
         let wantDepth = mode.usesDepth
         sessionQueue.async {
-            guard let device = Self.camera(at: next),
-                  let input = try? AVCaptureDeviceInput(device: device) else { return }
             self.session.beginConfiguration()
-            // 前の設定のままだと新しいカメラで使えないことがあるので、いったん標準に戻す
-            self.session.sessionPreset = .photo
-            if let current = self.videoInput { self.session.removeInput(current) }
-            if self.session.canAddInput(input) {
-                self.session.addInput(input)
-                self.videoInput = input
-            } else if let current = self.videoInput {
-                self.session.addInput(current)
+            guard let active = self.useCamera(at: next, wantDepth: wantDepth) else {
+                self.session.commitConfiguration()
+                return
             }
-            let active = self.videoInput?.device ?? device
             self.applyFormat(for: active, wantDepth: wantDepth)
             self.setUpConnections(for: active)
             self.session.commitConfiguration()
@@ -377,7 +424,11 @@ final class CameraModel: NSObject, ObservableObject {
         options.depth = depth
 
         processingQueue.async {
+            // 撮影日時やカメラ・レンズの情報を残す（向きは適用済みなので「そのまま」にする）
+            var properties = image.properties
+            properties[kCGImagePropertyOrientation as String] = 1
             let output = LookRenderer.resizeForSaving(LookRenderer.apply(image, options: options))
+                .settingProperties(properties)
             // 10 ビットの HEIF で保存する（JPEG の 8 ビットより階調がなめらかで、ファイルも小さい）
             let p3 = CGColorSpace(name: CGColorSpace.displayP3)!
             let quality = kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption

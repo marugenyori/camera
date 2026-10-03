@@ -58,7 +58,7 @@ enum LookRenderer {
         let bright: CIImage
         let dark: CIImage
         let mask: CIImage
-        if let depth, let falloff = flashFalloff(depth: depth, extent: extent) {
+        if let depth, let falloff = flashFalloff(depth: depth, guide: image) {
             // 距離が分かるとき：近いものほど強く照らし、遠くは暗く沈める（本物のフラッシュと同じ）
             bright = exposure(image, ev: 0.6)
             dark = exposure(image, ev: -1.4)
@@ -107,18 +107,16 @@ enum LookRenderer {
     }
 
     /// 距離（メートル）から、フラッシュの光の当たり具合（1 = よく当たる、0 = 届かない）を作る。
-    /// 光は距離の 2 乗で弱まるので、0.6m で 1、1.2m で約半分、2〜3m でほぼ届かない
-    private static func flashFalloff(depth: CIImage, extent: CGRect) -> CIImage? {
+    /// 光は距離の 2 乗で弱まるので、0.6m で 1、1.2m で約半分、2〜3m でほぼ届かない。
+    /// 距離の画像は粗いので、写真の輪郭に沿って拡大し、物の縁から光がはみ出さないようにする
+    private static func flashFalloff(depth: CIImage, guide: CIImage) -> CIImage? {
         let d = depth.extent
         guard d.width > 0, d.height > 0 else { return nil }
-        let scaled = depth
-            .transformed(by: CGAffineTransform(translationX: -d.minX, y: -d.minY))
-            .transformed(by: CGAffineTransform(scaleX: extent.width / d.width,
-                                               y: extent.height / d.height))
+        let small = depth.transformed(by: CGAffineTransform(translationX: -d.minX, y: -d.minY))
 
         // 0〜5m を 0〜1 にし、3 色とも同じ値にする
         let normalize = CIFilter.colorMatrix()
-        normalize.inputImage = scaled
+        normalize.inputImage = small
         let k: CGFloat = 1.0 / 5.0
         normalize.rVector = CIVector(x: k, y: 0, z: 0, w: 0)
         normalize.gVector = CIVector(x: k, y: 0, z: 0, w: 0)
@@ -129,15 +127,28 @@ enum LookRenderer {
         clamp.inputImage = normalize.outputImage
         clamp.minComponents = CIVector(x: 0, y: 0, z: 0, w: 1)
         clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
+        guard let normalized = clamp.outputImage else { return nil }
 
-        let falloff = toneCurve(clamp.outputImage, [
+        let falloff = toneCurve(normalized, [
             (0.00, 1.00), (0.12, 1.00), (0.24, 0.45), (0.45, 0.12), (1.00, 0.00),
         ])
-        // 距離の画像は粗いので、境目がカクつかないよう少しぼかす
-        return falloff
-            .clampedToExtent()
-            .applyingGaussianBlur(sigma: Double(longSide(extent) * 0.004))
-            .cropped(to: extent)
+
+        // 距離が測れなかった所（0m 扱い）は「近い」と誤解して白く飛ぶので、光を当てない
+        let valid = CIFilter.colorThreshold()
+        valid.inputImage = normalized
+        valid.threshold = 0.02
+        let multiply = CIFilter.multiplyCompositing()
+        multiply.inputImage = falloff
+        multiply.backgroundImage = valid.outputImage ?? normalized
+        let masked = (multiply.outputImage ?? falloff).cropped(to: small.extent)
+
+        // 写真の明るさの輪郭を手がかりに拡大する
+        let upsample = CIFilter.edgePreserveUpsample()
+        upsample.inputImage = guide
+        upsample.smallImage = masked
+        upsample.spatialSigma = 3
+        upsample.lumaSigma = 0.15
+        return upsample.outputImage?.cropped(to: guide.extent)
     }
 
     /// 中央が 1、外側が edge になる円形のマスク
