@@ -69,6 +69,9 @@ final class PreviewRenderer: NSObject, MTKViewDelegate {
         let small = origin.transformed(by: CGAffineTransform(scaleX: shrink, y: shrink))
 
         var options = LookOptions(mode: model.mode, dateStamp: model.dateStamp)
+        if options.mode == .double {
+            options.overlay = model.firstExposurePreview
+        }
         if options.mode.usesDepth {
             options.depth = model.latestDepth
             options.subjectDistance = model.subjectDistance

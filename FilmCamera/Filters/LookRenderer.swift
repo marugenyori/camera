@@ -18,6 +18,7 @@ enum LookRenderer {
         case .flash: out = flash(image, depth: options.depth, subject: options.subjectDistance)
         case .iwai: out = iwai(image, seed: options.grainSeed)
         case .cross: out = cross(image)
+        case .double: out = double(image, overlay: options.overlay, seed: options.grainSeed)
         }
         if options.dateStamp { out = stamp(date, on: out) }
         return out
@@ -201,6 +202,36 @@ enum LookRenderer {
         sharpen.sharpness = 0.6
         let sharp = (sharpen.outputImage ?? cool).cropped(to: extent)
         return vignette(sharp, strength: 0.12, inner: 0.55)
+    }
+
+    // MARK: - 多重露光
+
+    /// フィルムで同じコマに 2 回露光したように、1 枚目と今の像を「スクリーン」で重ねる
+    /// （明るい部分が足し合わさり、暗い部分にもう一方が透けて見える）。
+    /// 重ねると明るくなりすぎるので、それぞれ少し暗くしてから重ね、仕上げにフィルムの色をかける
+    private static func double(_ image: CIImage, overlay: CIImage?, seed: CGPoint) -> CIImage {
+        guard let overlay else { return film(image, seed: seed) }
+        let extent = image.extent
+        let first = toSRGB(exposure(fill(overlay, into: extent), ev: -0.35))
+        let second = toSRGB(exposure(image, ev: -0.35))
+        let screen = CIFilter.screenBlendMode()
+        screen.inputImage = first
+        screen.backgroundImage = second
+        let combined = toLinear((screen.outputImage ?? second).cropped(to: extent))
+        return film(combined, seed: seed)
+    }
+
+    /// 縦横比を保ったまま extent いっぱいに広げ、はみ出しは中央で切る
+    static func fill(_ image: CIImage, into extent: CGRect) -> CIImage {
+        let e = image.extent
+        guard e.width > 0, e.height > 0 else { return image }
+        let scale = max(extent.width / e.width, extent.height / e.height)
+        let scaled = image
+            .transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let dx = extent.minX - (scaled.extent.width - extent.width) / 2
+        let dy = extent.minY - (scaled.extent.height - extent.height) / 2
+        return scaled.transformed(by: CGAffineTransform(translationX: dx, y: dy)).cropped(to: extent)
     }
 
     // MARK: - 岩井俊二風（淡い水色・白飛び・やわらかな光）

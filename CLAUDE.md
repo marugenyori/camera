@@ -16,7 +16,7 @@
 |---|---|
 | `FilmCamera/App/` | `@main` の App |
 | `FilmCamera/Camera/CameraModel.swift` | AVFoundation でカメラを動かす。映像フレームを `latestFrame` に置き、撮影した写真にフィルタをかけて写真アプリに保存する |
-| `FilmCamera/Filters/LookMode.swift` | モードの一覧（フィルム／フラッシュ／岩井俊二風／クロス） |
+| `FilmCamera/Filters/LookMode.swift` | モードの一覧（フィルム／フラッシュ／岩井俊二風／クロス／多重露光） |
 | `FilmCamera/Filters/LookRenderer.swift` | 各モードの見え方（Core Image のフィルタの組み合わせ）。**プレビューと保存の両方で同じ関数を使う** |
 | `FilmCamera/Views/CameraPreview.swift` | MTKView（Metal）で、フィルタをかけた映像を毎秒30コマ描く |
 | `FilmCamera/Views/ContentView.swift` | 画面（モード切り替え、シャッター、日付、カメラ切り替え） |
@@ -40,6 +40,7 @@
 - **色の調整は sRGB に変換してから行う**（`toSRGB` → 調整 → `toLinear`）。Core Image の作業空間はリニアなので、そのまま黒を持ち上げたりスクリーン合成したりすると、画面全体が白く霞む（実機で一度この失敗をした）
 - **画質を落とさない**（持ち主の強い要望）。粒子（`grain`）・ぼかし・強いにじみは「画質が悪い」と受け取られたので、粒子は使わず、にじみ（`diffusion`）も控えめにしている
 - 保存は 10 ビット HEIF（失敗したら JPEG）。長い辺が 6048px 未満なら Lanczos で拡大して輪郭を軽く締める（`resizeForSaving`）。**持ち主の要望は「写真を拡大して見たときに画質が落ちないこと」**なので、カメラの最大解像度（4800万画素など）は縮めずにそのまま保存する。HEIF の品質は 0.85（0.95 だと 1 枚 30MB を超え、チャットに送れなかった）。持ち主は「拡大してもいいから画質を良く」と希望している
+- **多重露光**：1 回目のシャッターは保存せず `firstExposure`（フル解像度）と `firstExposurePreview`（1600px）に取っておき、プレビューでは今の像に重ねて見せる。2 回目で `LookOptions.overlay` に 1 枚目を渡し、それぞれ -0.35EV してからスクリーン合成 → フィルムの色。保存したら 1 枚目は消える。モードを変えても消える
 - 色ごとのトーンカーブは `CIColorPolynomial`（3次式）、にじみはぼかした像のスクリーン合成（`diffusion`）で作っている
 - 持ち主の iPhone は **iPhone 16（LiDAR なし）**。フラッシュの距離はデュアルカメラ（広角＋超広角）の視差で測っている
 - **カメラの選び方**：フラッシュ以外は背面の広角カメラ（`builtInWideAngleCamera`）で、写真がいちばん大きく撮れる設定（`bestPhotoFormat`、Pro 機種なら 4800万画素）を自分で選ぶ。LiDAR の仮想カメラや標準の `.photo` 設定だと 1200万画素になった

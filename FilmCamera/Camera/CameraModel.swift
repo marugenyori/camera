@@ -31,7 +31,19 @@ final class CameraModel: NSObject, ObservableObject {
         didSet {
             UserDefaults.standard.set(mode.rawValue, forKey: "mode")
             if mode.usesDepth != oldValue.usesDepth { updateDepth() }
+            if mode != .double { discardFirstExposure() }
         }
+    }
+
+    /// 多重露光の 1 枚目（保存用のフル解像度。向きは適用済み）
+    @Published private(set) var firstExposure: CIImage?
+    /// 多重露光の 1 枚目を、プレビューに重ねる用に小さくしたもの
+    @Published private(set) var firstExposurePreview: CIImage?
+
+    /// 多重露光の 1 枚目を捨てて、撮り直せるようにする
+    func discardFirstExposure() {
+        firstExposure = nil
+        firstExposurePreview = nil
     }
     @Published var dateStamp: Bool {
         didSet { UserDefaults.standard.set(dateStamp, forKey: "dateStamp") }
@@ -389,6 +401,9 @@ final class CameraModel: NSObject, ObservableObject {
         shotCount += 1
 
         var options = LookOptions(mode: mode, dateStamp: dateStamp)
+        // 多重露光：1 枚目は保存せずに取っておき、2 枚目を撮ったときに重ねて保存する
+        let isFirstExposure = mode == .double && firstExposure == nil
+        if mode == .double { options.overlay = firstExposure }
         let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
         let mirrored = position == .front
 
@@ -422,7 +437,8 @@ final class CameraModel: NSObject, ObservableObject {
             }
             let processor = PhotoCaptureProcessor { [weak self] data, depth, distance in
                 self?.finishCapture(data: data, depth: depth, distance: distance,
-                                    options: options, id: settings.uniqueID)
+                                    options: options, isFirstExposure: isFirstExposure,
+                                    id: settings.uniqueID)
                 if borrowDepth {
                     // 撮り終わったら距離を測る設定に戻す（その間にモードが変わっていれば戻さない）
                     DispatchQueue.main.async {
@@ -453,7 +469,7 @@ final class CameraModel: NSObject, ObservableObject {
     }
 
     private func finishCapture(data: Data?, depth: CIImage?, distance: CGFloat?,
-                               options: LookOptions, id: Int64) {
+                               options: LookOptions, isFirstExposure: Bool, id: Int64) {
         sessionQueue.async { self.inFlight[id] = nil }
 
         guard let data,
@@ -462,6 +478,11 @@ final class CameraModel: NSObject, ObservableObject {
                 self.isSaving = false
                 self.message = "撮影に失敗しました"
             }
+            return
+        }
+
+        if isFirstExposure {
+            keepFirstExposure(image)
             return
         }
 
@@ -498,8 +519,25 @@ final class CameraModel: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 self.lastPhoto = thumbnail
                 self.isSaving = false
+                if options.mode == .double { self.discardFirstExposure() }
             }
             self.saveToLibrary(file.data, type: file.type)
+        }
+    }
+
+    /// 多重露光の 1 枚目を取っておく。プレビューで毎コマ重ねるので、小さくして画像にしておく
+    private func keepFirstExposure(_ image: CIImage) {
+        processingQueue.async {
+            let long = max(image.extent.width, image.extent.height)
+            let scale = min(1, 1600 / max(long, 1))
+            let small = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            let preview = self.ciContext.createCGImage(small, from: small.extent).map { CIImage(cgImage: $0) }
+            DispatchQueue.main.async {
+                self.firstExposure = image
+                self.firstExposurePreview = preview
+                self.isSaving = false
+                self.message = "1枚目を撮りました。重ねたいものを写して、もう一度シャッターを"
+            }
         }
     }
 

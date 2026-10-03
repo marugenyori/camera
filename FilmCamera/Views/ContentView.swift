@@ -67,7 +67,15 @@ struct ContentView: View {
                     .foregroundStyle(camera.dateStamp ? .black : .white)
             }
             Spacer()
-            if camera.mode.usesDepth && camera.isDepthActive {
+            if camera.mode == .double && camera.firstExposure != nil {
+                Button {
+                    camera.discardFirstExposure()
+                } label: {
+                    Label("1枚目を撮り直す", systemImage: "arrow.uturn.backward")
+                        .font(.caption.weight(.semibold))
+                }
+                .tint(.white)
+            } else if camera.mode.usesDepth && camera.isDepthActive {
                 Label("距離を測って光を当てています", systemImage: "dot.radiowaves.left.and.right")
                     .font(.caption)
                     .foregroundStyle(.tint)
