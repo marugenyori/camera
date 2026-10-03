@@ -16,6 +16,7 @@ enum LookRenderer {
         switch options.mode {
         case .film: out = film(image, seed: options.grainSeed)
         case .flash: out = flash(image, depth: options.depth, subject: options.subjectDistance)
+        case .warmFlash: out = flash(image, depth: options.depth, subject: options.subjectDistance, warm: true)
         case .iwai: out = iwai(image, seed: options.grainSeed)
         case .cross: out = cross(image)
         case .double: out = double(image, overlay: options.overlay, seed: options.grainSeed)
@@ -52,7 +53,8 @@ enum LookRenderer {
 
     /// 手前の被写体が平たく明るく照らされ、白は飛び気味、黒はつぶれ、
     /// 背景は少し暗く沈む。色は濃く、くっきり
-    private static func flash(_ image: CIImage, depth: CIImage?, subject: CGFloat?) -> CIImage {
+    private static func flash(_ image: CIImage, depth: CIImage?, subject: CGFloat?,
+                              warm: Bool = false) -> CIImage {
         let extent = image.extent
         // 人が来やすい、中央より少し上を中心にする（Core Image は下が原点）
         let center = CGPoint(x: extent.midX, y: extent.midY + extent.height * 0.05)
@@ -96,8 +98,10 @@ enum LookRenderer {
             (0.00, 0.00), (0.20, 0.15), (0.50, 0.51), (0.80, 0.90), (1.00, 1.00),
         ])
 
-        // フラッシュ光のやや青白い色
-        let cool = colorMatrix(punchy, r: 0.97, g: 1.00, b: 1.04, bias: (0, 0, 0.005))
+        // ふつうはフラッシュ光のやや青白い色。暖フラッシュは電球や古いストロボのような黄〜橙
+        let cool = warm
+            ? colorMatrix(punchy, r: 1.07, g: 1.00, b: 0.84, bias: (0.02, 0.005, -0.01))
+            : colorMatrix(punchy, r: 0.97, g: 1.00, b: 1.04, bias: (0, 0, 0.005))
 
         let sharpen = CIFilter.sharpenLuminance()
         sharpen.inputImage = cool

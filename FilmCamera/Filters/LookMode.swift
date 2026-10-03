@@ -5,6 +5,7 @@ import CoreImage
 enum LookMode: String, CaseIterable, Identifiable {
     case film
     case flash
+    case warmFlash
     case iwai
     case cross
     case double
@@ -15,6 +16,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         switch self {
         case .film: return "フィルム"
         case .flash: return "フラッシュ"
+        case .warmFlash: return "暖フラッシュ"
         case .iwai: return "岩井俊二風"
         case .cross: return "クロス"
         case .double: return "多重露光"
@@ -22,12 +24,13 @@ enum LookMode: String, CaseIterable, Identifiable {
     }
 
     /// 距離（LiDAR など）を使うモードか
-    var usesDepth: Bool { self == .flash }
+    var usesDepth: Bool { self == .flash || self == .warmFlash }
 
     var caption: String {
         switch self {
         case .film: return "低いコントラスト・暖かい白・にじむ光"
         case .flash: return "直射フラッシュのコンデジ写真"
+        case .warmFlash: return "暖かい色のフラッシュ写真"
         case .iwai: return "淡い水色・白飛び・やわらかな光"
         case .cross: return "暖色と寒色がぶつかる、濃く硬い色"
         case .double: return "2回シャッターを切って重ねる"

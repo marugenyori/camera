@@ -32,7 +32,7 @@ struct ContentView: View {
             }
         }
         .onChange(of: camera.shotCount) { _, _ in
-            guard camera.mode == .flash else { return }
+            guard camera.mode.usesDepth else { return }
             flashOpacity = 0.9
             withAnimation(.easeOut(duration: 0.4)) { flashOpacity = 0 }
         }
@@ -146,16 +146,27 @@ struct ContentView: View {
     // MARK: - モード選択
 
     private var modePicker: some View {
-        HStack(spacing: 24) {
-            ForEach(LookMode.allCases) { mode in
-                Button {
-                    withAnimation(.snappy) { camera.mode = mode }
-                } label: {
-                    Text(mode.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(camera.mode == mode ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.75)))
+        // モードが増えて 1 行に収まらないので、横にスクロールできるようにし、選んだものを中央に寄せる
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 24) {
+                    ForEach(LookMode.allCases) { mode in
+                        Button {
+                            withAnimation(.snappy) { camera.mode = mode }
+                        } label: {
+                            Text(mode.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(camera.mode == mode ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.white.opacity(0.75)))
+                        }
+                        .id(mode)
+                    }
                 }
+                .padding(.horizontal, 16)
             }
+            .onChange(of: camera.mode) { _, mode in
+                withAnimation(.snappy) { proxy.scrollTo(mode, anchor: .center) }
+            }
+            .onAppear { proxy.scrollTo(camera.mode, anchor: .center) }
         }
         .padding(.vertical, 14)
     }
