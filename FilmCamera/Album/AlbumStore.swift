@@ -288,7 +288,8 @@ final class AlbumStore: ObservableObject {
         case .quotaExceeded: return "iCloud の空き容量が足りません"
         case .permissionFailure: return "このアルバムに追加する権限がありません"
         case .badContainer, .missingEntitlement: return "iCloud の設定が済んでいません（Apple Developer で iCloud コンテナの設定が必要）"
-        case .serverRejectedRequest, .invalidArguments: return "iCloud の準備が済んでいません（CloudKit Console でレコードの型の公開が必要）"
+        case .serverRejectedRequest, .invalidArguments:
+            return "iCloud の準備が済んでいません（CloudKit Console でスキーマの読み込みと公開が必要・コード \(ck.code.rawValue)）"
         default: return "\(ck.localizedDescription)（コード \(ck.code.rawValue)）"
         }
     }
