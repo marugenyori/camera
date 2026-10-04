@@ -174,6 +174,9 @@ final class CameraModel: NSObject, ObservableObject {
     private var useStandardFormat = false
     /// セッションで起きた最後のエラー（原因調べ用）
     private var lastRuntimeError: String?
+    private var lastInterruption: String?
+    /// デュアルカメラで映像が届かなかったので、広角カメラだけを使っているか
+    private var useSimpleCamera = false
     private var _latestFrontFrame: CIImage?
     /// 前後同時撮影を始めてから届いたコマの数（映像が来ているかの確認用）
     private var _dualFrameCount = 0
@@ -249,6 +252,9 @@ final class CameraModel: NSObject, ObservableObject {
         super.init()
         NotificationCenter.default.addObserver(self, selector: #selector(sessionRuntimeError(_:)),
                                                name: .AVCaptureSessionRuntimeError,
+                                               object: session)
+        NotificationCenter.default.addObserver(self, selector: #selector(sessionWasInterrupted(_:)),
+                                               name: .AVCaptureSessionWasInterrupted,
                                                object: session)
         dual.onFrame = { [weak self] frame, isBack in
             guard let self else { return }
@@ -372,7 +378,7 @@ final class CameraModel: NSObject, ObservableObject {
             } else if !self.session.isRunning {
                 self.session.startRunning()
             }
-            if !dualOn { self.watchForFrames(retry: true) }
+            if !dualOn { self.watchForFrames() }
             DispatchQueue.main.async {
                 self.status = .running
                 self.startZoomTracking()
@@ -381,9 +387,10 @@ final class CameraModel: NSObject, ObservableObject {
     }
 
     /// 映像が届いているかを見張る（sessionQueue で呼ぶ）。
-    /// 機種によっては、自分で選んだ写真用の設定でカメラが動かないことがある（iPhone 13 で映像が真っ白になった）。
-    /// 届かなければ一度だけ標準の設定（.photo）に切り替えてやり直し、それでもだめなら原因調べ用の情報を出す
-    private func watchForFrames(retry: Bool) {
+    /// iPhone 13（iOS 26）で、セッションが動かず映像が 1 コマも届かないことがあった。
+    /// 届かなければ段階的にやり直す：①標準の設定（.photo）に任せる ②デュアルカメラをやめて
+    /// 広角カメラだけ・距離なしで組み直す。それでもだめなら原因調べ用の情報を出す
+    private func watchForFrames(stage: Int = 0) {
         frameLock.lock()
         let before = _frameCount
         frameLock.unlock()
@@ -391,37 +398,82 @@ final class CameraModel: NSObject, ObservableObject {
             self.frameLock.lock()
             let after = self._frameCount
             self.frameLock.unlock()
-            if after > before || self.videoInput == nil {
+            if after > before || self.isDual {
                 DispatchQueue.main.async { self.diagnostic = nil }
                 return
             }
-            if retry {
+            switch stage {
+            case 0:
                 self.useStandardFormat = true
                 self.session.beginConfiguration()
-                if self.hasDepthOutput {
-                    self.session.removeOutput(self.depthOutput)
-                    self.hasDepthOutput = false
-                    self.isDepthOn = false
-                }
+                self.removeDepthOutput()
                 self.session.sessionPreset = .photo
                 if let device = self.videoInput?.device { self.setUpConnections(for: device) }
                 self.session.commitConfiguration()
-                self.refreshPhotoDepthDelivery()
-                if !self.session.isRunning { self.session.startRunning() }
-                self.watchForFrames(retry: false)
+            case 1:
+                self.useSimpleCamera = true
+                self.session.stopRunning()
+                self.session.beginConfiguration()
+                self.removeDepthOutput()
+                let position = self.videoInput?.device.position ?? .back
+                if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
+                   let input = try? AVCaptureDeviceInput(device: device) {
+                    if let current = self.videoInput { self.session.removeInput(current) }
+                    self.session.sessionPreset = .photo
+                    if self.session.canAddInput(input) {
+                        self.session.addInput(input)
+                        self.videoInput = input
+                    }
+                    self.setUpConnections(for: device)
+                }
+                self.session.commitConfiguration()
+            default:
+                self.showDiagnostic()
                 return
             }
-            let device = self.videoInput?.device
-            let dims = device.map { CMVideoFormatDescriptionGetDimensions($0.activeFormat.formatDescription) }
-            let info = [
-                "カメラの映像が届きません",
-                "機種のカメラ: \(device?.localizedName ?? "なし")",
-                "映像の大きさ: \(dims.map { "\($0.width)×\($0.height)" } ?? "-")",
-                "動作中: \(self.session.isRunning ? "はい" : "いいえ")",
-                "エラー: \(self.lastRuntimeError ?? "なし")",
-            ].joined(separator: "\n")
-            DispatchQueue.main.async { self.diagnostic = info }
+            self.refreshPhotoDepthDelivery()
+            if !self.session.isRunning { self.session.startRunning() }
+            self.watchForFrames(stage: stage + 1)
         }
+    }
+
+    /// 距離の出力を外す（sessionQueue の beginConfiguration〜commitConfiguration の中で呼ぶ）
+    private func removeDepthOutput() {
+        guard hasDepthOutput else { return }
+        session.removeOutput(depthOutput)
+        hasDepthOutput = false
+        isDepthOn = false
+        DispatchQueue.main.async { self.isDepthActive = false }
+    }
+
+    /// 原因調べ用の情報をプレビューに出す（sessionQueue で呼ぶ）
+    private func showDiagnostic() {
+        let device = videoInput?.device
+        let dims = device.map { CMVideoFormatDescriptionGetDimensions($0.activeFormat.formatDescription) }
+        let auth: String
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: auth = "許可"
+        case .denied: auth = "拒否"
+        case .restricted: auth = "制限"
+        default: auth = "未確認"
+        }
+        let info = [
+            "カメラの映像が届きません",
+            "カメラ: \(device?.localizedName ?? "なし")",
+            "映像: \(dims.map { "\($0.width)×\($0.height)" } ?? "-")",
+            "動作中: \(session.isRunning ? "はい" : "いいえ")",
+            "中断: \(session.isInterrupted ? "はい" : "いいえ") \(lastInterruption ?? "")",
+            "エラー: \(lastRuntimeError ?? "なし")",
+            "入力 \(session.inputs.count)・出力 \(session.outputs.count)・接続 \(session.connections.count)",
+            "カメラの許可: \(auth)",
+        ].joined(separator: "\n")
+        DispatchQueue.main.async { self.diagnostic = info }
+    }
+
+    /// セッションが中断されたときの理由を記録する
+    @objc private func sessionWasInterrupted(_ note: Notification) {
+        let raw = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? NSNumber)?.intValue
+        sessionQueue.async { self.lastInterruption = raw.map { "理由 \($0)" } ?? "理由不明" }
     }
 
     /// セッションのエラーを記録し、止まっていれば動かし直す
@@ -740,7 +792,10 @@ final class CameraModel: NSObject, ObservableObject {
     /// 使うカメラを切り替える（同じなら何もしない）。切り替えたカメラ、または今のカメラを返す。
     /// sessionQueue の beginConfiguration〜commitConfiguration の中で呼ぶ
     private func useCamera(at position: AVCaptureDevice.Position, wantDepth: Bool) -> AVCaptureDevice? {
-        guard let device = Self.camera(at: position, wantDepth: wantDepth) else {
+        let chosen = useSimpleCamera
+            ? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
+            : Self.camera(at: position, wantDepth: wantDepth)
+        guard let device = chosen else {
             return videoInput?.device
         }
         if device.uniqueID == videoInput?.device.uniqueID { return device }
