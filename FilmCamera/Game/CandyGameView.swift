@@ -328,16 +328,26 @@ private struct CandyView: View {
         .overlay(Circle().stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: size * 0.05, dash: [size * 0.06])).frame(width: size * 0.62))
     }
 
+    /// チョコボールの上のカラフルなトッピング 1 粒
+    private func sprinkle(_ i: Int) -> some View {
+        let angle: Double = Double(i) * 2.1
+        let radius: CGFloat = size * 0.24
+        let x: CGFloat = CGFloat(cos(angle)) * radius
+        let y: CGFloat = CGFloat(sin(angle)) * radius
+        let color: Color = Self.colors[i % Self.colors.count].0
+        return Capsule()
+            .fill(color)
+            .frame(width: size * 0.12, height: size * 0.05)
+            .rotationEffect(.degrees(Double(i) * 47))
+            .offset(x: x, y: y)
+    }
+
     private var chocolateBall: some View {
         ZStack {
             Circle().fill(RadialGradient(colors: [Color(red: 0.55, green: 0.33, blue: 0.2), Color(red: 0.25, green: 0.12, blue: 0.05)],
                                          center: .topLeading, startRadius: 0, endRadius: size * 0.6))
             ForEach(0..<10, id: \.self) { i in
-                Capsule()
-                    .fill(Self.colors[i % Self.colors.count].0)
-                    .frame(width: size * 0.12, height: size * 0.05)
-                    .rotationEffect(.degrees(Double(i) * 47))
-                    .offset(x: cos(Double(i) * 2.1) * size * 0.24, y: sin(Double(i) * 2.1) * size * 0.24)
+                sprinkle(i)
             }
         }
         .frame(width: size * 0.82, height: size * 0.82)

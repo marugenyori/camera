@@ -102,7 +102,8 @@ final class GameAudio {
             add(notes: [(1568, 0.0)], length: 0.06, wave: .sine, volume: 0.25)
         case .place:
             light.impactOccurred(intensity: 0.7)
-            let pitch = [1047.0, 1175, 1319, 1568, 1760].randomElement() ?? 1319
+            let pitches: [Double] = [1047, 1175, 1319, 1568, 1760]
+            let pitch: Double = pitches.randomElement() ?? 1319
             add(notes: [(pitch, 0.0), (pitch * 2, 0.02)], length: 0.09, wave: .sine, volume: 0.22)
         case .swap:
             light.impactOccurred()
