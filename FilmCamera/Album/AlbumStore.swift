@@ -64,6 +64,18 @@ final class AlbumStore: ObservableObject {
     /// 用意できた招待（自分のアルバムの共有）。これがあると「招待を送る」が出る
     @Published private(set) var share: CKShare?
     @Published private(set) var isPreparingShare = false
+    /// このアルバムに参加している友だちの名前（作った人は除く）
+    var participantNames: [String] {
+        guard let share else { return [] }
+        return share.participants
+            .filter { $0.role != .owner && $0.acceptanceStatus == .accepted }
+            .map { participant in
+                participant.userIdentity.nameComponents
+                    .map { PersonNameComponentsFormatter().string(from: $0) }
+                    .flatMap { $0.isEmpty ? nil : $0 } ?? "名前なしの参加者"
+            }
+    }
+
     /// 招待を受け取ったときなどに、アルバムの画面を開く
     @Published var showAlbum = false
 
@@ -129,7 +141,13 @@ final class AlbumStore: ObservableObject {
         guard let album = selected else { return }
         let db = database(for: album)
         do {
-            if album.isOwner { try await Self.ensureZone(album.zoneID) }
+            if album.isOwner {
+                try await Self.ensureZone(album.zoneID)
+                // もう招待を作ってあれば読んでおく（参加した人を表示し、すぐ招待を送れるように）
+                let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: album.zoneID)
+                let existing = try? await db.record(for: shareID) as? CKShare
+                if album.id == selected?.id { share = existing }
+            }
             var records: [CKRecord] = []
             var token: CKServerChangeToken?
             var more = true

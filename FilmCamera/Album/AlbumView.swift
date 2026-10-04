@@ -52,6 +52,25 @@ struct AlbumView: View {
                         .accessibilityLabel("アルバムの操作")
                     }
 
+                    // 自分のアルバムを、誰と共有しているか
+                    if store.selected?.isOwner == true {
+                        if store.share == nil {
+                            Label("まだ誰とも共有していません。右上から招待を作って送ると、このアルバムを友だちと見せ合えます。",
+                                  systemImage: "person.crop.circle.badge.plus")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        } else if store.participantNames.isEmpty {
+                            Label("招待の準備ができています。右上の紙飛行機から LINE などでリンクを送ってください。友だちがリンクを開くと、ここに名前が出ます。",
+                                  systemImage: "paperplane")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Label("共有中：" + store.participantNames.joined(separator: "、"),
+                                  systemImage: "person.2.fill")
+                                .font(.footnote.weight(.semibold))
+                        }
+                    }
+
                     Toggle("撮った写真を自動でこのアルバムに入れる", isOn: $store.autoAdd)
                         .font(.subheadline)
 
