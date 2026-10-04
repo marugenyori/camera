@@ -2,6 +2,8 @@ import AVFoundation
 import UIKit
 
 /// ゲームの音（効果音と BGM）と振動。音のファイルは持たず、その場で音を合成する。
+/// 効果音は「パチッ（ノイズ）＋ポン（音程が跳ね上がる）＋キラッ（鐘の音）＋ドン（低音）」を重ねて爽快に。
+/// BGM はドラム・ベース・和音・メロディの 4 パートを鳴らし、全体に残響をかける。
 /// マナーモードでも鳴らす（ゲーム中の右上のボタンで消せる）
 final class GameAudio {
     static let shared = GameAudio()
@@ -16,6 +18,7 @@ final class GameAudio {
     }
 
     private let engine = AVAudioEngine()
+    private let reverb = AVAudioUnitReverb()
     private var source: AVAudioSourceNode?
     private let lock = NSLock()
     private var sampleRate: Double = 44_100
@@ -24,11 +27,12 @@ final class GameAudio {
     // 以下は lock で守る（音を作る処理は別のスレッドで動く）
     private var muted = false
     private var voices: [Voice] = []
-    private var music: Music?
+    private var music: Sequencer?
 
     private let light = UIImpactFeedbackGenerator(style: .light)
     private let medium = UIImpactFeedbackGenerator(style: .medium)
     private let heavy = UIImpactFeedbackGenerator(style: .heavy)
+    private let rigid = UIImpactFeedbackGenerator(style: .rigid)
     private let notify = UINotificationFeedbackGenerator()
 
     private init() {
@@ -42,16 +46,20 @@ final class GameAudio {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, options: [.mixWithOthers])
         try? session.setActive(true)
-        let format = engine.outputNode.inputFormat(forBus: 0)
-        sampleRate = format.sampleRate > 0 ? format.sampleRate : 44_100
+        let output = engine.outputNode.inputFormat(forBus: 0)
+        sampleRate = output.sampleRate > 0 ? output.sampleRate : 44_100
         let mono = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)
         let node = AVAudioSourceNode { [weak self] _, _, frameCount, bufferList in
             self?.render(frameCount: Int(frameCount), bufferList: bufferList)
             return noErr
         }
         engine.attach(node)
-        engine.connect(node, to: engine.mainMixerNode, format: mono)
-        engine.mainMixerNode.outputVolume = 0.8
+        engine.attach(reverb)
+        reverb.loadFactoryPreset(.mediumHall)
+        reverb.wetDryMix = 16
+        engine.connect(node, to: reverb, format: mono)
+        engine.connect(reverb, to: engine.mainMixerNode, format: mono)
+        engine.mainMixerNode.outputVolume = 0.9
         source = node
         do {
             try engine.start()
@@ -59,7 +67,7 @@ final class GameAudio {
         } catch {
             started = false
         }
-        light.prepare(); medium.prepare()
+        light.prepare(); medium.prepare(); heavy.prepare()
     }
 
     func stop() {
@@ -67,20 +75,22 @@ final class GameAudio {
         guard started else { return }
         engine.stop()
         if let source { engine.detach(source) }
+        engine.detach(reverb)
         source = nil
         started = false
+        lock.lock(); voices.removeAll(); lock.unlock()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     // MARK: - BGM
 
-    /// BGM の曲（明るいキャンディ風／やさしい塗り絵風）
+    /// BGM の曲（ノリのいいキャンディ風／きらきらした塗り絵風）
     enum Song { case candy, jewel }
 
     func playMusic(_ song: Song) {
         start()
         lock.lock()
-        music = Music(song: song, sampleRate: sampleRate)
+        music = Sequencer(song: song, sampleRate: sampleRate)
         lock.unlock()
     }
 
@@ -96,55 +106,81 @@ final class GameAudio {
 
     func play(_ effect: Effect) {
         start()
+        var add: [Voice] = []
+        let sr = sampleRate
         switch effect {
         case .tap:
             light.impactOccurred(intensity: 0.5)
-            add(notes: [(1568, 0.0)], length: 0.06, wave: .sine, volume: 0.25)
+            add += Voice.click(sr, volume: 0.25)
+            add.append(Voice(sr, f0: 1800, f1: 2400, length: 0.05, wave: .sine, volume: 0.15))
         case .place:
-            light.impactOccurred(intensity: 0.7)
-            let pitches: [Double] = [1047, 1175, 1319, 1568, 1760]
-            let pitch: Double = pitches.randomElement() ?? 1319
-            add(notes: [(pitch, 0.0), (pitch * 2, 0.02)], length: 0.09, wave: .sine, volume: 0.22)
+            rigid.impactOccurred(intensity: 0.7)
+            let pentatonic: [Double] = [0, 2, 4, 7, 9, 12]
+            let note = 84 + (pentatonic.randomElement() ?? 0)
+            add += Voice.click(sr, volume: 0.22)
+            add.append(Voice(sr, f0: midi(note), length: 0.35, wave: .bell, volume: 0.22, decay: 5))
+            add.append(Voice(sr, f0: midi(note + 12), length: 0.25, wave: .sine, volume: 0.07, delay: 0.02, decay: 7))
         case .swap:
             light.impactOccurred()
-            add(notes: [(660, 0.0), (880, 0.05)], length: 0.08, wave: .triangle, volume: 0.25)
+            add.append(Voice(sr, f0: 0, length: 0.1, wave: .noise, volume: 0.16, decay: 4, filter: 0.08))
+            add.append(Voice(sr, f0: 480, f1: 820, length: 0.09, wave: .triangle, volume: 0.18))
         case .invalid:
             notify.notificationOccurred(.warning)
-            add(notes: [(330, 0.0), (262, 0.08)], length: 0.12, wave: .square, volume: 0.12)
+            add.append(Voice(sr, f0: 300, f1: 220, length: 0.16, wave: .square, volume: 0.1, filter: 0.15))
         case .pop(let combo):
-            medium.impactOccurred(intensity: min(1, 0.6 + Double(combo) * 0.1))
-            // 連鎖するほど高い音で
-            let base = 523.25 * pow(2, Double(min(combo - 1, 7)) * 2 / 12)
-            add(notes: [(base, 0.0), (base * 1.25, 0.04), (base * 1.5, 0.08)], length: 0.12, wave: .triangle, volume: 0.28)
+            let strength = min(1, 0.65 + Double(combo) * 0.1)
+            heavy.impactOccurred(intensity: strength)
+            // 連鎖するほど高く、厚く
+            let step = Double(min(combo - 1, 8)) * 2
+            let base = midi(72 + step)
+            add += Voice.click(sr, volume: 0.4, crack: true)
+            add.append(Voice(sr, f0: base * 0.55, f1: base * 1.7, length: 0.11, wave: .sine, volume: 0.42, decay: 3))
+            add.append(Voice(sr, f0: 130, f1: 48, length: 0.16, wave: .sine, volume: 0.45, decay: 4))
+            for (i, ratio) in [2.0, 2.52, 3.0, 4.0].prefix(2 + min(combo, 2)).enumerated() {
+                add.append(Voice(sr, f0: base * ratio, length: 0.32, wave: .bell, volume: 0.11,
+                                 delay: 0.025 * Double(i), decay: 6))
+            }
         case .special:
             heavy.impactOccurred()
-            add(notes: [(784, 0.0), (988, 0.05), (1175, 0.1), (1568, 0.15)], length: 0.14, wave: .triangle, volume: 0.3)
+            add.append(Voice(sr, f0: 0, length: 0.35, wave: .noise, volume: 0.18, decay: 3, filter: 0.25))
+            for (i, n) in [72.0, 76, 79, 84, 88].enumerated() {
+                add.append(Voice(sr, f0: midi(n), length: 0.35, wave: .bell, volume: 0.13,
+                                 delay: 0.045 * Double(i), decay: 5))
+            }
         case .bomb:
             heavy.impactOccurred(intensity: 1)
-            add(notes: [(110, 0.0), (82, 0.06)], length: 0.35, wave: .noise, volume: 0.35)
-            add(notes: [(1319, 0.05), (1568, 0.1), (2093, 0.15)], length: 0.2, wave: .sine, volume: 0.2)
+            add.append(Voice(sr, f0: 0, length: 0.6, wave: .noise, volume: 0.5, decay: 3.5, filter: 0.06))
+            add += Voice.click(sr, volume: 0.5, crack: true)
+            add.append(Voice(sr, f0: 110, f1: 32, length: 0.5, wave: .sine, volume: 0.7, decay: 3))
+            for (i, n) in [84.0, 88, 91, 96].enumerated() {
+                add.append(Voice(sr, f0: midi(n), length: 0.4, wave: .bell, volume: 0.1, delay: 0.08 + 0.05 * Double(i), decay: 5))
+            }
         case .win, .complete:
             notify.notificationOccurred(.success)
-            add(notes: [(523, 0.0), (659, 0.12), (784, 0.24), (1047, 0.36), (1319, 0.5)],
-                length: 0.3, wave: .triangle, volume: 0.3)
+            let chords: [[Double]] = [[60, 64, 67], [65, 69, 72], [67, 71, 74], [72, 76, 79, 84]]
+            for (i, chord) in chords.enumerated() {
+                for n in chord {
+                    add.append(Voice(sr, f0: midi(n), length: i == 3 ? 1.2 : 0.3, wave: .saw, volume: 0.06,
+                                     delay: 0.16 * Double(i), decay: i == 3 ? 2 : 4, filter: 0.12))
+                    add.append(Voice(sr, f0: midi(n + 12), length: 0.5, wave: .bell, volume: 0.06,
+                                     delay: 0.16 * Double(i), decay: 4))
+                }
+            }
+            add.append(Voice(sr, f0: 0, length: 1.0, wave: .noise, volume: 0.08, delay: 0.48, decay: 2, highPass: true))
         case .lose:
             notify.notificationOccurred(.error)
-            add(notes: [(392, 0.0), (330, 0.2), (262, 0.4)], length: 0.35, wave: .triangle, volume: 0.25)
+            for (i, n) in [67.0, 63, 60, 55].enumerated() {
+                add.append(Voice(sr, f0: midi(n), length: 0.4, wave: .triangle, volume: 0.2, delay: 0.2 * Double(i), decay: 3))
+            }
         }
+        lock.lock()
+        voices.append(contentsOf: add)
+        if voices.count > 96 { voices.removeFirst(voices.count - 96) }
+        lock.unlock()
     }
 
     /// 振動だけ（音なし）
     func tick() { light.impactOccurred(intensity: 0.4) }
-
-    private func add(notes: [(Double, Double)], length: Double, wave: Wave, volume: Double) {
-        lock.lock()
-        for (frequency, delay) in notes {
-            voices.append(Voice(frequency: frequency, delay: Int(delay * sampleRate),
-                                length: Int(length * sampleRate), wave: wave, volume: volume))
-        }
-        if voices.count > 48 { voices.removeFirst(voices.count - 48) }
-        lock.unlock()
-    }
 
     // MARK: - 音を作る（オーディオのスレッドで呼ばれる）
 
@@ -156,10 +192,11 @@ final class GameAudio {
         for i in 0..<frameCount {
             var sample: Double = 0
             if !muted {
-                if let value = music?.next() { sample += value }
-                for v in voices.indices { sample += voices[v].next(sampleRate: sampleRate) }
+                if music != nil, let events = music?.advance() { voices.append(contentsOf: events) }
+                for v in voices.indices { sample += voices[v].next() }
             }
-            data[i] = Float(max(-1, min(1, sample)))
+            // やわらかく音割れを防ぐ
+            data[i] = Float(tanh(sample * 1.1))
         }
         voices.removeAll { $0.isFinished }
         for buffer in buffers.dropFirst() {
@@ -168,94 +205,197 @@ final class GameAudio {
     }
 }
 
-private enum Wave { case sine, triangle, square, noise }
+private func midi(_ note: Double) -> Double { 440 * pow(2, (note - 69) / 12) }
 
-/// 効果音の 1 音（すぐ立ち上がって減っていく）
+private enum Wave { case sine, triangle, square, saw, noise, bell }
+
+/// 1 つの音：音程の移り変わり（f0 → f1）、立ち上がりと減り方、ノイズや音色のフィルタ
 private struct Voice {
-    let frequency: Double
-    var delay: Int
+    let f0: Double
+    let f1: Double
     let length: Int
     let wave: Wave
     let volume: Double
+    let decay: Double
+    let attack: Int
+    let filter: Double       // 1 = フィルタなし。小さいほどこもる（ローパス）
+    let highPass: Bool
+    var delay: Int
     var position = 0
     var phase = 0.0
+    var low = 0.0
+
+    init(_ sampleRate: Double, f0: Double, f1: Double? = nil, length: Double, wave: Wave, volume: Double,
+         delay: Double = 0, decay: Double = 2.5, attack: Double = 0.002, filter: Double = 1, highPass: Bool = false) {
+        self.f0 = f0
+        self.f1 = f1 ?? f0
+        self.length = max(1, Int(length * sampleRate))
+        self.wave = wave
+        self.volume = volume
+        self.delay = Int(delay * sampleRate)
+        self.decay = decay
+        self.attack = max(1, Int(attack * sampleRate))
+        self.filter = filter
+        self.highPass = highPass
+        self.sampleRate = sampleRate
+    }
+
+    let sampleRate: Double
 
     var isFinished: Bool { delay <= 0 && position >= length }
 
-    mutating func next(sampleRate: Double) -> Double {
-        if delay > 0 { delay -= 1; return 0 }
-        guard position < length else { return 0 }
-        let t = Double(position) / Double(length)
-        let envelope = min(1, Double(position) / 80) * pow(1 - t, 2)
-        phase += frequency / sampleRate
-        if phase >= 1 { phase -= 1 }
-        position += 1
-        return oscillator(wave, phase) * envelope * volume
-    }
-}
-
-private func oscillator(_ wave: Wave, _ phase: Double) -> Double {
-    switch wave {
-    case .sine: return sin(phase * 2 * .pi)
-    case .triangle: return 4 * abs(phase - 0.5) - 1
-    case .square: return phase < 0.5 ? 0.6 : -0.6
-    case .noise: return Double.random(in: -1...1)
-    }
-}
-
-/// BGM：メロディとベースを繰り返す小さな曲
-private struct Music {
-    let sampleRate: Double
-    let melody: [Int]        // 半音（0 = 基準の音、-1 = 休み）
-    let bass: [Int]
-    let base: Double
-    let stepLength: Int
-    let wave: Wave
-    var sample = 0
-    var melodyPhase = 0.0
-    var bassPhase = 0.0
-
-    init(song: GameAudio.Song, sampleRate: Double) {
-        self.sampleRate = sampleRate
-        switch song {
-        case .candy:
-            // 弾むような長調のメロディ（テンポ 132）
-            melody = [0, 4, 7, 12, 7, 4, 9, 7, 5, 9, 12, 9, 7, -1, 4, 7,
-                      0, 4, 7, 12, 14, 12, 9, 7, 5, 4, 2, 4, 0, -1, 0, -1]
-            bass = [-12, -12, -5, -5, -7, -7, -5, -5]
-            base = 523.25
-            stepLength = Int(sampleRate * 60 / 132 / 2)
-            wave = .triangle
-        case .jewel:
-            // ゆったりしたオルゴール風（テンポ 96）
-            melody = [12, 7, 4, 7, 11, 7, 4, 7, 9, 5, 2, 5, 7, 4, 0, -1,
-                      12, 7, 4, 7, 14, 11, 7, 11, 12, 9, 5, 9, 7, -1, -1, -1]
-            bass = [-12, -12, -17, -17, -15, -15, -17, -17]
-            base = 659.25
-            stepLength = Int(sampleRate * 60 / 96 / 2)
-            wave = .sine
+    /// パチッという短い音（crack は割れるような高い成分を足す）
+    static func click(_ sr: Double, volume: Double, crack: Bool = false) -> [Voice] {
+        var list = [Voice(sr, f0: 0, length: 0.03, wave: .noise, volume: volume, decay: 8, highPass: true)]
+        if crack {
+            list.append(Voice(sr, f0: 0, length: 0.09, wave: .noise, volume: volume * 0.6, decay: 6, filter: 0.35, highPass: true))
         }
+        return list
     }
 
     mutating func next() -> Double {
-        let step = sample / stepLength
-        let inStep = Double(sample % stepLength) / Double(stepLength)
-        sample += 1
-        var out = 0.0
-        let note = melody[step % melody.count]
-        if note >= 0 {
-            let f = base * pow(2, Double(note) / 12)
-            melodyPhase += f / sampleRate
-            if melodyPhase >= 1 { melodyPhase -= 1 }
-            let envelope = min(1, inStep * 40) * pow(1 - inStep, 1.5)
-            out += oscillator(wave, melodyPhase) * envelope * 0.09
+        if delay > 0 { delay -= 1; return 0 }
+        guard position < length else { return 0 }
+        let t = Double(position) / Double(length)
+        let rise = min(1, Double(position) / Double(attack))
+        let envelope = rise * exp(-decay * t) * (1 - t)
+        let frequency = f0 == f1 ? f0 : f0 * pow(f1 / max(f0, 1), t)
+        phase += frequency / sampleRate
+        if phase >= 1 { phase -= floor(phase) }
+        position += 1
+        var x: Double
+        switch wave {
+        case .sine: x = sin(phase * 2 * .pi)
+        case .triangle: x = 4 * abs(phase - 0.5) - 1
+        case .square: x = phase < 0.5 ? 0.7 : -0.7
+        case .saw: x = 2 * phase - 1
+        case .noise: x = Double.random(in: -1...1)
+        case .bell:
+            // FM で金属的なきらめき（時間とともにやわらかく）
+            x = sin(2 * .pi * phase + 1.8 * exp(-4 * t) * sin(2 * .pi * phase * 3.5))
         }
-        let bassNote = bass[(step / 4) % bass.count]
-        let fb = base / 2 * pow(2, Double(bassNote) / 12)
-        bassPhase += fb / sampleRate
-        if bassPhase >= 1 { bassPhase -= 1 }
-        let bassEnvelope = pow(1 - Double((sample - 1) % (stepLength * 2)) / Double(stepLength * 2), 1.2)
-        out += oscillator(.triangle, bassPhase) * bassEnvelope * 0.07
+        if filter < 1 || highPass {
+            low += min(1, filter) * (x - low)
+            x = highPass ? x - low : low
+        }
+        return x * envelope * volume
+    }
+}
+
+/// BGM の演奏係：16 分音符ごとに、ドラム・ベース・和音・メロディの音を出す
+private struct Sequencer {
+    let sampleRate: Double
+    let stepLength: Int
+    let song: GameAudio.Song
+    var sampleInStep = 0
+    var step = 0
+
+    // 曲のデータ：小節ごとの和音（MIDI の音の高さ）とメロディ（16 分音符 16 個、-1 は休み）
+    let chords: [[Double]]
+    let melody: [[Double]]
+
+    init(song: GameAudio.Song, sampleRate: Double) {
+        self.song = song
+        self.sampleRate = sampleRate
+        switch song {
+        case .candy:
+            // C → G → Am → F、テンポ 128 の四つ打ち
+            stepLength = Int(sampleRate * 60 / 128 / 4)
+            chords = [[48, 60, 64, 67], [43, 59, 62, 67], [45, 60, 64, 69], [41, 60, 65, 69]]
+            melody = [
+                [76, -1, 79, -1, 84, -1, 79, 76, -1, 74, 76, -1, 79, -1, -1, -1],
+                [74, -1, 79, -1, 83, -1, 79, 74, -1, 71, 74, -1, 79, -1, 81, -1],
+                [76, -1, 81, -1, 84, -1, 81, 76, -1, 72, 76, -1, 81, -1, -1, -1],
+                [77, -1, 81, -1, 84, -1, 86, 84, -1, 81, 79, -1, 77, -1, 76, -1],
+            ]
+        case .jewel:
+            // Fmaj7 → Em7 → Dm7 → Cmaj7、テンポ 100 のゆったりしたビート
+            stepLength = Int(sampleRate * 60 / 100 / 4)
+            chords = [[41, 64, 69, 72], [40, 62, 67, 71], [38, 60, 65, 69], [36, 59, 64, 67]]
+            melody = [
+                [84, -1, 81, -1, 76, -1, 81, -1, 84, -1, 88, -1, 86, -1, -1, -1],
+                [83, -1, 79, -1, 74, -1, 79, -1, 83, -1, 86, -1, 83, -1, -1, -1],
+                [81, -1, 77, -1, 72, -1, 77, -1, 81, -1, 84, -1, 81, -1, 79, -1],
+                [79, -1, 76, -1, 71, -1, 76, -1, 79, -1, 83, -1, 84, -1, -1, -1],
+            ]
+        }
+    }
+
+    /// 1 サンプル進める。16 分音符の頭なら、その拍で鳴らす音を返す
+    mutating func advance() -> [Voice]? {
+        defer {
+            sampleInStep += 1
+            if sampleInStep >= stepLength {
+                sampleInStep = 0
+                step += 1
+            }
+        }
+        guard sampleInStep == 0 else { return nil }
+        return events(at: step)
+    }
+
+    private func events(at step: Int) -> [Voice] {
+        let sr = sampleRate
+        let s = step % 16
+        let bar = (step / 16) % chords.count
+        let chord = chords[bar]
+        let stepSeconds = Double(stepLength) / sampleRate
+        var out: [Voice] = []
+        let candy = song == .candy
+
+        // ドラム
+        if candy ? s % 4 == 0 : (s == 0 || s == 8 || s == 11) {
+            out.append(Voice(sr, f0: 160, f1: 42, length: 0.22, wave: .sine, volume: candy ? 0.6 : 0.42, decay: 3))
+            out.append(Voice(sr, f0: 0, length: 0.012, wave: .noise, volume: 0.15, decay: 6, highPass: true))
+        }
+        if s == 4 || s == 12 {
+            if candy {
+                out.append(Voice(sr, f0: 0, length: 0.18, wave: .noise, volume: 0.3, decay: 4, filter: 0.5, highPass: true))
+                out.append(Voice(sr, f0: 240, f1: 180, length: 0.09, wave: .triangle, volume: 0.18))
+            } else {
+                out.append(Voice(sr, f0: 900, length: 0.05, wave: .bell, volume: 0.12, decay: 8))   // リム
+            }
+        }
+        if candy || s % 2 == 0 {
+            let open = candy && s % 4 == 2
+            out.append(Voice(sr, f0: 0, length: open ? 0.12 : 0.035, wave: .noise,
+                             volume: s % 2 == 0 ? 0.09 : 0.05, decay: open ? 4 : 9, filter: 0.9, highPass: true))
+        }
+        // ベース（和音の根音。キャンディは跳ねるリズム）
+        let bassSteps: Set<Int> = candy ? [0, 3, 6, 8, 10, 11, 14] : [0, 6, 8, 14]
+        if bassSteps.contains(s) {
+            let octave: Double = candy && s % 2 == 1 ? 12 : 0
+            out.append(Voice(sr, f0: midi(chord[0] + octave), length: stepSeconds * (candy ? 1.6 : 3.5),
+                             wave: candy ? .saw : .triangle, volume: candy ? 0.22 : 0.26, decay: 2, filter: candy ? 0.08 : 0.2))
+        }
+        // 和音（小節の頭でふわっと。キャンディは裏拍でも刻む）
+        if s == 0 {
+            for note in chord.dropFirst() {
+                out.append(Voice(sr, f0: midi(note), length: stepSeconds * 16, wave: .saw, volume: 0.035,
+                                 decay: 1, attack: 0.25, filter: 0.04))
+                out.append(Voice(sr, f0: midi(note) * 1.006, length: stepSeconds * 16, wave: .saw, volume: 0.03,
+                                 decay: 1, attack: 0.25, filter: 0.04))
+            }
+        }
+        if candy && (s == 2 || s == 6 || s == 10 || s == 14) {
+            for note in chord.dropFirst() {
+                out.append(Voice(sr, f0: midi(note + 12), length: stepSeconds * 1.2, wave: .square, volume: 0.025,
+                                 decay: 4, filter: 0.25))
+            }
+        }
+        // メロディ（こだまのように少し遅れてもう一度小さく）
+        let note = melody[bar][s]
+        if note >= 0 {
+            if candy {
+                out.append(Voice(sr, f0: midi(note), length: stepSeconds * 1.8, wave: .square, volume: 0.07, decay: 3, filter: 0.3))
+                out.append(Voice(sr, f0: midi(note), length: stepSeconds * 1.8, wave: .triangle, volume: 0.08, decay: 3))
+                out.append(Voice(sr, f0: midi(note), length: stepSeconds * 1.8, wave: .square, volume: 0.025,
+                                 delay: stepSeconds * 3, decay: 3, filter: 0.2))
+            } else {
+                out.append(Voice(sr, f0: midi(note), length: 0.6, wave: .bell, volume: 0.12, decay: 4))
+                out.append(Voice(sr, f0: midi(note), length: 0.6, wave: .bell, volume: 0.045, delay: stepSeconds * 3, decay: 4))
+            }
+        }
         return out
     }
 }
