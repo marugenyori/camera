@@ -99,6 +99,10 @@ struct ContentView: View {
             FunctionKey(systemImage: "calendar", isOn: camera.dateStamp, label: "日付") {
                 camera.dateStamp.toggle()
             }
+            FunctionKey(systemImage: camera.light ? "bolt.fill" : "bolt.slash", isOn: camera.light, label: "ライト") {
+                camera.light.toggle()
+            }
+            .disabled(camera.isDual)
             FunctionKey(systemImage: "squareshape.split.3x3", isOn: showGrid, label: "グリッド") {
                 showGrid.toggle()
             }

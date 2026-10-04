@@ -77,7 +77,17 @@ final class CameraModel: NSObject, ObservableObject {
     }
 
     @Published var captureKind: CaptureKind {
-        didSet { UserDefaults.standard.set(captureKind.rawValue, forKey: "captureKind") }
+        didSet {
+            UserDefaults.standard.set(captureKind.rawValue, forKey: "captureKind")
+            updateTorch()
+        }
+    }
+    /// iPhone の本物のライト。写真は撮る瞬間にフラッシュを光らせ、ビデオでは点けっぱなしにする
+    @Published var light: Bool {
+        didSet {
+            UserDefaults.standard.set(light, forKey: "light")
+            updateTorch()
+        }
     }
     @Published private(set) var isRecording = false
     @Published private(set) var recordingStartedAt: Date?
@@ -215,6 +225,7 @@ final class CameraModel: NSObject, ObservableObject {
         let defaults = UserDefaults.standard
         mode = LookMode(rawValue: defaults.string(forKey: "mode") ?? "") ?? .film
         dateStamp = defaults.bool(forKey: "dateStamp")
+        light = defaults.bool(forKey: "light")
         let count = defaults.integer(forKey: "exposureCount")
         exposureCount = (2...4).contains(count) ? count : 2
         burstInterval = defaults.double(forKey: "burstInterval")
@@ -255,6 +266,19 @@ final class CameraModel: NSObject, ObservableObject {
             }
         default:
             status = .denied
+        }
+        updateTorch()
+    }
+
+    /// ビデオでライトがオンなら点け、それ以外は消す（前後同時のときは使わない）
+    private func updateTorch() {
+        let on = light && captureKind == .video && !isDual
+        sessionQueue.async {
+            guard let device = self.videoInput?.device, device.hasTorch,
+                  device.isTorchModeSupported(on ? .on : .off),
+                  (try? device.lockForConfiguration()) != nil else { return }
+            device.torchMode = on ? .on : .off
+            device.unlockForConfiguration()
         }
     }
 
@@ -683,7 +707,10 @@ final class CameraModel: NSObject, ObservableObject {
             self.session.commitConfiguration()
             self.refreshPhotoDepthDelivery()
             let now = active.position
-            DispatchQueue.main.async { self.position = now }
+            DispatchQueue.main.async {
+                self.position = now
+                self.updateTorch()
+            }
         }
     }
 
@@ -846,6 +873,8 @@ final class CameraModel: NSObject, ObservableObject {
         var options = baseOptions
         let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
         let mirrored = position == .front
+        // 本物のフラッシュ（連射のときは間に合わないので光らせない）
+        let useFlash = light && !fast
 
         // フラッシュ：距離を測れる設定だと 1200万画素でしか撮れないので、
         // 直前のプレビューで測った距離を借りて、撮影の瞬間だけ 4800万画素の設定に切り替える
@@ -875,6 +904,9 @@ final class CameraModel: NSObject, ObservableObject {
             } else {
                 settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
                 settings.photoQualityPrioritization = .quality
+            }
+            if useFlash && self.photoOutput.supportedFlashModes.contains(.on) {
+                settings.flashMode = .on
             }
             if options.mode.usesDepth && !borrowDepth && self.photoOutput.isDepthDataDeliveryEnabled {
                 settings.isDepthDataDeliveryEnabled = true
