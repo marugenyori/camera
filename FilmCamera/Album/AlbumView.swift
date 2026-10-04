@@ -622,6 +622,9 @@ private struct AlbumViewer: View {
     @State private var showingComments = false
     @State private var heartPop = 0
     @State private var toast: String?
+    /// コメントを写真の上に流すか（ニコニコ動画のように）
+    @AppStorage("albumDanmaku") private var danmakuOn = true
+    @State private var draft = ""
 
     /// すぐ押せる絵文字
     static let quickEmojis = ["😂", "😍", "🔥", "👏", "😮", "🥹"]
@@ -655,6 +658,13 @@ private struct AlbumViewer: View {
             .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() } }
 
             HeartPop(trigger: heartPop)
+
+            if danmakuOn, let photo = current {
+                DanmakuLayer(source: store.reactions[photo.id.recordName] ?? [],
+                             photoID: photo.id.recordName,
+                             isMine: { store.isMine($0) })
+                    .id(photo.id.recordName)   // 写真ごとに流し直す
+            }
 
             if !chromeHidden { chrome }
             if let toast {
@@ -698,6 +708,16 @@ private struct AlbumViewer: View {
                         .background(Circle().fill(.white.opacity(0.15)))
                 }
                 Spacer()
+                Button {
+                    danmakuOn.toggle()
+                } label: {
+                    Image(systemName: danmakuOn ? "text.bubble.fill" : "text.bubble")
+                        .font(.headline)
+                        .foregroundStyle(danmakuOn ? Deck.orange : Color.white)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(.white.opacity(0.15)))
+                }
+                .accessibilityLabel(danmakuOn ? "流れるコメントを消す" : "流れるコメントを出す")
                 Text("\(index + 1) / \(photos.count)")
                     .font(.footnote.weight(.semibold).monospacedDigit())
                     .padding(.horizontal, 12)
@@ -718,6 +738,7 @@ private struct AlbumViewer: View {
         VStack(alignment: .leading, spacing: 12) {
             header(photo)
             emojiBar(photo)
+            commentField(photo)
             summary(photo)
             actions(photo)
         }
@@ -802,6 +823,35 @@ private struct AlbumViewer: View {
                 }
             }
         }
+    }
+
+    /// コメントを書いて、すぐ写真の上に流す
+    private func commentField(_ photo: AlbumPhoto) -> some View {
+        HStack(spacing: 8) {
+            TextField("", text: $draft, prompt: Text("コメントを流す").foregroundStyle(.white.opacity(0.5)))
+                .font(.subheadline)
+                .foregroundStyle(.white)
+                .submitLabel(.send)
+                .onSubmit { send(photo) }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(.white.opacity(0.12)))
+            Button {
+                send(photo)
+            } label: {
+                Image(systemName: "paperplane.fill")
+                    .font(.headline)
+                    .foregroundStyle(Deck.orange)
+            }
+            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    private func send(_ photo: AlbumPhoto) {
+        let text = draft
+        draft = ""
+        danmakuOn = true
+        Task { await store.comment(on: photo, text: text) }
     }
 
     /// だれがいいねしたか、いちばん新しいコメント
@@ -927,6 +977,131 @@ private struct AlbumViewer: View {
             try? await Task.sleep(for: .seconds(1.8))
             withAnimation { if toast == message { toast = nil } }
         }
+    }
+}
+
+/// ニコニコ動画のように、写真の上をコメントと絵文字が右から左へ流れる。
+/// 開いたときは今までの反応を順に流し、流れ終わったらまた最初から。新しい反応はすぐ流す
+private struct DanmakuLayer: View {
+    let source: [AlbumReaction]
+    let photoID: String
+    let isMine: (String?) -> Bool
+
+    private struct Item {
+        let text: String
+        let big: Bool
+        let mine: Bool
+    }
+
+    private struct Flight: Identifiable {
+        let id = UUID()
+        let item: Item
+        let lane: Int
+        let start: Date
+        let width: CGFloat
+    }
+
+    @State private var flights: [Flight] = []
+    @State private var queue: [Item] = []
+    @State private var laneFree: [Int: Date] = [:]
+    @State private var size: CGSize = .zero
+
+    /// 画面の端から端まで流れる秒数
+    private static let duration: Double = 5.5
+    private static let laneHeight: CGFloat = 38
+    private static let top: CGFloat = 100
+
+    var body: some View {
+        GeometryReader { geo in
+            TimelineView(.animation) { timeline in
+                Canvas { context, canvasSize in
+                    for flight in flights {
+                        let elapsed = timeline.date.timeIntervalSince(flight.start)
+                        guard elapsed >= 0 else { continue }
+                        let speed = (canvasSize.width + flight.width) / Self.duration
+                        let x = canvasSize.width - CGFloat(elapsed) * speed
+                        let y = Self.top + (CGFloat(flight.lane) + 0.5) * Self.laneHeight
+                        draw(flight.item, at: CGPoint(x: x, y: y), in: &context)
+                    }
+                }
+            }
+            .onAppear { size = geo.size }
+            .onChange(of: geo.size) { _, new in size = new }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .task { await run() }
+        .onChange(of: source) { old, new in
+            // 新しく付いた反応は、すぐ流す
+            let known = Set(old.map(\.id))
+            for reaction in new where !known.contains(reaction.id) {
+                launch(item(for: reaction))
+            }
+        }
+    }
+
+    private func draw(_ item: Item, at point: CGPoint, in context: inout GraphicsContext) {
+        let font: Font = item.big ? .system(size: 32) : .title3.weight(.bold)
+        let fill = context.resolve(Text(item.text).font(font).foregroundColor(.white))
+        let edge = context.resolve(Text(item.text).font(font).foregroundColor(.black.opacity(0.75)))
+        // 黒いふちどりで、どんな写真の上でも読めるように
+        for (dx, dy) in [(-1.5, 0.0), (1.5, 0), (0, -1.5), (0, 1.5), (-1, -1), (1, 1), (-1, 1), (1, -1)] {
+            context.draw(edge, at: CGPoint(x: point.x + dx, y: point.y + dy), anchor: .leading)
+        }
+        context.draw(fill, at: point, anchor: .leading)
+        if item.mine {
+            // 自分のコメントは、ニコニコ動画のように枠で囲む
+            let width = fill.measure(in: CGSize(width: 2000, height: 100)).width
+            let box = CGRect(x: point.x - 6, y: point.y - Self.laneHeight / 2 + 3,
+                             width: width + 12, height: Self.laneHeight - 6)
+            context.stroke(Path(roundedRect: box, cornerRadius: 6), with: .color(Deck.orange), lineWidth: 1.5)
+        }
+    }
+
+    private func item(for reaction: AlbumReaction) -> Item {
+        switch reaction.kind {
+        case .like: return Item(text: "❤️", big: true, mine: isMine(reaction.creator))
+        case .emoji: return Item(text: reaction.text, big: true, mine: isMine(reaction.creator))
+        case .comment: return Item(text: reaction.text, big: false, mine: isMine(reaction.creator))
+        }
+    }
+
+    /// 今までの反応を少しずつ流し続ける（全部流れたら最初から）
+    private func run() async {
+        flights = []
+        queue = []
+        laneFree = [:]
+        try? await Task.sleep(for: .milliseconds(400))
+        while !Task.isCancelled {
+            if queue.isEmpty {
+                queue = source.map(item(for:))
+                if queue.isEmpty {
+                    try? await Task.sleep(for: .seconds(1))
+                    continue
+                }
+                if !flights.isEmpty {
+                    // ひと回りしたら少し間をあける
+                    try? await Task.sleep(for: .seconds(Self.duration))
+                }
+            }
+            launch(queue.removeFirst())
+            flights.removeAll { Date().timeIntervalSince($0.start) > Self.duration + 0.5 }
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 450...900)))
+        }
+    }
+
+    /// 空いている段を選んで流す（空きがなければ、いちばん早く空く段）
+    private func launch(_ item: Item) {
+        guard size.width > 0 else { return }
+        let lanes = max(3, Int((size.height * 0.5) / Self.laneHeight))
+        let now = Date()
+        let lane = (0..<lanes).first { (laneFree[$0] ?? .distantPast) <= now }
+            ?? (0..<lanes).min { (laneFree[$0] ?? now) < (laneFree[$1] ?? now) } ?? 0
+        let width = CGFloat(item.text.count) * (item.big ? 36 : 21)
+        let speed = (size.width + width) / Self.duration
+        // 前のコメントの後ろが、少し離れるまで同じ段は使わない
+        laneFree[lane] = now.addingTimeInterval(Double((width + 50) / speed))
+        flights.append(Flight(item: item, lane: lane, start: now, width: width))
     }
 }
 
