@@ -2,8 +2,9 @@ import AVFoundation
 import UIKit
 
 /// ゲームの音（効果音と BGM）と振動。音のファイルは持たず、その場で音を合成する。
-/// 効果音は「パチッ（ノイズ）＋ポン（音程が跳ね上がる）＋キラッ（鐘の音）＋ドン（低音）」を重ねて爽快に。
-/// BGM はドラム・ベース・和音・メロディの 4 パートを鳴らし、全体に残響をかける。
+/// パチンコのような、高くてキラキラした金属的な音が基本（低音は控えめ）。
+/// 効果音は「パチッ（ノイズ）＋キュイン（音程が駆け上がる）＋チン（鐘）＋ジャラジャラ（玉の音）」を重ねる。
+/// BGM はドラム・ベース・和音・16 分のアルペジオ・メロディを鳴らし、全体に残響をかける。
 /// マナーモードでも鳴らす（ゲーム中の右上のボタンで消せる）
 final class GameAudio {
     static let shared = GameAudio()
@@ -56,7 +57,7 @@ final class GameAudio {
         engine.attach(node)
         engine.attach(reverb)
         reverb.loadFactoryPreset(.mediumHall)
-        reverb.wetDryMix = 16
+        reverb.wetDryMix = 20
         engine.connect(node, to: reverb, format: mono)
         engine.connect(reverb, to: engine.mainMixerNode, format: mono)
         engine.mainMixerNode.outputVolume = 0.9
@@ -120,6 +121,7 @@ final class GameAudio {
             add += Voice.click(sr, volume: 0.22)
             add.append(Voice(sr, f0: midi(note), length: 0.35, wave: .bell, volume: 0.22, decay: 5))
             add.append(Voice(sr, f0: midi(note + 12), length: 0.25, wave: .sine, volume: 0.07, delay: 0.02, decay: 7))
+            add += Voice.balls(sr, count: 2, volume: 0.07, spread: 0.06)
         case .swap:
             light.impactOccurred()
             add.append(Voice(sr, f0: 0, length: 0.1, wave: .noise, volume: 0.16, decay: 4, filter: 0.08))
@@ -133,40 +135,54 @@ final class GameAudio {
             // 連鎖するほど高く、厚く
             let step = Double(min(combo - 1, 8)) * 2
             let base = midi(72 + step)
-            add += Voice.click(sr, volume: 0.4, crack: true)
-            add.append(Voice(sr, f0: base * 0.55, f1: base * 1.7, length: 0.11, wave: .sine, volume: 0.42, decay: 3))
-            add.append(Voice(sr, f0: 130, f1: 48, length: 0.16, wave: .sine, volume: 0.45, decay: 4))
-            for (i, ratio) in [2.0, 2.52, 3.0, 4.0].prefix(2 + min(combo, 2)).enumerated() {
-                add.append(Voice(sr, f0: base * ratio, length: 0.32, wave: .bell, volume: 0.11,
-                                 delay: 0.025 * Double(i), decay: 6))
+            add += Voice.click(sr, volume: 0.32, crack: true)
+            // キュイン：高く駆け上がる
+            add.append(Voice(sr, f0: base * 0.9, f1: base * 2.6, length: 0.12, wave: .square, volume: 0.1, decay: 2, filter: 0.35))
+            add.append(Voice(sr, f0: base, f1: base * 2.2, length: 0.1, wave: .sine, volume: 0.22, decay: 3))
+            // チン・チン：鐘を細かく重ねる
+            for (i, ratio) in [2.0, 2.52, 3.0, 4.0, 5.04].prefix(2 + min(combo, 3)).enumerated() {
+                add.append(Voice(sr, f0: base * ratio, length: 0.35, wave: .bell, volume: 0.1,
+                                 delay: 0.03 * Double(i), decay: 5))
             }
+            // ジャラジャラ：連鎖するほど玉が増える
+            add += Voice.balls(sr, count: 5 + min(combo, 8) * 2, volume: 0.07, spread: 0.12 + 0.03 * Double(min(combo, 8)))
         case .special:
             heavy.impactOccurred()
-            add.append(Voice(sr, f0: 0, length: 0.35, wave: .noise, volume: 0.18, decay: 3, filter: 0.25))
-            for (i, n) in [72.0, 76, 79, 84, 88].enumerated() {
-                add.append(Voice(sr, f0: midi(n), length: 0.35, wave: .bell, volume: 0.13,
+            add.append(Voice(sr, f0: 0, length: 0.3, wave: .noise, volume: 0.12, decay: 3, filter: 0.5, highPass: true))
+            add.append(Voice(sr, f0: midi(76), f1: midi(100), length: 0.3, wave: .square, volume: 0.07, decay: 1.5, filter: 0.4))
+            for (i, n) in [84.0, 88, 91, 96, 100].enumerated() {
+                add.append(Voice(sr, f0: midi(n), length: 0.35, wave: .bell, volume: 0.12,
                                  delay: 0.045 * Double(i), decay: 5))
             }
+            add += Voice.balls(sr, count: 14, volume: 0.07, spread: 0.35)
         case .bomb:
             heavy.impactOccurred(intensity: 1)
-            add.append(Voice(sr, f0: 0, length: 0.6, wave: .noise, volume: 0.5, decay: 3.5, filter: 0.06))
-            add += Voice.click(sr, volume: 0.5, crack: true)
-            add.append(Voice(sr, f0: 110, f1: 32, length: 0.5, wave: .sine, volume: 0.7, decay: 3))
-            for (i, n) in [84.0, 88, 91, 96].enumerated() {
-                add.append(Voice(sr, f0: midi(n), length: 0.4, wave: .bell, volume: 0.1, delay: 0.08 + 0.05 * Double(i), decay: 5))
+            add.append(Voice(sr, f0: 0, length: 0.5, wave: .noise, volume: 0.3, decay: 3.5, filter: 0.3, highPass: true))
+            add += Voice.click(sr, volume: 0.45, crack: true)
+            // キュイーン：長く駆け上がる
+            add.append(Voice(sr, f0: midi(64), f1: midi(103), length: 0.55, wave: .square, volume: 0.09, decay: 1.2, filter: 0.4))
+            add.append(Voice(sr, f0: midi(76), f1: midi(108), length: 0.5, wave: .sine, volume: 0.12, decay: 1.5))
+            for (i, n) in [84.0, 88, 91, 96, 100, 103].enumerated() {
+                add.append(Voice(sr, f0: midi(n), length: 0.45, wave: .bell, volume: 0.1, delay: 0.1 + 0.05 * Double(i), decay: 4))
             }
+            add += Voice.balls(sr, count: 30, volume: 0.07, spread: 0.7)
         case .win, .complete:
             notify.notificationOccurred(.success)
-            let chords: [[Double]] = [[60, 64, 67], [65, 69, 72], [67, 71, 74], [72, 76, 79, 84]]
+            // パンパカパーン（高めのファンファーレ）
+            let chords: [[Double]] = [[72, 76, 79], [72, 76, 79], [77, 81, 84], [79, 83, 86], [84, 88, 91, 96]]
+            let times: [Double] = [0, 0.12, 0.24, 0.42, 0.6]
             for (i, chord) in chords.enumerated() {
+                let last = i == chords.count - 1
                 for n in chord {
-                    add.append(Voice(sr, f0: midi(n), length: i == 3 ? 1.2 : 0.3, wave: .saw, volume: 0.06,
-                                     delay: 0.16 * Double(i), decay: i == 3 ? 2 : 4, filter: 0.12))
-                    add.append(Voice(sr, f0: midi(n + 12), length: 0.5, wave: .bell, volume: 0.06,
-                                     delay: 0.16 * Double(i), decay: 4))
+                    add.append(Voice(sr, f0: midi(n), length: last ? 1.3 : 0.16, wave: .square, volume: 0.04,
+                                     delay: times[i], decay: last ? 1.8 : 3, filter: 0.3))
+                    add.append(Voice(sr, f0: midi(n + 12), length: 0.6, wave: .bell, volume: 0.05,
+                                     delay: times[i], decay: 4))
                 }
             }
-            add.append(Voice(sr, f0: 0, length: 1.0, wave: .noise, volume: 0.08, delay: 0.48, decay: 2, highPass: true))
+            add.append(Voice(sr, f0: midi(72), f1: midi(108), length: 0.6, wave: .sine, volume: 0.08, delay: 0.6, decay: 1.5))
+            // 玉があふれ出す
+            add += Voice.balls(sr, count: 60, volume: 0.06, spread: 1.8, start: 0.6)
         case .lose:
             notify.notificationOccurred(.error)
             for (i, n) in [67.0, 63, 60, 55].enumerated() {
@@ -175,7 +191,7 @@ final class GameAudio {
         }
         lock.lock()
         voices.append(contentsOf: add)
-        if voices.count > 96 { voices.removeFirst(voices.count - 96) }
+        if voices.count > 200 { voices.removeFirst(voices.count - 200) }
         lock.unlock()
     }
 
@@ -251,6 +267,19 @@ private struct Voice {
             list.append(Voice(sr, f0: 0, length: 0.09, wave: .noise, volume: volume * 0.6, decay: 6, filter: 0.35, highPass: true))
         }
         return list
+    }
+
+    /// ジャラジャラ：パチンコ玉がぶつかり合うような、短く高い金属音をばらばらに鳴らす
+    static func balls(_ sr: Double, count: Int, volume: Double, spread: Double, start: Double = 0) -> [Voice] {
+        (0..<count).flatMap { _ -> [Voice] in
+            let at = start + Double.random(in: 0...spread)
+            let pitch = Double.random(in: 2600...5200)
+            return [
+                Voice(sr, f0: pitch, length: Double.random(in: 0.03...0.07), wave: .bell, volume: volume * Double.random(in: 0.5...1),
+                      delay: at, decay: 7),
+                Voice(sr, f0: 0, length: 0.008, wave: .noise, volume: volume * 0.6, delay: at, decay: 8, highPass: true),
+            ]
+        }
     }
 
     mutating func next() -> Double {
@@ -345,7 +374,7 @@ private struct Sequencer {
 
         // ドラム
         if candy ? s % 4 == 0 : (s == 0 || s == 8 || s == 11) {
-            out.append(Voice(sr, f0: 160, f1: 42, length: 0.22, wave: .sine, volume: candy ? 0.6 : 0.42, decay: 3))
+            out.append(Voice(sr, f0: 220, f1: 90, length: 0.07, wave: .sine, volume: candy ? 0.22 : 0.14, decay: 4))
             out.append(Voice(sr, f0: 0, length: 0.012, wave: .noise, volume: 0.15, decay: 6, highPass: true))
         }
         if s == 4 || s == 12 {
@@ -364,9 +393,9 @@ private struct Sequencer {
         // ベース（和音の根音。キャンディは跳ねるリズム）
         let bassSteps: Set<Int> = candy ? [0, 3, 6, 8, 10, 11, 14] : [0, 6, 8, 14]
         if bassSteps.contains(s) {
-            let octave: Double = candy && s % 2 == 1 ? 12 : 0
-            out.append(Voice(sr, f0: midi(chord[0] + octave), length: stepSeconds * (candy ? 1.6 : 3.5),
-                             wave: candy ? .saw : .triangle, volume: candy ? 0.22 : 0.26, decay: 2, filter: candy ? 0.08 : 0.2))
+            let octave: Double = candy && s % 2 == 1 ? 24 : 12
+            out.append(Voice(sr, f0: midi(chord[0] + octave), length: stepSeconds * (candy ? 1.2 : 2.5),
+                             wave: candy ? .square : .triangle, volume: candy ? 0.05 : 0.08, decay: 3, filter: 0.2))
         }
         // 和音（小節の頭でふわっと。キャンディは裏拍でも刻む）
         if s == 0 {
@@ -383,12 +412,24 @@ private struct Sequencer {
                                  decay: 4, filter: 0.25))
             }
         }
+        // 16 分のアルペジオ（パチンコらしい、高くて細かいキラキラ）
+        if candy || s % 2 == 0 {
+            let tones = chord.dropFirst().map { $0 + 24 }
+            let arp = tones[(candy ? s : s / 2) % tones.count]
+            out.append(Voice(sr, f0: midi(arp), length: stepSeconds * 0.9, wave: candy ? .square : .bell,
+                             volume: candy ? 0.022 : 0.04, decay: 5, filter: candy ? 0.5 : 1))
+        }
+        // 小節の頭に「チーン」
+        if s == 0 {
+            out.append(Voice(sr, f0: midi(chord[1] + 24), length: 0.8, wave: .bell, volume: 0.06, decay: 3))
+        }
         // メロディ（こだまのように少し遅れてもう一度小さく）
         let note = melody[bar][s]
         if note >= 0 {
             if candy {
-                out.append(Voice(sr, f0: midi(note), length: stepSeconds * 1.8, wave: .square, volume: 0.07, decay: 3, filter: 0.3))
-                out.append(Voice(sr, f0: midi(note), length: stepSeconds * 1.8, wave: .triangle, volume: 0.08, decay: 3))
+                out.append(Voice(sr, f0: midi(note), length: stepSeconds * 1.8, wave: .square, volume: 0.08, decay: 3, filter: 0.45))
+                out.append(Voice(sr, f0: midi(note), length: stepSeconds * 1.8, wave: .triangle, volume: 0.07, decay: 3))
+                out.append(Voice(sr, f0: midi(note + 12), length: 0.3, wave: .bell, volume: 0.04, decay: 5))
                 out.append(Voice(sr, f0: midi(note), length: stepSeconds * 1.8, wave: .square, volume: 0.025,
                                  delay: stepSeconds * 3, decay: 3, filter: 0.2))
             } else {
