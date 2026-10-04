@@ -25,6 +25,7 @@ struct CandyGameView: View {
                     .id(game.praiseID)
                     .allowsHitTesting(false)
             }
+            if game.showConfetti { ConfettiView() }
             if game.state != .playing { resultBanner }
         }
         .preferredColorScheme(.light)
@@ -148,8 +149,15 @@ struct CandyGameView: View {
                 ForEach(game.blasts) { blast in
                     BlastView(blast: blast, cell: cell)
                 }
+                ForEach(game.bursts) { burst in
+                    BurstView(burst: burst, cell: cell)
+                }
+                ForEach(game.floats) { item in
+                    FloatingTextView(item: item, cell: cell)
+                }
             }
             .frame(width: geo.size.width, height: geo.size.width)
+            .modifier(Shake(animatableData: game.shake))
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 6)
@@ -425,6 +433,11 @@ final class CandyGame: ObservableObject {
     @Published private(set) var state: State = .playing
     @Published private(set) var praise: String?
     @Published private(set) var praiseID = 0
+    /// 演出：はじける粒、浮かぶ点数、画面の揺れ、クリアの紙吹雪
+    @Published private(set) var bursts: [Burst] = []
+    @Published private(set) var floats: [FloatingText] = []
+    @Published private(set) var shake: CGFloat = 0
+    @Published private(set) var showConfetti = false
     private var busy = false
     private var hintTask: Task<Void, Never>?
 
@@ -448,6 +461,9 @@ final class CandyGame: ObservableObject {
         moves = 20 + min(level, 10)
         state = .playing
         clearing = []
+        bursts = []
+        floats = []
+        showConfetti = false
         candies = Self.freshBoard()
         busy = false
         scheduleHint()
@@ -506,7 +522,7 @@ final class CandyGame: ObservableObject {
             GameAudio.shared.play(.bomb)
             await clear(toClear, created: [], combo: 1)
             await resolve(swapped: [], startCombo: 2)
-            finishMove()
+            await finishMove()
             return
         }
 
@@ -522,12 +538,14 @@ final class CandyGame: ObservableObject {
         }
         moves -= 1
         await resolve(swapped: [a, b], startCombo: 1)
-        finishMove()
+        await finishMove()
     }
 
-    private func finishMove() {
+    private func finishMove() async {
         if score >= target {
+            await sugarCrush()
             state = .cleared
+            showConfetti = true
             GameAudio.shared.play(.win)
         } else if moves <= 0 {
             state = .failed
@@ -546,7 +564,11 @@ final class CandyGame: ObservableObject {
             let groups = findGroups(preferring: preferred)
             if groups.cells.isEmpty { break }
             await clear(groups.cells, created: groups.created, combo: combo)
-            if combo >= 2 { showPraise(combo) }
+            if combo >= 2 {
+                showPraise(combo)
+                addFloat(FloatingText(text: "\(combo) COMBO!", x: CGFloat(Self.size) / 2, y: CGFloat(Self.size) / 2,
+                                      color: .yellow, big: true))
+            }
             combo += 1
             preferred = []
         }
@@ -588,7 +610,23 @@ final class CandyGame: ObservableObject {
         let removing = toClear.subtracting(keep)
         let ids = Set(candies.filter { removing.contains($0.position) }.map(\.id))
 
-        score += ids.count * 30 * combo + newBlasts.count * 120
+        let gained = ids.count * 30 * combo + newBlasts.count * 120
+        score += gained
+        // 消えるキャンディの場所で粒をはじけさせ、真ん中に点数を浮かべる
+        let removed = candies.filter { ids.contains($0.id) }
+        let newBursts = removed.map {
+            Burst(x: CGFloat($0.column) + 0.5, y: CGFloat($0.row) + 0.5, color: CandyView.colors[$0.kind].0,
+                  count: newBlasts.isEmpty ? 8 : 12, power: newBlasts.isEmpty ? 0.9 : 1.5)
+        }
+        addBursts(newBursts)
+        if !removed.isEmpty {
+            let cx = removed.map { CGFloat($0.column) + 0.5 }.reduce(0, +) / CGFloat(removed.count)
+            let cy = removed.map { CGFloat($0.row) + 0.5 }.reduce(0, +) / CGFloat(removed.count)
+            addFloat(FloatingText(text: "+\(gained)", x: cx, y: cy, color: CandyView.colors[removed[0].kind].0))
+        }
+        if !newBlasts.isEmpty || combo >= 3 {
+            withAnimation(.linear(duration: 0.4)) { shake += 1 }
+        }
         if newBlasts.isEmpty {
             GameAudio.shared.play(.pop(combo: combo))
         } else {
@@ -628,6 +666,45 @@ final class CandyGame: ObservableObject {
                 row -= 1
             }
         }
+    }
+
+    private func addBursts(_ items: [Burst]) {
+        bursts.append(contentsOf: items)
+        let ids = Set(items.map(\.id))
+        Task {
+            try? await Task.sleep(for: .milliseconds(700))
+            bursts.removeAll { ids.contains($0.id) }
+        }
+    }
+
+    private func addFloat(_ item: FloatingText) {
+        floats.append(item)
+        let id = item.id
+        Task {
+            try? await Task.sleep(for: .milliseconds(1100))
+            floats.removeAll { $0.id == id }
+        }
+    }
+
+    /// クリアしたら、残りの手数ぶんキャンディをしま模様にして次々に弾けさせる（ボーナス）
+    private func sugarCrush() async {
+        guard moves > 0 else { return }
+        showPraise(6)
+        try? await Task.sleep(for: .milliseconds(500))
+        for _ in 0..<min(moves, 12) {
+            guard let pick = candies.indices.filter({ candies[$0].special == .none }).randomElement() else { break }
+            let position = candies[pick].position
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.5)) {
+                candies[pick].special = Bool.random() ? .stripedRow : .stripedColumn
+            }
+            moves -= 1
+            score += 300
+            addFloat(FloatingText(text: "+300", x: CGFloat(position.column) + 0.5, y: CGFloat(position.row) + 0.5,
+                                  color: .yellow, big: true))
+            try? await Task.sleep(for: .milliseconds(120))
+            await clear([position], created: [], combo: 2)
+        }
+        await resolve(swapped: [], startCombo: 2)
     }
 
     private func showPraise(_ combo: Int) {

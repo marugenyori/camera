@@ -33,6 +33,7 @@ struct JewelGameView: View {
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
+            if game.showConfetti { ConfettiView() }
             if game.state != .playing { resultBanner }
         }
         .preferredColorScheme(.light)
@@ -114,6 +115,12 @@ struct JewelGameView: View {
             ForEach(game.flights) { flight in
                 FlyingGem(flight: flight, color: puzzle.palette[flight.color], cell: cell, columns: puzzle.columns,
                           boardHeight: cell * CGFloat(puzzle.rows))
+            }
+            ForEach(game.bursts) { burst in
+                BurstView(burst: burst, cell: cell)
+            }
+            ForEach(game.floats) { item in
+                FloatingTextView(item: item, cell: cell)
             }
         }
         .contentShape(Rectangle())
@@ -306,7 +313,14 @@ final class JewelGame: ObservableObject {
     @Published private(set) var level: Int
     @Published private(set) var isPhotoMode = false
     @Published private(set) var finishedImage: UIImage?
+    /// 演出：はじける粒、浮かぶ文字、完成の紙吹雪
+    @Published private(set) var bursts: [Burst] = []
+    @Published private(set) var floats: [FloatingText] = []
+    @Published private(set) var showConfetti = false
     var photo: UIImage?
+    /// 続けて宝石がはまった数（テンポよくはまるほど音が高くなる）
+    private var streak = 0
+    private var lastPlaced = Date.distantPast
 
     init() {
         level = max(1, UserDefaults.standard.integer(forKey: "jewelLevel"))
@@ -360,6 +374,10 @@ final class JewelGame: ObservableObject {
         flights = []
         flyingTo = []
         finishedImage = nil
+        bursts = []
+        floats = []
+        showConfetti = false
+        streak = 0
         state = jewels.enumerated().allSatisfy({ $0.element == made.targets[$0.offset] }) ? .cleared : .playing
     }
 
@@ -414,15 +432,64 @@ final class JewelGame: ObservableObject {
                 Task {
                     try? await Task.sleep(for: .milliseconds(320))
                     flyingTo.remove(landed)
-                    GameAudio.shared.play(.place)
+                    landedEffects(at: landed, color: need)
                 }
             }
         }
         try? await Task.sleep(for: .milliseconds(340))
         if current.enumerated().allSatisfy({ $0.element == puzzle.targets[$0.offset] }) && state == .playing {
             state = .cleared
+            showConfetti = true
             finishedImage = JewelBoardImage.render(puzzle)
             GameAudio.shared.play(.complete)
+        }
+    }
+
+    /// 宝石がはまったときの演出：粒がはじけ、テンポよく続くと音が上がり、1 色そろうと大きくお祝い
+    private func landedEffects(at cell: Int, color: Int) {
+        guard let puzzle else { return }
+        let x = CGFloat(cell % puzzle.columns) + 0.5
+        let y = CGFloat(cell / puzzle.columns) + 0.5
+        addBursts([Burst(x: x, y: y, color: puzzle.palette[color], count: 8, power: 0.8)])
+        streak = Date().timeIntervalSince(lastPlaced) < 1.2 ? streak + 1 : 1
+        lastPlaced = Date()
+        if streak >= 3 {
+            GameAudio.shared.play(.pop(combo: min(streak - 1, 8)))
+            if streak % 3 == 0 {
+                addFloat(FloatingText(text: "×\(streak)", x: x, y: y, color: .orange))
+            }
+        } else {
+            GameAudio.shared.play(.place)
+        }
+        // この色が全部そろったら
+        let left = current.indices.filter { puzzle.targets[$0] == color && current[$0] != color }.count
+        if left == 0 {
+            GameAudio.shared.play(.special)
+            let cells = puzzle.targets.indices.filter { puzzle.targets[$0] == color }.shuffled().prefix(30)
+            addBursts(cells.map {
+                Burst(x: CGFloat($0 % puzzle.columns) + 0.5, y: CGFloat($0 / puzzle.columns) + 0.5,
+                      color: puzzle.palette[color], count: 6, power: 1.2)
+            })
+            addFloat(FloatingText(text: "この色コンプリート！", x: CGFloat(puzzle.columns) / 2,
+                                  y: CGFloat(puzzle.rows) / 2, color: .pink, big: true))
+        }
+    }
+
+    private func addBursts(_ items: [Burst]) {
+        bursts.append(contentsOf: items)
+        let ids = Set(items.map(\.id))
+        Task {
+            try? await Task.sleep(for: .milliseconds(700))
+            bursts.removeAll { ids.contains($0.id) }
+        }
+    }
+
+    private func addFloat(_ item: FloatingText) {
+        floats.append(item)
+        let id = item.id
+        Task {
+            try? await Task.sleep(for: .milliseconds(1100))
+            floats.removeAll { $0.id == id }
         }
     }
 
