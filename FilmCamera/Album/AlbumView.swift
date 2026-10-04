@@ -78,9 +78,21 @@ struct AlbumView: View {
                 }
                 if store.selected?.isOwner ?? true {
                     ToolbarItem(placement: .primaryAction) {
-                        ShareLink(item: AlbumInvitation(),
-                                  preview: SharePreview("フィルムカメラの共有アルバム")) {
-                            Label("友だちを招待", systemImage: "person.crop.circle.badge.plus")
+                        if let url = store.share?.url {
+                            // 招待のリンクを、LINE やメッセージなど好きなアプリで送る
+                            ShareLink(item: url,
+                                      subject: Text("フィルムカメラの共有アルバム"),
+                                      message: Text("フィルムカメラの共有アルバムに招待します。リンクを開くと参加できます。")) {
+                                Label("招待を送る", systemImage: "paperplane")
+                            }
+                        } else if store.isPreparingShare {
+                            ProgressView()
+                        } else {
+                            Button {
+                                Task { await store.makeShare() }
+                            } label: {
+                                Label("友だちを招待", systemImage: "person.crop.circle.badge.plus")
+                            }
                         }
                     }
                 }
@@ -88,17 +100,6 @@ struct AlbumView: View {
             .task { await store.refresh() }
             .sheet(item: $opened) { photo in
                 AlbumPhotoView(store: store, photo: photo)
-            }
-        }
-    }
-}
-
-/// 招待の共有シートに渡すもの（自分のアルバムの CKShare を用意して渡す）
-struct AlbumInvitation: Transferable {
-    static var transferRepresentation: some TransferRepresentation {
-        CKShareTransferRepresentation { _ in
-            .prepareShare(container: AlbumStore.container) {
-                try await AlbumStore.prepareShare()
             }
         }
     }

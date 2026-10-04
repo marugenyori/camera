@@ -48,6 +48,9 @@ final class AlbumStore: ObservableObject {
     @Published var autoAdd: Bool {
         didSet { UserDefaults.standard.set(autoAdd, forKey: "albumAutoAdd") }
     }
+    /// 用意できた招待（自分のアルバムの共有）。これがあると「招待を送る」が出る
+    @Published private(set) var share: CKShare?
+    @Published private(set) var isPreparingShare = false
     /// 招待を受け取ったときなどに、アルバムの画面を開く
     @Published var showAlbum = false
 
@@ -180,19 +183,34 @@ final class AlbumStore: ObservableObject {
 
     // MARK: - 共有
 
-    /// 自分のアルバムの共有（招待のリンク）を用意する。なければ作る
+    /// 自分のアルバムの共有（招待のリンク）を用意する。なければ作る。
+    /// LINE などにリンクだけ送れるよう「リンクを知っている人は誰でも参加して追加できる」にする
+    /// （宛先を指定する方式だと、メールアドレスや電話番号を求められる）
     nonisolated static func prepareShare() async throws -> CKShare {
         try await ensureOwnZone()
         let db = container.privateCloudDatabase
         let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: ownZoneID)
         if let existing = try? await db.record(for: shareID) as? CKShare {
-            return existing
+            guard existing.publicPermission != .readWrite else { return existing }
+            existing.publicPermission = .readWrite
+            return try await db.save(existing) as? CKShare ?? existing
         }
         let share = CKShare(recordZoneID: ownZoneID)
         share[CKShare.SystemFieldKey.title] = "フィルムカメラの共有アルバム" as NSString
-        share.publicPermission = .none
-        guard let saved = try await db.save(share) as? CKShare else { return share }
-        return saved
+        share.publicPermission = .readWrite
+        return try await db.save(share) as? CKShare ?? share
+    }
+
+    /// 招待を用意する（うまくいかなければ理由を status に出す）
+    func makeShare() async {
+        isPreparingShare = true
+        defer { isPreparingShare = false }
+        do {
+            share = try await Self.prepareShare()
+            status = nil
+        } catch {
+            status = "招待を作れませんでした：" + Self.describe(error)
+        }
     }
 
     /// 友だちからの招待を受ける（招待のリンクを開いたとき）
@@ -260,6 +278,10 @@ final class AlbumStore: ObservableObject {
 
     nonisolated private static func describe(_ error: Error) -> String {
         guard let ck = error as? CKError else { return error.localizedDescription }
+        // まとめて送ったうちの一部が失敗したときは、中身のエラーで説明する
+        if ck.code == .partialFailure, let inner = ck.partialErrorsByItemID?.values.first {
+            return describe(inner)
+        }
         switch ck.code {
         case .notAuthenticated: return "iCloud にサインインしてください"
         case .networkUnavailable, .networkFailure: return "ネットにつながっていません"
@@ -267,7 +289,7 @@ final class AlbumStore: ObservableObject {
         case .permissionFailure: return "このアルバムに追加する権限がありません"
         case .badContainer, .missingEntitlement: return "iCloud の設定が済んでいません（Apple Developer で iCloud コンテナの設定が必要）"
         case .serverRejectedRequest, .invalidArguments: return "iCloud の準備が済んでいません（CloudKit Console でレコードの型の公開が必要）"
-        default: return ck.localizedDescription
+        default: return "\(ck.localizedDescription)（コード \(ck.code.rawValue)）"
         }
     }
 }
