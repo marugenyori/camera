@@ -21,6 +21,8 @@ final class CameraModel: NSObject, ObservableObject {
     @Published private(set) var status: Status = .idle
     @Published private(set) var position: AVCaptureDevice.Position = .back
     @Published private(set) var lastPhoto: UIImage?
+    /// 最後に保存した写真のファイル（共有アルバムに送るため）
+    private(set) var lastPhotoFile: (data: Data, type: String, mode: String)?
     @Published private(set) var isSaving = false
     @Published private(set) var shotCount = 0
     /// 距離の測定が動いているか（フラッシュモードで LiDAR などが使えるとき）
@@ -928,7 +930,10 @@ final class CameraModel: NSObject, ObservableObject {
                 }
                 self.saveVideoToLibrary(url)
                 DispatchQueue.main.async {
-                    if let thumbnail { self.lastPhoto = thumbnail }
+                    if let thumbnail {
+                        self.lastPhoto = thumbnail
+                        self.lastPhotoFile = nil
+                    }
                     self.isSaving = false
                 }
             }
@@ -1169,9 +1174,14 @@ final class CameraModel: NSObject, ObservableObject {
                 return
             }
             let thumbnail = self.previewImage(of: output)
+            let mode = options.mode.title
             DispatchQueue.main.async {
+                self.lastPhotoFile = (file.data, file.type, mode)
                 self.lastPhoto = thumbnail
                 self.isSaving = false
+                Task { @MainActor in
+                    AlbumStore.shared.addIfAutomatic(data: file.data, type: file.type, thumbnail: thumbnail, mode: mode)
+                }
             }
             self.saveToLibrary(file.data, type: file.type)
         }

@@ -4,6 +4,7 @@ import SwiftUI
 /// アルミ色の筐体に画面を大きくはめ込み、上にランプつきの機能キー、下にスライドで選ぶモードと大きなシャッター、オレンジの差し色
 struct ContentView: View {
     @StateObject private var camera = CameraModel()
+    @ObservedObject private var album = AlbumStore.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var flashOpacity = 0.0
     @State private var showingPhoto = false
@@ -87,8 +88,13 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingPhoto) {
             if let photo = camera.lastPhoto {
-                PhotoSheet(image: photo)
+                PhotoSheet(image: photo, addToAlbum: camera.lastPhotoFile.map { file -> () -> Void in
+                    { album.add(data: file.data, type: file.type, thumbnail: photo, mode: file.mode) }
+                })
             }
+        }
+        .sheet(isPresented: $album.showAlbum) {
+            AlbumView(store: album)
         }
     }
 
@@ -214,8 +220,13 @@ struct ContentView: View {
                 .disabled(camera.isRecording)
                 .opacity(camera.isRecording ? 0.4 : 1)
             HStack {
-                thumbnail
-                    .frame(width: 96, alignment: .leading)
+                HStack(spacing: 8) {
+                    thumbnail
+                    FunctionKey(systemImage: "person.2.fill", isOn: album.autoAdd, label: "共有アルバム") {
+                        album.showAlbum = true
+                    }
+                }
+                .frame(width: 96, alignment: .leading)
                 Spacer()
                 ShutterButton(kind: camera.captureKind,
                               isRecording: camera.isRecording,
@@ -773,7 +784,10 @@ private struct ZoomLever: View {
 /// 最後に撮った写真を大きく表示する
 private struct PhotoSheet: View {
     let image: UIImage
+    /// 共有アルバムに追加する（保存したファイルがあるときだけ）
+    let addToAlbum: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
+    @State private var added = false
 
     var body: some View {
         NavigationStack {
@@ -789,6 +803,18 @@ private struct PhotoSheet: View {
                     ToolbarItem(placement: .primaryAction) {
                         ShareLink(item: Image(uiImage: image),
                                   preview: SharePreview("写真", image: Image(uiImage: image)))
+                    }
+                    if let addToAlbum {
+                        ToolbarItem(placement: .bottomBar) {
+                            Button {
+                                addToAlbum()
+                                added = true
+                            } label: {
+                                Label(added ? "共有アルバムに追加しました" : "共有アルバムに追加",
+                                      systemImage: added ? "checkmark.circle.fill" : "person.2.fill")
+                            }
+                            .disabled(added)
+                        }
                     }
                 }
                 .navigationTitle("写真アプリに保存しました")
