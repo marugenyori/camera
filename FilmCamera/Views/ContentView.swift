@@ -99,7 +99,7 @@ struct ContentView: View {
             AlbumView(store: album)
         }
         .fullScreenCover(isPresented: $showingGame) {
-            JewelGameView(initialImage: camera.lastPhoto)
+            GameHubView(initialImage: camera.lastPhoto)
         }
         .onChange(of: showingGame) { _, playing in
             // 遊んでいる間はカメラを止めて電池を節約する

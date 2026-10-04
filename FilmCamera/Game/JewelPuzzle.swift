@@ -1,0 +1,130 @@
+import SwiftUI
+import UIKit
+
+/// 塗り絵の問題：マス目の大きさ、使う色（パレット）、各マスの正解の色番号
+struct JewelPuzzle {
+    let columns: Int
+    let rows: Int
+    let palette: [Color]
+    let uiColors: [UIColor]
+    private let rgb: [SIMD3<Float>]
+    let targets: [Int]
+
+    /// 写真から問題を作る。縦長 3:4 に切り抜き、横 48 マスにして、色を 24 色ほどにまとめる
+    /// （本物の Jewel Coloring のように細かく、たくさんの色で）
+    init?(image: UIImage, columns: Int = 48, colors: Int = 24) {
+        guard let cgImage = image.cgImage ?? Self.render(image) else { return nil }
+        let rows = columns * 4 / 3
+        guard let pixels = Self.pixels(of: cgImage, orientation: image.imageOrientation,
+                                       columns: columns, rows: rows) else { return nil }
+        let centers = Self.kMeans(pixels, k: colors)
+        // 明るい色から順に番号をふる
+        let order = centers.indices.sorted { Self.luma(centers[$0]) > Self.luma(centers[$1]) }
+        let sorted = order.map { centers[$0] }
+        self.columns = columns
+        self.rows = rows
+        self.rgb = sorted
+        self.palette = sorted.map { Color(red: Double($0.x), green: Double($0.y), blue: Double($0.z)) }
+        self.uiColors = sorted.map { UIColor(red: CGFloat($0.x), green: CGFloat($0.y), blue: CGFloat($0.z), alpha: 1) }
+        self.targets = pixels.map { Self.nearest($0, in: sorted) }
+    }
+
+    func isLight(_ index: Int) -> Bool { Self.luma(rgb[index]) > 0.6 }
+
+    private static func luma(_ c: SIMD3<Float>) -> Float { 0.299 * c.x + 0.587 * c.y + 0.114 * c.z }
+
+    private static func nearest(_ p: SIMD3<Float>, in centers: [SIMD3<Float>]) -> Int {
+        var best = 0
+        var bestDistance = Float.greatestFiniteMagnitude
+        for (i, c) in centers.enumerated() {
+            let d = p - c
+            let distance = (d * d).sum()
+            if distance < bestDistance {
+                bestDistance = distance
+                best = i
+            }
+        }
+        return best
+    }
+
+    /// 似た色をまとめて k 色にする（k-means）。初めの色は明るさ順に均等に選ぶ
+    private static func kMeans(_ pixels: [SIMD3<Float>], k: Int) -> [SIMD3<Float>] {
+        let byLuma = pixels.sorted { luma($0) < luma($1) }
+        var centers = (0..<k).map { byLuma[min(byLuma.count - 1, ($0 * 2 + 1) * byLuma.count / (k * 2))] }
+        for _ in 0..<10 {
+            var sums = [SIMD3<Float>](repeating: .zero, count: k)
+            var counts = [Float](repeating: 0, count: k)
+            for p in pixels {
+                let i = nearest(p, in: centers)
+                sums[i] += p
+                counts[i] += 1
+            }
+            for i in 0..<k where counts[i] > 0 {
+                centers[i] = sums[i] / counts[i]
+            }
+        }
+        // 同じ色になってしまった分は除く
+        var unique: [SIMD3<Float>] = []
+        for c in centers where !unique.contains(where: { ((c - $0) * (c - $0)).sum() < 0.0004 }) {
+            unique.append(c)
+        }
+        return unique
+    }
+
+    /// 写真を縦 3:4 の中央で切り抜き、columns × rows に縮めた色を読む
+    private static func pixels(of image: CGImage, orientation: UIImage.Orientation,
+                               columns: Int, rows: Int) -> [SIMD3<Float>]? {
+        let upright = UIImage(cgImage: image, scale: 1, orientation: orientation)
+        let size = upright.size
+        let target = CGSize(width: columns, height: rows)
+        let scale = max(target.width / size.width, target.height / size.height)
+        let drawSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let origin = CGPoint(x: (target.width - drawSize.width) / 2, y: (target.height - drawSize.height) / 2)
+
+        var bytes = [UInt8](repeating: 0, count: columns * rows * 4)
+        let drew: Bool = bytes.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: columns, height: rows,
+                                          bitsPerComponent: 8, bytesPerRow: columns * 4,
+                                          space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.interpolationQuality = .high
+            UIGraphicsPushContext(context)
+            // UIKit の座標（上が 0）で描くため、上下を反転する
+            context.translateBy(x: 0, y: CGFloat(rows))
+            context.scaleBy(x: 1, y: -1)
+            upright.draw(in: CGRect(origin: origin, size: drawSize))
+            UIGraphicsPopContext()
+            return true
+        }
+        guard drew else { return nil }
+        return (0..<(columns * rows)).map { i in
+            SIMD3(Float(bytes[i * 4]) / 255, Float(bytes[i * 4 + 1]) / 255, Float(bytes[i * 4 + 2]) / 255)
+        }
+    }
+
+    private static func render(_ image: UIImage) -> CGImage? {
+        UIGraphicsImageRenderer(size: image.size).image { _ in image.draw(at: .zero) }.cgImage
+    }
+
+    /// 写真がないときの見本の絵（夕焼けの海と太陽）
+    static func sampleImage() -> UIImage {
+        let size = CGSize(width: 300, height: 400)
+        return UIGraphicsImageRenderer(size: size).image { renderer in
+            let context = renderer.cgContext
+            let sky = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+                                 colors: [UIColor(red: 0.18, green: 0.2, blue: 0.5, alpha: 1).cgColor,
+                                          UIColor(red: 0.95, green: 0.45, blue: 0.35, alpha: 1).cgColor,
+                                          UIColor(red: 1, green: 0.8, blue: 0.4, alpha: 1).cgColor] as CFArray,
+                                 locations: [0, 0.6, 1])!
+            context.drawLinearGradient(sky, start: .zero, end: CGPoint(x: 0, y: 260), options: [])
+            UIColor(red: 1, green: 0.9, blue: 0.55, alpha: 1).setFill()
+            context.fillEllipse(in: CGRect(x: 105, y: 170, width: 90, height: 90))
+            UIColor(red: 0.1, green: 0.3, blue: 0.55, alpha: 1).setFill()
+            context.fill(CGRect(x: 0, y: 260, width: 300, height: 140))
+            UIColor(red: 0.95, green: 0.65, blue: 0.4, alpha: 1).setFill()
+            for y in stride(from: 275, to: 400, by: 22) {
+                context.fill(CGRect(x: 110 - (y - 260) / 4, y: y, width: 80 + (y - 260) / 2, height: 5))
+            }
+        }
+    }
+}
