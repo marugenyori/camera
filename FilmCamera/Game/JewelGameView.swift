@@ -389,19 +389,23 @@ final class JewelGame: ObservableObject {
         level = max(1, UserDefaults.standard.integer(forKey: "jewelLevel"))
     }
 
-    /// レベルの問題：はじめの 3 つは用意したドット絵、そのあとは写真（なければ見本の絵）を宝石にする
+    /// レベルの問題：用意したドット絵を順に。全部終わったら見本の絵、そのあとはドット絵をくり返す（バラバラ度は上がる）。
+    /// 最後に撮った写真は暗いと見分けにくいので、レベルには使わない（右上のボタンで選んだときだけ）
     func startLevel() {
         isPhotoMode = false
-        if level <= JewelPuzzle.presets.count {
-            begin(JewelPuzzle.presets[level - 1])
-        } else if let made = JewelPuzzle(image: photo ?? JewelPuzzle.sampleImage(),
-                                         columns: min(14 + level, 22), colors: min(5 + level / 2, 10)) {
+        let presets = JewelPuzzle.presets
+        if level <= presets.count {
+            begin(presets[level - 1])
+        } else if level == presets.count + 1,
+                  let made = JewelPuzzle(image: JewelPuzzle.sampleImage(), columns: 14, colors: 7) {
             begin(made)
+        } else {
+            begin(presets[(level - 1) % presets.count])
         }
     }
 
     func startPhoto(_ image: UIImage) {
-        guard let made = JewelPuzzle(image: image, columns: 20, colors: 9) else { return }
+        guard let made = JewelPuzzle(image: image, columns: 15, colors: 8) else { return }
         isPhotoMode = true
         begin(made)
     }
@@ -425,7 +429,7 @@ final class JewelGame: ObservableObject {
     private func begin(_ made: JewelPuzzle) {
         puzzle = made
         var jewels: [Int?] = made.targets.map { $0 }
-        let ratio = min(0.6, 0.25 + Double(level) * 0.04)
+        let ratio = min(0.45, 0.2 + Double(level) * 0.02)
         let count = max(4, Int(Double(jewels.count) * ratio))
         let chosen = Array(jewels.indices.shuffled().prefix(count))
         let shuffled = chosen.map { jewels[$0] }.shuffled()

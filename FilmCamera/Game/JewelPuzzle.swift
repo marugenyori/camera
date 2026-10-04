@@ -15,9 +15,12 @@ struct JewelPuzzle {
     init?(image: UIImage, columns: Int = 48, colors: Int = 24) {
         guard let cgImage = image.cgImage ?? Self.render(image) else { return nil }
         let rows = columns * 4 / 3
-        guard let pixels = Self.pixels(of: cgImage, orientation: image.imageOrientation,
-                                       columns: columns, rows: rows) else { return nil }
-        let centers = Self.kMeans(pixels, k: colors)
+        guard let raw = Self.pixels(of: cgImage, orientation: image.imageOrientation,
+                                    columns: columns, rows: rows) else { return nil }
+        // 暗い写真や色の薄い写真でも見分けやすいよう、明るさを広げて色を濃くする
+        let pixels = Self.vivid(raw)
+        // 似すぎた色はまとめる（灰色ばかりで見分けられない、をなくす）
+        let centers = Self.mergeClose(Self.kMeans(pixels, k: colors))
         // 明るい色から順に番号をふる
         let order = centers.indices.sorted { Self.luma(centers[$0]) > Self.luma(centers[$1]) }
         let sorted = order.map { centers[$0] }
@@ -63,7 +66,70 @@ struct JewelPuzzle {
                   ".YYY......YYY.", ".YY........YY."],
                  colors: [".": SIMD3(0.62, 0.6, 0.95), "Y": SIMD3(1, 0.85, 0.3), "K": SIMD3(0.35, 0.25, 0.3),
                           "P": SIMD3(1, 0.6, 0.65)]),
+        // ねこ
+        pixelArt(["..K........K..", ".KOK......KOK.", ".KOOK....KOOK.", ".KOOOKKKKOOOK.", ".KOOOOOOOOOOK.",
+                  "KOOWKOOOOWKOOK", "KOOKKOOOOKKOOK", "KOOOOOPPOOOOOK", "KPPOOOKKOOOPPK", ".KOOOOOOOOOOK.",
+                  "..KKOOOOOOKK..", "....KKKKKK...."],
+                 colors: [".": SIMD3(0.7, 0.92, 0.85), "K": SIMD3(0.36, 0.24, 0.2), "O": SIMD3(1, 0.68, 0.3),
+                          "W": SIMD3(1, 1, 1), "P": SIMD3(1, 0.62, 0.72)]),
+        // ひまわり
+        pixelArt([".....YYY.....", "...YYYYYYY...", "..YYYBBBYYY..", ".YYYBBBBBYYY.", ".YYBBBBBBBYY.",
+                  ".YYYBBBBBYYY.", "..YYYBBBYYY..", "...YYYYYYY...", ".....YGY.....", "......G......",
+                  "..LL..G..LL..", "...LLLGLLL...", "......G......"],
+                 colors: [".": SIMD3(0.55, 0.8, 1), "Y": SIMD3(1, 0.85, 0.2), "B": SIMD3(0.55, 0.33, 0.2),
+                          "G": SIMD3(0.25, 0.6, 0.3), "L": SIMD3(0.55, 0.85, 0.4)]),
+        // アイスクリーム
+        pixelArt(["....PPPP....", "...PPWPPP...", "..PPPPPPPP..", "..MMMMMMMM..", ".MMWMMMMMMM.",
+                  ".MMMMMMMMMM.", "..CCCCCCCC..", "..CTCCTCCT..", "...CCCCCC...", "...CTCCTC...",
+                  "....CCCC....", "....CTCC....", ".....CC.....", ".....CC....."],
+                 colors: [".": SIMD3(0.8, 0.75, 1), "P": SIMD3(1, 0.55, 0.7), "W": SIMD3(1, 1, 1),
+                          "M": SIMD3(0.55, 0.92, 0.75), "C": SIMD3(0.95, 0.75, 0.45), "T": SIMD3(0.75, 0.5, 0.25)]),
+        // さかな
+        pixelArt(["..B...........", ".B...OOOOO....", "....OOSOOSO..O", "..OOOSOOOSOOOO", ".OKOOSOOOSOOO.",
+                  "..OOOSOOOSOOOO", "....OOSOOSO..O", ".....OOOOO....", ".............."],
+                 colors: [".": SIMD3(0.3, 0.6, 0.95), "B": SIMD3(0.85, 0.95, 1), "O": SIMD3(1, 0.55, 0.2),
+                          "S": SIMD3(1, 1, 1), "K": SIMD3(0.15, 0.15, 0.25)]),
+        // にじと雲
+        pixelArt(["..............", "...RRRRRRRR...", "..RROOOOOORR..", ".RROOYYYYOORR.", ".ROOYGGGGYOOR.",
+                  "RROYGBBBBGYORR", "ROYGB....BGYOR", "WWWWW....WWWWW", ".WWW......WWW."],
+                 colors: [".": SIMD3(0.7, 0.88, 1), "R": SIMD3(1, 0.4, 0.45), "O": SIMD3(1, 0.65, 0.3),
+                          "Y": SIMD3(1, 0.9, 0.35), "G": SIMD3(0.45, 0.85, 0.45), "B": SIMD3(0.4, 0.55, 1),
+                          "W": SIMD3(1, 1, 1)]),
     ]
+
+    /// 明るさを 2〜98% の範囲いっぱいに広げ、色の濃さを上げる
+    private static func vivid(_ pixels: [SIMD3<Float>]) -> [SIMD3<Float>] {
+        let lumas = pixels.map(luma).sorted()
+        guard !lumas.isEmpty else { return pixels }
+        let low = lumas[lumas.count * 2 / 100]
+        let high = lumas[lumas.count * 98 / 100]
+        let range = max(high - low, 0.05)
+        return pixels.map { p in
+            var c = (p - SIMD3(repeating: low)) / range * 0.85 + SIMD3(repeating: 0.08)
+            let gray = luma(c)
+            c = SIMD3(repeating: gray) + (c - SIMD3(repeating: gray)) * 1.5
+            return c.clamped(lowerBound: SIMD3(repeating: 0), upperBound: SIMD3(repeating: 1))
+        }
+    }
+
+    /// いちばん近い 2 色が近すぎるあいだ、平均してまとめる
+    private static func mergeClose(_ colors: [SIMD3<Float>]) -> [SIMD3<Float>] {
+        var list = colors
+        while list.count > 2 {
+            var best = (0, 1, Float.greatestFiniteMagnitude)
+            for i in list.indices {
+                for j in list.indices where j > i {
+                    let d = list[i] - list[j]
+                    let distance = (d * d).sum()
+                    if distance < best.2 { best = (i, j, distance) }
+                }
+            }
+            guard best.2 < 0.05 else { break }
+            list[best.0] = (list[best.0] + list[best.1]) / 2
+            list.remove(at: best.1)
+        }
+        return list
+    }
 
     func isLight(_ index: Int) -> Bool { Self.luma(rgb[index]) > 0.6 }
 
