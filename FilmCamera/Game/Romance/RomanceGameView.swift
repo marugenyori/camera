@@ -50,31 +50,43 @@ struct RomanceGameView: View {
     // MARK: - タイトル
 
     private var titleScreen: some View {
-        ZStack {
-            if let image = RomanceImages.image("title") {
-                GeometryReader { geo in
-                    Image(uiImage: image).resizable().scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height).clipped()
+        let keyVisual = RomanceImages.image("title")
+        return ZStack {
+            BackdropView(backdrop: .sakuraHill)
+            if keyVisual == nil {
+                VStack {
+                    Spacer()
+                    HStack(alignment: .bottom, spacing: -40) {
+                        HeroinePortrait(heroine: .shizuku, face: .smile).frame(height: 220)
+                        HeroinePortrait(heroine: .hinata, face: .laugh).frame(height: 250)
+                        HeroinePortrait(heroine: .rin, face: .smile).frame(height: 220)
+                    }
+                    .opacity(0.9)
                 }
                 .ignoresSafeArea()
-            } else {
-                BackdropView(backdrop: .sakuraHill)
             }
-            VStack {
-                Spacer()
-                HStack(alignment: .bottom, spacing: -40) {
-                    HeroinePortrait(heroine: .shizuku, face: .smile).frame(height: 220)
-                    HeroinePortrait(heroine: .hinata, face: .laugh).frame(height: 250)
-                    HeroinePortrait(heroine: .rin, face: .smile).frame(height: 220)
-                }
-                .opacity(0.9)
-            }
-            .ignoresSafeArea()
-            VStack(spacing: 28) {
-                Spacer().frame(height: 50)
-                VStack(spacing: 6) {
-                    OutlinedText(text: RomanceScript.title, size: 40, fill: Color(red: 1, green: 0.55, blue: 0.7))
-                    OutlinedText(text: RomanceScript.subtitle, size: 20, fill: .white)
+            VStack(spacing: 22) {
+                Spacer().frame(height: keyVisual == nil ? 50 : 20)
+                if let keyVisual {
+                    // タイトルの一枚絵（横長なので、画面の幅いっぱいに出す）
+                    Image(uiImage: keyVisual)
+                        .resizable()
+                        .scaledToFit()
+                        .overlay(Rectangle().stroke(.white.opacity(0.9), lineWidth: 2))
+                        .shadow(color: .black.opacity(0.5), radius: 12, y: 6)
+                        .overlay(alignment: .bottom) {
+                            VStack(spacing: 2) {
+                                OutlinedText(text: RomanceScript.title, size: 34, fill: Color(red: 1, green: 0.55, blue: 0.7))
+                                OutlinedText(text: RomanceScript.subtitle, size: 17, fill: .white)
+                            }
+                            .offset(y: 34)
+                        }
+                        .padding(.bottom, 30)
+                } else {
+                    VStack(spacing: 6) {
+                        OutlinedText(text: RomanceScript.title, size: 40, fill: Color(red: 1, green: 0.55, blue: 0.7))
+                        OutlinedText(text: RomanceScript.subtitle, size: 20, fill: .white)
+                    }
                 }
                 VStack(spacing: 12) {
                     menuButton("はじめから") { game.newGame() }
