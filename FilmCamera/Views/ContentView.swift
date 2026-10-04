@@ -98,6 +98,13 @@ struct ContentView: View {
         .sheet(isPresented: $album.showAlbum) {
             AlbumView(store: album)
         }
+        .onChange(of: album.requestedMode) { _, title in
+            // アルバムの写真の「このフィルタで撮る」：そのモードに切り替えて撮影に戻る
+            guard let title else { return }
+            if let mode = LookMode.allCases.first(where: { $0.title == title }) { camera.mode = mode }
+            album.requestedMode = nil
+            album.showAlbum = false
+        }
         .fullScreenCover(isPresented: $showingGame) {
             GameHubView(initialImage: camera.lastPhoto)
         }

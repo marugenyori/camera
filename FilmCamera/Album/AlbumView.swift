@@ -445,6 +445,24 @@ struct AlbumView: View {
                             .padding(4)
                     }
                 }
+                .overlay(alignment: .bottomTrailing) {
+                    // いいねとコメントの数
+                    let likes = store.likes(of: photo).count
+                    let comments = store.comments(of: photo).count
+                    if likes + comments > 0 {
+                        HStack(spacing: 5) {
+                            if likes > 0 { Label("\(likes)", systemImage: "heart.fill") }
+                            if comments > 0 { Label("\(comments)", systemImage: "bubble.right.fill") }
+                        }
+                        .labelStyle(CompactLabelStyle())
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(.black.opacity(0.5)))
+                        .padding(4)
+                    }
+                }
                 .overlay {
                     if selecting && isPicked { Color.white.opacity(0.35) }
                 }
@@ -591,7 +609,8 @@ struct AlbumView: View {
 
 // MARK: - 1 枚ずつ大きく見る
 
-/// 写真を大きく見る。左右にめくり、ピンチやダブルタップで拡大。入れた人・モード・日時を表示し、共有・保存・削除ができる
+/// 写真を大きく見る。左右にめくり、ピンチで拡大、ダブルタップでいいね。
+/// 下のパネルに、入れた人・日時・フィルタ、いいね・絵文字・コメント、共有・保存・このフィルタで撮る・ほかのアルバムへ・削除
 private struct AlbumViewer: View {
     @ObservedObject var store: AlbumStore
     let photos: [AlbumPhoto]
@@ -600,7 +619,12 @@ private struct AlbumViewer: View {
     @State private var full: [CKRecord.ID: UIImage] = [:]
     @State private var chromeHidden = false
     @State private var confirmingDelete = false
+    @State private var showingComments = false
+    @State private var heartPop = 0
     @State private var toast: String?
+
+    /// すぐ押せる絵文字
+    static let quickEmojis = ["😂", "😍", "🔥", "👏", "😮", "🥹"]
 
     init(store: AlbumStore, photos: [AlbumPhoto], index: Int) {
         self.store = store
@@ -616,17 +640,21 @@ private struct AlbumViewer: View {
             TabView(selection: $index) {
                 ForEach(photos.indices, id: \.self) { offset in
                     let photo = photos[offset]
-                    ZoomableImage(image: full[photo.id] ?? photo.thumbnail)
-                        .overlay {
-                            if full[photo.id] == nil { ProgressView().tint(.white) }
-                        }
-                        .tag(offset)
-                        .task { await load(photo) }
+                    ZoomableImage(image: full[photo.id] ?? photo.thumbnail) {
+                        like(photo, fromDoubleTap: true)
+                    }
+                    .overlay {
+                        if full[photo.id] == nil { ProgressView().tint(.white) }
+                    }
+                    .tag(offset)
+                    .task { await load(photo) }
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
             .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() } }
+
+            HeartPop(trigger: heartPop)
 
             if !chromeHidden { chrome }
             if let toast {
@@ -640,6 +668,13 @@ private struct AlbumViewer: View {
             }
         }
         .statusBarHidden(chromeHidden)
+        .sensoryFeedback(.impact(weight: .medium), trigger: heartPop)
+        .sheet(isPresented: $showingComments) {
+            if let photo = current {
+                CommentsSheet(store: store, photo: photo)
+                    .presentationDetents([.medium, .large])
+            }
+        }
         .confirmationDialog("この写真を削除しますか？", isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("削除する", role: .destructive) {
                 guard let photo = current else { return }
@@ -672,32 +707,144 @@ private struct AlbumViewer: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 16)
             Spacer()
-            if let photo = current { infoCard(photo) }
+            if let photo = current { panel(photo) }
         }
         .transition(.opacity)
     }
 
-    private func infoCard(_ photo: AlbumPhoto) -> some View {
+    // MARK: 下のパネル
+
+    private func panel(_ photo: AlbumPhoto) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            header(photo)
+            emojiBar(photo)
+            summary(photo)
+            actions(photo)
+        }
+        .foregroundStyle(.white)
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.ultraThinMaterial)
+            .environment(\.colorScheme, .dark))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
+    }
+
+    private func header(_ photo: AlbumPhoto) -> some View {
         let name = store.creatorName(of: photo)
         let detail = photo.takenAt.formatted(date: .abbreviated, time: .shortened)
             + (photo.mode.isEmpty ? "" : "・" + photo.mode)
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Text(String(name.prefix(1)))
-                    .font(.subheadline.weight(.heavy))
-                    .foregroundStyle(.black)
-                    .frame(width: 32, height: 32)
-                    .background(Circle().fill(Deck.orange))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name)
-                        .font(.subheadline.weight(.bold))
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.65))
-                }
-                Spacer()
+        let liked = store.hasLiked(photo)
+        let likeCount = store.likes(of: photo).count
+        let commentCount = store.comments(of: photo).count
+        return HStack(spacing: 10) {
+            Text(String(name.prefix(1)))
+                .font(.subheadline.weight(.heavy))
+                .foregroundStyle(.black)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Deck.orange))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.subheadline.weight(.bold))
+                Text(detail).font(.caption).foregroundStyle(.white.opacity(0.65))
             }
-            HStack(spacing: 10) {
+            Spacer(minLength: 4)
+            Button {
+                like(photo, fromDoubleTap: false)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: liked ? "heart.fill" : "heart")
+                        .font(.title2)
+                        .foregroundStyle(liked ? Color.pink : Color.white)
+                        .symbolEffect(.bounce, value: liked)
+                    if likeCount > 0 {
+                        Text("\(likeCount)").font(.subheadline.weight(.bold).monospacedDigit())
+                    }
+                }
+            }
+            .accessibilityLabel(liked ? "いいねを外す" : "いいね")
+            Button {
+                showingComments = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "bubble.right").font(.title2)
+                    if commentCount > 0 {
+                        Text("\(commentCount)").font(.subheadline.weight(.bold).monospacedDigit())
+                    }
+                }
+            }
+            .padding(.leading, 6)
+            .accessibilityLabel("コメント")
+        }
+    }
+
+    /// 絵文字の反応。押すと付く・外れる。付いている数も出す
+    private func emojiBar(_ photo: AlbumPhoto) -> some View {
+        let counts = Dictionary(uniqueKeysWithValues: store.emojis(of: photo).map { ($0.emoji, $0.people.count) })
+        let extra = store.emojis(of: photo).map(\.emoji).filter { !Self.quickEmojis.contains($0) }
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(Self.quickEmojis + extra, id: \.self) { emoji in
+                    let mine = store.hasReacted(photo, with: emoji)
+                    Button {
+                        Task { await store.toggleEmoji(emoji, on: photo) }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(emoji).font(.title3)
+                            if let count = counts[emoji] {
+                                Text("\(count)").font(.caption.weight(.bold).monospacedDigit())
+                            }
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(mine ? Deck.orange.opacity(0.85) : .white.opacity(0.12)))
+                    }
+                    .buttonStyle(.plain)
+                    .sensoryFeedback(.selection, trigger: mine)
+                }
+            }
+        }
+    }
+
+    /// だれがいいねしたか、いちばん新しいコメント
+    @ViewBuilder
+    private func summary(_ photo: AlbumPhoto) -> some View {
+        let likes = store.likes(of: photo)
+        let comments = store.comments(of: photo)
+        if !likes.isEmpty || !comments.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                if !likes.isEmpty {
+                    let names = likes.map { store.name(of: $0.creator) }
+                    Text(names.prefix(3).joined(separator: "、")
+                         + (names.count > 3 ? " ほか\(names.count - 3)人" : "") + " がいいね")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                if let last = comments.last {
+                    Button {
+                        showingComments = true
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            (Text(store.name(of: last.creator) + "  ").font(.caption.weight(.bold))
+                             + Text(last.text).font(.caption))
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            if comments.count > 1 {
+                                Text("コメント \(comments.count) 件をすべて見る")
+                                    .font(.caption2)
+                                    .foregroundStyle(.white.opacity(0.55))
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func actions(_ photo: AlbumPhoto) -> some View {
+        let canShootLikeThis = LookMode.allCases.contains { $0.title == photo.mode }
+        let others = store.albums.filter { $0.id != store.selected?.id }
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
                 if let image = full[photo.id] {
                     ShareLink(item: Image(uiImage: image),
                               preview: SharePreview("写真", image: Image(uiImage: image))) {
@@ -714,6 +861,27 @@ private struct AlbumViewer: View {
                 } label: {
                     actionKey("保存", systemImage: "square.and.arrow.down")
                 }
+                if canShootLikeThis {
+                    Button {
+                        store.requestedMode = photo.mode
+                    } label: {
+                        actionKey("このフィルタで撮る", systemImage: "camera.filters")
+                    }
+                }
+                if !others.isEmpty {
+                    Menu {
+                        ForEach(others) { album in
+                            Button(album.title) {
+                                Task {
+                                    let ok = await store.copy(photo, to: album)
+                                    flash(ok ? "「\(album.title)」に追加しています" : "追加できませんでした")
+                                }
+                            }
+                        }
+                    } label: {
+                        actionKey("ほかのアルバムへ", systemImage: "rectangle.stack.badge.plus")
+                    }
+                }
                 if store.canDelete(photo) {
                     Button {
                         confirmingDelete = true
@@ -723,21 +891,29 @@ private struct AlbumViewer: View {
                 }
             }
         }
-        .foregroundStyle(.white)
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.black.opacity(0.55)))
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
     }
 
     private func actionKey(_ title: String, systemImage: String) -> some View {
         VStack(spacing: 4) {
             Image(systemName: systemImage).font(.headline)
-            Text(title).font(.caption2.weight(.semibold))
+            Text(title).font(.caption2.weight(.semibold)).lineLimit(1)
         }
-        .frame(maxWidth: .infinity)
+        .foregroundStyle(.white)
+        .frame(minWidth: 64)
+        .padding(.horizontal, 6)
         .padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white.opacity(0.12)))
+    }
+
+    /// いいね。ダブルタップのときは付けるだけ（外さない）で、大きなハートを出す
+    private func like(_ photo: AlbumPhoto, fromDoubleTap: Bool) {
+        if fromDoubleTap {
+            heartPop += 1
+            guard !store.hasLiked(photo) else { return }
+        } else if !store.hasLiked(photo) {
+            heartPop += 1
+        }
+        Task { await store.toggleLike(photo) }
     }
 
     private func load(_ photo: AlbumPhoto) async {
@@ -754,9 +930,120 @@ private struct AlbumViewer: View {
     }
 }
 
-/// ピンチとダブルタップで拡大できる画像。拡大中だけドラッグで動かせる（それ以外は左右にめくれる）
+/// いいねしたときに真ん中に出る大きなハート
+private struct HeartPop: View {
+    let trigger: Int
+    @State private var scale: CGFloat = 0
+    @State private var opacity: Double = 0
+
+    var body: some View {
+        Image(systemName: "heart.fill")
+            .font(.system(size: 110))
+            .foregroundStyle(.pink)
+            .shadow(color: .black.opacity(0.3), radius: 10)
+            .scaleEffect(scale)
+            .opacity(opacity)
+            .allowsHitTesting(false)
+            .onChange(of: trigger) { _, _ in
+                scale = 0.3
+                opacity = 1
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) { scale = 1 }
+                withAnimation(.easeIn(duration: 0.3).delay(0.55)) {
+                    opacity = 0
+                    scale = 1.3
+                }
+            }
+    }
+}
+
+/// コメントの一覧と入力
+private struct CommentsSheet: View {
+    @ObservedObject var store: AlbumStore
+    let photo: AlbumPhoto
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let comments = store.comments(of: photo)
+        NavigationStack {
+            VStack(spacing: 0) {
+                if comments.isEmpty {
+                    ContentUnavailableView("まだコメントはありません", systemImage: "bubble.left.and.bubble.right",
+                                           description: Text("最初のコメントを書いてみましょう"))
+                } else {
+                    List {
+                        ForEach(comments) { comment in
+                            row(comment)
+                                .swipeActions {
+                                    if store.canDelete(comment) {
+                                        Button("削除", role: .destructive) {
+                                            Task { await store.removeReaction(comment) }
+                                        }
+                                    }
+                                }
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+                if let status = store.status {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 6)
+                }
+                HStack(spacing: 10) {
+                    TextField("コメントを書く", text: $draft, axis: .vertical)
+                        .lineLimit(1...4)
+                        .focused($focused)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(Capsule().fill(Color(.secondarySystemBackground)))
+                    Button {
+                        let text = draft
+                        draft = ""
+                        Task { await store.comment(on: photo, text: text) }
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title)
+                            .foregroundStyle(Deck.orange)
+                    }
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(12)
+            }
+            .navigationTitle("コメント")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func row(_ comment: AlbumReaction) -> some View {
+        let name = store.name(of: comment.creator)
+        return HStack(alignment: .top, spacing: 10) {
+            Text(String(name.prefix(1)))
+                .font(.caption.weight(.heavy))
+                .foregroundStyle(.black)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(store.isMine(comment.creator) ? Deck.orange : Color(.systemGray4)))
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(name).font(.subheadline.weight(.bold))
+                    Text(comment.createdAt, style: .relative)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Text(comment.text).font(.subheadline)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+/// ピンチで拡大できる画像。拡大中だけドラッグで動かせる（それ以外は左右にめくれる）。
+/// ダブルタップは、拡大中なら元に戻し、そうでなければ onDoubleTap（いいね）
 private struct ZoomableImage: View {
     let image: UIImage?
+    var onDoubleTap: () -> Void = {}
     @State private var scale: CGFloat = 1
     @State private var lastScale: CGFloat = 1
     @State private var offset: CGSize = .zero
@@ -793,13 +1080,10 @@ private struct ZoomableImage: View {
                 including: scale > 1 ? .all : .subviews
             )
             .onTapGesture(count: 2) {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    if scale > 1 {
-                        reset()
-                    } else {
-                        scale = 2.5
-                        lastScale = 2.5
-                    }
+                if scale > 1 {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { reset() }
+                } else {
+                    onDoubleTap()
                 }
             }
         }
@@ -810,5 +1094,15 @@ private struct ZoomableImage: View {
         lastScale = 1
         offset = .zero
         lastOffset = .zero
+    }
+}
+
+/// アイコンと数字を詰めて並べる
+private struct CompactLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 2) {
+            configuration.icon
+            configuration.title
+        }
     }
 }

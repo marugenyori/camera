@@ -16,6 +16,21 @@ struct AlbumPhoto: Identifiable, Equatable {
     static func == (a: AlbumPhoto, b: AlbumPhoto) -> Bool { a.id == b.id }
 }
 
+/// 写真へのいいね・絵文字・コメント（レコード型 AlbumReaction。写真と同じゾーンに置くので、アルバムのメンバー全員に見える）
+struct AlbumReaction: Identifiable, Equatable {
+    enum Kind: String { case like, emoji, comment }
+    let id: CKRecord.ID
+    /// どの写真への反応か（写真のレコード名）
+    let photo: String
+    let kind: Kind
+    /// 絵文字、またはコメントの文
+    let text: String
+    let creator: String?
+    let createdAt: Date
+
+    static func == (a: AlbumReaction, b: AlbumReaction) -> Bool { a.id == b.id }
+}
+
 /// 見られるアルバム（自分のアルバム、または招待された友だちのアルバム）
 struct AlbumRef: Identifiable, Hashable {
     let zoneID: CKRecordZone.ID
@@ -36,6 +51,7 @@ final class AlbumStore: ObservableObject {
 
     nonisolated static let container = CKContainer.default()
     nonisolated static let recordType = "AlbumPhoto"
+    nonisolated static let reactionType = "AlbumReaction"
     nonisolated static let ownZoneID = CKRecordZone.ID(zoneName: "SharedAlbum", ownerName: CKCurrentUserDefaultName)
     /// 追加で作ったアルバムのゾーン名の頭
     nonisolated static let albumZonePrefix = "Album-"
@@ -63,6 +79,10 @@ final class AlbumStore: ObservableObject {
     @Published private(set) var counts: [String: Int] = [:]
     /// 選んでいるアルバムのメンバー（ユーザーの recordName → 名前）。写真を入れた人の表示に使う
     @Published private(set) var members: [String: String] = [:]
+    /// 写真ごとの反応（写真のレコード名 → いいね・絵文字・コメント、古い順）
+    @Published private(set) var reactions: [String: [AlbumReaction]] = [:]
+    /// 撮影画面で使いたいモード（写真の「このフィルタで撮る」）。カメラの画面が受け取って切り替える
+    @Published var requestedMode: String?
     /// 自分の recordName（自分が入れた写真を見分ける）
     private var myRecordName: String?
     /// 大きく見た写真をしばらく取っておく
@@ -166,15 +186,19 @@ final class AlbumStore: ObservableObject {
                 members = Self.memberNames(of: existing)
             }
             var records: [CKRecord] = []
+            var reactionRecords: [CKRecord] = []
             var token: CKServerChangeToken?
             var more = true
             while more {
                 let changes = try await db.recordZoneChanges(inZoneWith: album.zoneID, since: token,
-                                                             desiredKeys: ["thumbnail", "takenAt", "mode"])
+                                                             desiredKeys: ["thumbnail", "takenAt", "mode",
+                                                                           "photo", "kind", "text", "createdAt"])
                 for (_, result) in changes.modificationResultsByID {
-                    if case .success(let modification) = result,
-                       modification.record.recordType == Self.recordType {
-                        records.append(modification.record)
+                    guard case .success(let modification) = result else { continue }
+                    switch modification.record.recordType {
+                    case Self.recordType: records.append(modification.record)
+                    case Self.reactionType: reactionRecords.append(modification.record)
+                    default: break
                     }
                 }
                 token = changes.changeToken
@@ -183,7 +207,11 @@ final class AlbumStore: ObservableObject {
             let loaded = records.map(Self.photo(from:)).sorted { $0.takenAt > $1.takenAt }
             counts[album.id] = loaded.count
             covers[album.id] = loaded.first?.thumbnail
-            if album.id == selected?.id { photos = loaded }
+            if album.id == selected?.id {
+                photos = loaded
+                reactions = Dictionary(grouping: reactionRecords.compactMap(Self.reaction(from:)), by: \.photo)
+                    .mapValues { $0.sorted { $0.createdAt < $1.createdAt } }
+            }
         } catch {
             photos = []
             status = Self.describe(error)
@@ -218,9 +246,18 @@ final class AlbumStore: ObservableObject {
         return members[creator] ?? "メンバー"
     }
 
-    func isMine(_ photo: AlbumPhoto) -> Bool {
-        guard let creator = photo.creator else { return false }
+    func isMine(_ photo: AlbumPhoto) -> Bool { isMine(photo.creator) }
+
+    func isMine(_ creator: String?) -> Bool {
+        guard let creator else { return false }
         return creator == CKCurrentUserDefaultName || creator == myRecordName
+    }
+
+    /// 反応した人の名前（自分なら「自分」）
+    func name(of creator: String?) -> String {
+        guard let creator else { return "だれか" }
+        if isMine(creator) { return "自分" }
+        return members[creator] ?? "メンバー"
     }
 
     /// 消せる写真か（自分が入れたもの。自分のアルバムなら全部）
@@ -241,23 +278,142 @@ final class AlbumStore: ObservableObject {
         return names
     }
 
+    // MARK: - いいね・絵文字・コメント
+
+    func likes(of photo: AlbumPhoto) -> [AlbumReaction] {
+        (reactions[photo.id.recordName] ?? []).filter { $0.kind == .like }
+    }
+
+    func comments(of photo: AlbumPhoto) -> [AlbumReaction] {
+        (reactions[photo.id.recordName] ?? []).filter { $0.kind == .comment }
+    }
+
+    /// 絵文字ごとの反応（よく使われた順）
+    func emojis(of photo: AlbumPhoto) -> [(emoji: String, people: [AlbumReaction])] {
+        let list = (reactions[photo.id.recordName] ?? []).filter { $0.kind == .emoji }
+        return Dictionary(grouping: list, by: \.text)
+            .map { (emoji: $0.key, people: $0.value) }
+            .sorted { $0.people.count > $1.people.count || ($0.people.count == $1.people.count && $0.emoji < $1.emoji) }
+    }
+
+    func hasLiked(_ photo: AlbumPhoto) -> Bool { likes(of: photo).contains { isMine($0.creator) } }
+
+    func hasReacted(_ photo: AlbumPhoto, with emoji: String) -> Bool {
+        emojis(of: photo).first { $0.emoji == emoji }?.people.contains { isMine($0.creator) } ?? false
+    }
+
+    /// いいねを付ける・外す
+    func toggleLike(_ photo: AlbumPhoto) async {
+        if let mine = likes(of: photo).first(where: { isMine($0.creator) }) {
+            await removeReaction(mine)
+        } else {
+            await addReaction(to: photo, kind: .like, text: "", key: "like")
+        }
+    }
+
+    /// 絵文字の反応を付ける・外す
+    func toggleEmoji(_ emoji: String, on photo: AlbumPhoto) async {
+        let mine = (reactions[photo.id.recordName] ?? [])
+            .first { $0.kind == .emoji && $0.text == emoji && isMine($0.creator) }
+        if let mine {
+            await removeReaction(mine)
+        } else {
+            let code = emoji.unicodeScalars.map { String($0.value, radix: 16) }.joined(separator: "-")
+            await addReaction(to: photo, kind: .emoji, text: emoji, key: "emoji-" + code)
+        }
+    }
+
+    func comment(on photo: AlbumPhoto, text: String) async {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+        await addReaction(to: photo, kind: .comment, text: String(body.prefix(500)), key: nil)
+    }
+
+    /// 反応を保存する。いいねと絵文字は「写真＋人＋種類」で 1 つだけになるよう、決まった名前のレコードにする
+    private func addReaction(to photo: AlbumPhoto, kind: AlbumReaction.Kind, text: String, key: String?) async {
+        guard let album = selected else { return }
+        let me = myRecordName ?? CKCurrentUserDefaultName
+        let name = key.map { "\($0)-\(photo.id.recordName)-\(me)" } ?? UUID().uuidString
+        let recordID = CKRecord.ID(recordName: name, zoneID: album.zoneID)
+        let record = CKRecord(recordType: Self.reactionType, recordID: recordID)
+        record["photo"] = photo.id.recordName as NSString
+        record["kind"] = kind.rawValue as NSString
+        record["text"] = text as NSString
+        record["createdAt"] = Date() as NSDate
+        // 先に画面に出しておく（失敗したら戻す）
+        let pending = AlbumReaction(id: recordID, photo: photo.id.recordName, kind: kind, text: text,
+                                    creator: CKCurrentUserDefaultName, createdAt: Date())
+        reactions[photo.id.recordName, default: []].append(pending)
+        do {
+            _ = try await database(for: album).modifyRecords(saving: [record], deleting: [], savePolicy: .allKeys)
+            status = nil
+        } catch {
+            reactions[photo.id.recordName]?.removeAll { $0.id == recordID }
+            status = (kind == .comment ? "コメントできませんでした：" : "反応できませんでした：") + Self.describe(error)
+        }
+    }
+
+    func removeReaction(_ reaction: AlbumReaction) async {
+        guard let album = selected else { return }
+        let backup = reactions[reaction.photo]
+        reactions[reaction.photo]?.removeAll { $0.id == reaction.id }
+        do {
+            _ = try await database(for: album).deleteRecord(withID: reaction.id)
+        } catch let error as CKError where error.code == .unknownItem {
+            // もう消えている
+        } catch {
+            reactions[reaction.photo] = backup
+            status = "取り消せませんでした：" + Self.describe(error)
+        }
+    }
+
+    /// 消せる反応か（自分のもの。自分のアルバムなら全部）
+    func canDelete(_ reaction: AlbumReaction) -> Bool {
+        selected?.isOwner == true || isMine(reaction.creator)
+    }
+
+    nonisolated private static func reaction(from record: CKRecord) -> AlbumReaction? {
+        guard let photo = record["photo"] as? String,
+              let kind = (record["kind"] as? String).flatMap(AlbumReaction.Kind.init(rawValue:)) else { return nil }
+        return AlbumReaction(id: record.recordID, photo: photo, kind: kind,
+                             text: record["text"] as? String ?? "",
+                             creator: record.creatorUserRecordID?.recordName,
+                             createdAt: record["createdAt"] as? Date ?? record.creationDate ?? .distantPast)
+    }
+
+    // MARK: - ほかのアルバムへ
+
+    /// 写真を元の画質のまま、ほかのアルバムにも入れる
+    func copy(_ photo: AlbumPhoto, to target: AlbumRef) async -> Bool {
+        guard let url = await fullFile(of: photo), let data = try? Data(contentsOf: url) else { return false }
+        let type = CGImageSourceCreateWithData(data as CFData, nil)
+            .flatMap { CGImageSourceGetType($0) as String? } ?? "public.jpeg"
+        add(data: data, type: type, thumbnail: photo.thumbnail, mode: photo.mode, to: target)
+        return true
+    }
+
     // MARK: - 消す・保存する
 
     /// 写真を消す（消せないものは飛ばす）
     func delete(_ targets: [AlbumPhoto]) async {
         guard let album = selected else { return }
-        let ids = targets.filter(canDelete).map(\.id)
+        let ids = targets.filter { canDelete($0) }.map(\.id)
         guard !ids.isEmpty else { return }
+        // 写真についた反応も消す（自分のアルバムなら全部、そうでなければ自分の分）
+        let reactionIDs = ids.flatMap { id in
+            (reactions[id.recordName] ?? []).filter { album.isOwner || isMine($0.creator) }.map(\.id)
+        }
         do {
-            let result = try await database(for: album).modifyRecords(saving: [], deleting: ids)
+            let result = try await database(for: album).modifyRecords(saving: [], deleting: ids + reactionIDs)
             var deleted: Set<CKRecord.ID> = []
             for (id, outcome) in result.deleteResults {
                 if case .success = outcome { deleted.insert(id) }
             }
             photos.removeAll { deleted.contains($0.id) }
+            for id in ids where deleted.contains(id) { reactions[id.recordName] = nil }
             counts[album.id] = photos.count
             covers[album.id] = photos.first?.thumbnail
-            status = deleted.count < ids.count ? "消せなかった写真があります" : nil
+            status = deleted.isSuperset(of: ids) ? nil : "消せなかった写真があります"
         } catch {
             status = "消せませんでした：" + Self.describe(error)
         }
@@ -304,11 +460,11 @@ final class AlbumStore: ObservableObject {
         add(data: data, type: type, thumbnail: thumbnail, mode: mode)
     }
 
-    /// 写真を選んでいるアルバムに入れる
-    func add(data: Data, type: String, thumbnail: UIImage?, mode: String) {
+    /// 写真をアルバムに入れる（target を省くと、選んでいるアルバム）
+    func add(data: Data, type: String, thumbnail: UIImage?, mode: String, to target: AlbumRef? = nil) {
         Task {
             if albums.isEmpty { await refresh() }
-            guard let album = selected else {
+            guard let album = target ?? selected else {
                 status = status ?? "共有アルバムを準備できませんでした"
                 return
             }
