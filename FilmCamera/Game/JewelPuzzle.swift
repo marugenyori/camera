@@ -29,6 +29,42 @@ struct JewelPuzzle {
         self.targets = pixels.map { Self.nearest($0, in: sorted) }
     }
 
+    /// 色と正解の番号を直接与えて作る（ドット絵の問題用）
+    init(columns: Int, rows: Int, colors: [SIMD3<Float>], targets: [Int]) {
+        self.columns = columns
+        self.rows = rows
+        self.rgb = colors
+        self.palette = colors.map { Color(red: Double($0.x), green: Double($0.y), blue: Double($0.z)) }
+        self.uiColors = colors.map { UIColor(red: CGFloat($0.x), green: CGFloat($0.y), blue: CGFloat($0.z), alpha: 1) }
+        self.targets = targets
+    }
+
+    /// 文字で描いたドット絵から作る（1 文字 = 1 マス）
+    static func pixelArt(_ art: [String], colors: [Character: SIMD3<Float>]) -> JewelPuzzle {
+        let keys = Array(Set(art.joined())).sorted()
+        let index = Dictionary(uniqueKeysWithValues: keys.enumerated().map { ($1, $0) })
+        let targets = art.joined().map { index[$0] ?? 0 }
+        return JewelPuzzle(columns: art[0].count, rows: art.count,
+                           colors: keys.map { colors[$0] ?? SIMD3(0.5, 0.5, 0.5) }, targets: targets)
+    }
+
+    /// 最初のレベルで遊ぶドット絵
+    static let presets: [JewelPuzzle] = [
+        pixelArt(["..RR....RR..", ".RRRR..RRRR.", "RRWRRRRRRRRR", "RWRRRRRRRRRR", "RRRRRRRRRRRR", "RRRRRRRRRRRR",
+                  ".RRRRRRRRRR.", "..RRRRRRRR..", "...RRRRRR...", "....RRRR....", ".....RR....."],
+                 colors: [".": SIMD3(0.55, 0.88, 0.95), "R": SIMD3(0.98, 0.42, 0.55), "W": SIMD3(1, 0.93, 0.95)]),
+        pixelArt(["....RRRRRR....", "..RRWWRRRRRR..", ".RRWWWRRRWWRR.", ".RRWWRRRRWWWR.", "RRRRRRRRRRWWRR",
+                  "RWWRRRRRRRRRRR", "WWWWRRWWWRRRRR", "RWWRRWWWWWRRRR", ".RRRRRWWWRRRR.", "...SSSSSSSS...",
+                  "...SSKSSKSS...", "...SSKSSKSS...", "...SSSSSSSS...", "....SSSSSS...."],
+                 colors: [".": SIMD3(0.75, 0.93, 0.7), "R": SIMD3(0.92, 0.3, 0.32), "W": SIMD3(1, 0.97, 0.92),
+                          "S": SIMD3(0.98, 0.85, 0.68), "K": SIMD3(0.3, 0.22, 0.3)]),
+        pixelArt(["......YY......", ".....YYYY.....", ".....YYYY.....", "YYYYYYYYYYYYYY", ".YYYYYYYYYYYY.",
+                  "..YYYKYYKYYY..", "...YYYYYYYY...", "...YYPYYPYY...", "..YYYYYYYYYY..", "..YYYY..YYYY..",
+                  ".YYY......YYY.", ".YY........YY."],
+                 colors: [".": SIMD3(0.62, 0.6, 0.95), "Y": SIMD3(1, 0.85, 0.3), "K": SIMD3(0.35, 0.25, 0.3),
+                          "P": SIMD3(1, 0.6, 0.65)]),
+    ]
+
     func isLight(_ index: Int) -> Bool { Self.luma(rgb[index]) > 0.6 }
 
     private static func luma(_ c: SIMD3<Float>) -> Float { 0.299 * c.x + 0.587 * c.y + 0.114 * c.z }

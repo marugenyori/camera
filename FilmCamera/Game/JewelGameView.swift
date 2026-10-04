@@ -2,47 +2,51 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-/// 隠しゲーム「ジュエル塗り絵」（Jewel Coloring のような、番号どおりに宝石を置いていく塗り絵）。
-/// 写真を細かいマス目（横 48 マス）に分け、色を 24 色ほどにまとめて番号をふる。
-/// 2 本指でつまんで拡大・移動し、色を選んで 1 本指でなぞると、番号が合うマスにだけ宝石がはまる
+/// 隠しゲーム「ジュエル塗り絵」（Jewel Coloring のような、宝石を並べ替えて絵を完成させるパズル）。
+/// 宝石のドット絵の一部が、ちがう色の宝石とまざっている。マスのふちに見える色が、そのマスの正しい色。
+/// 色がちがう宝石をタップすると下のトレイに移り、空いたマスと同じ色の宝石がトレイにあれば、自動で飛んでいく。
+/// トレイがいっぱいになると負け（3 回までマスを増やせる）。全部正しい色になればレベルクリア
 struct JewelGameView: View {
-    /// 最初に使う写真（最後に撮った写真。なければ見本の絵）
+    /// 写真で遊ぶときに使う写真（最後に撮った写真）
     let initialImage: UIImage?
     @Environment(\.dismiss) private var dismiss
     @StateObject private var game = JewelGame()
     @State private var pickerItem: PhotosPickerItem?
+    @State private var muted = GameAudio.shared.isMuted
+
+    private static let background = Color(red: 0.92, green: 0.92, blue: 0.99)
 
     var body: some View {
         ZStack {
-            Color(white: 0.1).ignoresSafeArea()
-            if let puzzle = game.puzzle {
-                VStack(spacing: 10) {
-                    progressBar
-                    JewelBoard(game: game)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    Text("2 本指で拡大・移動、1 本指でなぞって宝石を置く")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    palette(puzzle)
+            Self.background.ignoresSafeArea()
+            VStack(spacing: 12) {
+                header
+                if let puzzle = game.puzzle {
+                    GeometryReader { geo in
+                        let cell = min(geo.size.width / CGFloat(puzzle.columns), geo.size.height / CGFloat(puzzle.rows))
+                        boardView(puzzle, cell: cell)
+                            .frame(width: cell * CGFloat(puzzle.columns), height: cell * CGFloat(puzzle.rows))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    trayView(puzzle)
                 }
-                .padding(.horizontal, 10)
-            } else {
-                ProgressView().tint(.white)
             }
-            if game.isComplete, let image = game.finishedImage {
-                completeBanner(image)
-            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+            if game.state != .playing { resultBanner }
         }
-        .safeAreaInset(edge: .top) { header }
-        .preferredColorScheme(.dark)
-        .sensoryFeedback(.success, trigger: game.isComplete)
-        .task { game.start(with: initialImage ?? JewelPuzzle.sampleImage()) }
+        .preferredColorScheme(.light)
+        .onAppear {
+            game.photo = initialImage
+            game.startLevel()
+            GameAudio.shared.playMusic(.jewel)
+        }
+        .onDisappear { GameAudio.shared.stop() }
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
             Task {
-                if let data = try? await item.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
-                    game.start(with: image)
+                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                    game.startPhoto(image)
                 }
             }
         }
@@ -50,399 +54,409 @@ struct JewelGameView: View {
 
     private var header: some View {
         HStack {
-            Button("閉じる") { dismiss() }
+            roundButton("xmark") { dismiss() }
             Spacer()
-            Text("ジュエル塗り絵").font(.headline)
+            Text(game.isPhotoMode ? "写真で遊ぶ" : "レベル \(game.level)")
+                .font(.title.weight(.heavy))
+                .foregroundStyle(Color(red: 0.62, green: 0.62, blue: 0.85))
             Spacer()
             PhotosPicker(selection: $pickerItem, matching: .images) {
-                Image(systemName: "photo.on.rectangle")
+                Image(systemName: "photo")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .frame(width: 42, height: 42)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color(red: 1, green: 0.66, blue: 0.45)))
+                    .shadow(color: .black.opacity(0.15), radius: 0, x: 0, y: 3)
             }
-            .accessibilityLabel("ほかの写真で遊ぶ")
+            roundButton(muted ? "speaker.slash.fill" : "speaker.wave.2.fill") {
+                muted.toggle()
+                GameAudio.shared.isMuted = muted
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.top, 6)
     }
 
-    private var progressBar: some View {
-        HStack(spacing: 10) {
-            ProgressView(value: Double(game.filledCount), total: Double(max(game.total, 1)))
-                .tint(.orange)
-            Text("\(game.filledCount * 100 / max(game.total, 1))%")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+    private func roundButton(_ systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(width: 42, height: 42)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color(red: 1, green: 0.66, blue: 0.45)))
+                .shadow(color: .black.opacity(0.15), radius: 0, x: 0, y: 3)
         }
     }
 
-    private func palette(_ puzzle: JewelPuzzle) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(puzzle.palette.indices, id: \.self) { index in
-                        let left = index < game.remaining.count ? game.remaining[index] : 0
-                        Button {
-                            game.selected = index
-                        } label: {
-                            VStack(spacing: 3) {
-                                ZStack {
-                                    Circle()
-                                        .fill(puzzle.palette[index].gradient)
-                                        .frame(width: 42, height: 42)
-                                    if left == 0 {
-                                        Image(systemName: "checkmark")
-                                            .font(.footnote.weight(.bold))
-                                            .foregroundStyle(.white)
-                                            .shadow(radius: 2)
-                                    } else {
-                                        Text("\(index + 1)")
-                                            .font(.footnote.weight(.bold).monospacedDigit())
-                                            .foregroundStyle(puzzle.isLight(index) ? Color.black : Color.white)
-                                    }
-                                }
-                                .overlay(Circle().stroke(Color.white, lineWidth: game.selected == index ? 3 : 0))
-                                Text(left == 0 ? "完了" : "\(left)")
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .opacity(left == 0 ? 0.4 : 1)
-                        .id(index)
+    // MARK: - 絵
+
+    private func boardView(_ puzzle: JewelPuzzle, cell: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            Canvas { context, _ in
+                for index in puzzle.targets.indices {
+                    let rect = CGRect(x: CGFloat(index % puzzle.columns) * cell, y: CGFloat(index / puzzle.columns) * cell,
+                                      width: cell, height: cell)
+                    let target = puzzle.palette[puzzle.targets[index]]
+                    // マスの土台（正しい色を薄く）
+                    context.fill(Path(rect), with: .color(target.opacity(0.35)))
+                    if let jewel = game.current[index], !game.flyingTo.contains(index) {
+                        let correct = jewel == puzzle.targets[index]
+                        // まちがった宝石は少し小さく置き、ふちに正しい色が見えるようにする
+                        drawGem(in: rect.insetBy(dx: cell * (correct ? 0.04 : 0.16), dy: cell * (correct ? 0.04 : 0.16)),
+                                color: puzzle.palette[jewel], context: &context)
+                    } else {
+                        // 空いたマス：くぼみ
+                        let hole = rect.insetBy(dx: cell * 0.18, dy: cell * 0.18)
+                        context.fill(Path(ellipseIn: hole), with: .color(target.opacity(0.55)))
+                        context.stroke(Path(ellipseIn: hole), with: .color(.black.opacity(0.12)), lineWidth: 1)
                     }
                 }
-                .padding(.horizontal, 4)
             }
-            .onChange(of: game.selected) { _, index in
-                withAnimation(.snappy) { proxy.scrollTo(index, anchor: .center) }
+            ForEach(game.flights) { flight in
+                FlyingGem(flight: flight, color: puzzle.palette[flight.color], cell: cell, columns: puzzle.columns,
+                          boardHeight: cell * CGFloat(puzzle.rows))
             }
         }
-        .frame(height: 68)
-        .padding(.bottom, 4)
+        .contentShape(Rectangle())
+        .onTapGesture { location in
+            let column = Int(location.x / cell)
+            let row = Int(location.y / cell)
+            guard column >= 0, row >= 0, column < puzzle.columns, row < puzzle.rows else { return }
+            game.tap(row * puzzle.columns + column)
+        }
     }
 
-    private func completeBanner(_ image: UIImage) -> some View {
-        VStack(spacing: 12) {
-            Text("完成！")
-                .font(.title.weight(.heavy))
-            Text("\(game.total) 粒の宝石をはめました")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxHeight: 260)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-            HStack(spacing: 12) {
-                ShareLink(item: Image(uiImage: image),
-                          preview: SharePreview("ジュエル塗り絵", image: Image(uiImage: image))) {
-                    Label("保存・共有", systemImage: "square.and.arrow.up")
+    // MARK: - トレイ
+
+    private func trayView(_ puzzle: JewelPuzzle) -> some View {
+        let columns = 7
+        let rows = Int(ceil(Double(game.capacity) / Double(columns)))
+        return VStack(spacing: 8) {
+            VStack(spacing: 6) {
+                ForEach(0..<rows, id: \.self) { row in
+                    HStack(spacing: 6) {
+                        ForEach(0..<columns, id: \.self) { column in
+                            let slot = row * columns + column
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color(red: 0.93, green: 0.82, blue: 0.68))
+                                    .opacity(slot < game.capacity ? 1 : 0)
+                                if slot < game.tray.count {
+                                    GemShape(color: puzzle.palette[game.tray[slot]])
+                                        .padding(4)
+                                        .transition(.scale.combined(with: .opacity))
+                                }
+                            }
+                            .frame(width: 38, height: 38)
+                        }
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                Button("もう一度") { game.restart() }
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 20).fill(Color(red: 1, green: 0.95, blue: 0.9)))
+            .shadow(color: Color(red: 0.85, green: 0.75, blue: 0.65), radius: 0, x: 0, y: 5)
+            HStack {
+                Text("トレイ \(game.tray.count)/\(game.capacity)")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(game.tray.count >= game.capacity - 2 ? Color.red : Color.secondary)
+                Spacer()
+                Button {
+                    game.addSlots()
+                } label: {
+                    Label("+7 マス（のこり \(game.extraUses)回）", systemImage: "plus.square.fill")
+                        .font(.footnote.weight(.heavy))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color(red: 0.4, green: 0.8, blue: 0.3)))
+                }
+                .disabled(game.extraUses == 0)
+                .opacity(game.extraUses == 0 ? 0.4 : 1)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: game.tray)
+    }
+
+    private var resultBanner: some View {
+        VStack(spacing: 14) {
+            Text(game.state == .cleared ? "完成！" : "トレイがいっぱい！")
+                .font(.largeTitle.weight(.heavy))
+                .foregroundStyle(game.state == .cleared ? Color.orange : Color.purple)
+            Text(game.state == .cleared ? "きれいな宝石の絵ができました" : "マスを増やすか、やり直そう")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            if game.state == .cleared {
+                if let image = game.finishedImage {
+                    ShareLink(item: Image(uiImage: image), preview: SharePreview("ジュエル塗り絵", image: Image(uiImage: image))) {
+                        Label("保存・共有", systemImage: "square.and.arrow.up")
+                    }
+                }
+                Button(game.isPhotoMode ? "もう一度" : "次のレベルへ") { game.nextLevel() }
+                    .buttonStyle(.borderedProminent).tint(.green)
+            } else {
+                if game.extraUses > 0 {
+                    Button("+7 マスで続ける") { game.addSlots() }
+                        .buttonStyle(.borderedProminent).tint(.green)
+                }
+                Button("やり直す") { game.restart() }
                     .buttonStyle(.bordered)
             }
         }
-        .padding(24)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .padding(24)
+        .padding(28)
+        .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(.white))
+        .shadow(radius: 20)
+        .padding(32)
     }
 }
 
-// MARK: - 遊びの状態
+// MARK: - 宝石の絵
+
+/// 八角形にカットした宝石（上が明るく、下が暗い面、まんなかに平らな面）
+private func drawGem(in rect: CGRect, color: Color, context: inout GraphicsContext) {
+    let outline = octagon(in: rect)
+    context.fill(outline, with: .color(color))
+    context.drawLayer { layer in
+        layer.clip(to: outline)
+        layer.fill(Path(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * 0.42)),
+                   with: .color(.white.opacity(0.35)))
+        layer.fill(Path(CGRect(x: rect.minX, y: rect.maxY - rect.height * 0.28, width: rect.width, height: rect.height * 0.28)),
+                   with: .color(.black.opacity(0.18)))
+    }
+    let table = octagon(in: rect.insetBy(dx: rect.width * 0.25, dy: rect.height * 0.25))
+    context.fill(table, with: .color(color))
+    context.fill(table, with: .color(.white.opacity(0.15)))
+    context.stroke(outline, with: .color(.black.opacity(0.18)), lineWidth: max(0.6, rect.width * 0.05))
+    let spark = CGRect(x: rect.minX + rect.width * 0.2, y: rect.minY + rect.height * 0.16,
+                       width: rect.width * 0.16, height: rect.height * 0.16)
+    context.fill(Path(ellipseIn: spark), with: .color(.white.opacity(0.85)))
+}
+
+private func octagon(in rect: CGRect) -> Path {
+    let k = min(rect.width, rect.height) * 0.29
+    var path = Path()
+    path.move(to: CGPoint(x: rect.minX + k, y: rect.minY))
+    path.addLine(to: CGPoint(x: rect.maxX - k, y: rect.minY))
+    path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + k))
+    path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - k))
+    path.addLine(to: CGPoint(x: rect.maxX - k, y: rect.maxY))
+    path.addLine(to: CGPoint(x: rect.minX + k, y: rect.maxY))
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - k))
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + k))
+    path.closeSubpath()
+    return path
+}
+
+/// トレイなどに置く宝石 1 粒
+private struct GemShape: View {
+    let color: Color
+    var body: some View {
+        Canvas { context, size in
+            drawGem(in: CGRect(origin: .zero, size: size), color: color, context: &context)
+        }
+    }
+}
+
+/// トレイとマスのあいだを飛ぶ宝石
+private struct FlyingGem: View {
+    let flight: JewelGame.Flight
+    let color: Color
+    let cell: CGFloat
+    let columns: Int
+    let boardHeight: CGFloat
+    @State private var arrived = false
+
+    var body: some View {
+        let cellPoint = CGPoint(x: (CGFloat(flight.cell % columns) + 0.5) * cell,
+                                y: (CGFloat(flight.cell / columns) + 0.5) * cell)
+        // トレイは盤の下のほうにあるとみなす
+        let trayPoint = CGPoint(x: cell * CGFloat(columns) / 2, y: boardHeight + 120)
+        let from = flight.toTray ? cellPoint : trayPoint
+        let to = flight.toTray ? trayPoint : cellPoint
+        GemShape(color: color)
+            .frame(width: cell * 0.92, height: cell * 0.92)
+            .scaleEffect(arrived ? 1 : 1.4)
+            .position(arrived ? to : from)
+            .onAppear { withAnimation(.easeInOut(duration: 0.32)) { arrived = true } }
+            .allowsHitTesting(false)
+    }
+}
+
+// MARK: - 遊びの決まり
 
 @MainActor
 final class JewelGame: ObservableObject {
+    enum State { case playing, cleared, full }
+
+    struct Flight: Identifiable {
+        let id = UUID()
+        let cell: Int
+        let color: Int
+        let toTray: Bool
+    }
+
     @Published private(set) var puzzle: JewelPuzzle?
-    @Published private(set) var filledCount = 0
-    /// 色ごとの残りのマス数
-    @Published private(set) var remaining: [Int] = []
-    @Published var selected = 0
-    /// 新しい問題になるたびに増える（盤面を作り直す合図）
-    @Published private(set) var version = 0
+    /// 各マスにいま置いてある宝石の色（nil = 空き）
+    @Published private(set) var current: [Int?] = []
+    @Published private(set) var tray: [Int] = []
+    @Published private(set) var capacity = 14
+    @Published private(set) var extraUses = 3
+    @Published private(set) var state: State = .playing
+    @Published private(set) var flights: [Flight] = []
+    /// 宝石が飛んでいる最中のマス（着くまで描かない）
+    @Published private(set) var flyingTo: Set<Int> = []
+    @Published private(set) var level: Int
+    @Published private(set) var isPhotoMode = false
     @Published private(set) var finishedImage: UIImage?
+    var photo: UIImage?
 
-    private(set) var filled: [Bool] = []
-    var total: Int { filled.count }
-    var isComplete: Bool { total > 0 && filledCount == total }
+    init() {
+        level = max(1, UserDefaults.standard.integer(forKey: "jewelLevel"))
+    }
 
-    func start(with image: UIImage) {
-        guard let made = JewelPuzzle(image: image) else { return }
-        puzzle = made
-        restart()
+    /// レベルの問題：はじめの 3 つは用意したドット絵、そのあとは写真（なければ見本の絵）を宝石にする
+    func startLevel() {
+        isPhotoMode = false
+        if level <= JewelPuzzle.presets.count {
+            begin(JewelPuzzle.presets[level - 1])
+        } else if let made = JewelPuzzle(image: photo ?? JewelPuzzle.sampleImage(),
+                                         columns: min(14 + level, 22), colors: min(5 + level / 2, 10)) {
+            begin(made)
+        }
+    }
+
+    func startPhoto(_ image: UIImage) {
+        guard let made = JewelPuzzle(image: image, columns: 20, colors: 9) else { return }
+        isPhotoMode = true
+        begin(made)
     }
 
     func restart() {
         guard let puzzle else { return }
-        filled = Array(repeating: false, count: puzzle.targets.count)
-        filledCount = 0
-        remaining = puzzle.palette.indices.map { color in puzzle.targets.filter { $0 == color }.count }
-        selected = 0
+        begin(puzzle)
+    }
+
+    func nextLevel() {
+        if isPhotoMode {
+            restart()
+            return
+        }
+        level += 1
+        UserDefaults.standard.set(level, forKey: "jewelLevel")
+        startLevel()
+    }
+
+    /// 宝石を並べ、一部のマスどうしで入れ替えてバラバラにする（レベルが上がるほど多く）
+    private func begin(_ made: JewelPuzzle) {
+        puzzle = made
+        var jewels: [Int?] = made.targets.map { $0 }
+        let ratio = min(0.6, 0.25 + Double(level) * 0.04)
+        let count = max(4, Int(Double(jewels.count) * ratio))
+        let chosen = Array(jewels.indices.shuffled().prefix(count))
+        let shuffled = chosen.map { jewels[$0] }.shuffled()
+        for (cell, jewel) in zip(chosen, shuffled) { jewels[cell] = jewel }
+        current = jewels
+        tray = []
+        capacity = 14
+        extraUses = 3
+        flights = []
+        flyingTo = []
         finishedImage = nil
-        version += 1
+        state = jewels.enumerated().allSatisfy({ $0.element == made.targets[$0.offset] }) ? .cleared : .playing
     }
 
-    /// マスに宝石を置く。置けたら true（番号が違う・置いてあるなら false）
-    func paint(_ index: Int) -> Bool {
-        guard let puzzle, filled.indices.contains(index), !filled[index],
-              puzzle.targets[index] == selected else { return false }
-        filled[index] = true
-        filledCount += 1
-        remaining[selected] -= 1
-        if remaining[selected] == 0, let next = nextColor(after: selected) {
-            selected = next
+    func addSlots() {
+        guard extraUses > 0 else { return }
+        extraUses -= 1
+        capacity += 7
+        if state == .full { state = .playing }
+        GameAudio.shared.play(.special)
+    }
+
+    /// マスをタップ：色がちがう宝石ならトレイへ移し、空いたマスに合う宝石をトレイから飛ばす
+    func tap(_ index: Int) {
+        guard state == .playing, let puzzle, current.indices.contains(index),
+              let jewel = current[index] else { return }
+        if jewel == puzzle.targets[index] {
+            GameAudio.shared.tick()       // 正しい宝石はそのまま
+            return
         }
-        if isComplete { finishedImage = JewelBoardView.render(puzzle: puzzle, cell: 16) }
-        return true
-    }
-
-    private func nextColor(after color: Int) -> Int? {
-        let count = remaining.count
-        for step in 1..<max(count, 2) {
-            let candidate = (color + step) % count
-            if remaining[candidate] > 0 { return candidate }
+        guard tray.count < capacity else {
+            state = .full
+            GameAudio.shared.play(.invalid)
+            return
         }
-        return nil
-    }
-}
-
-// MARK: - 盤面（拡大・移動できる）
-
-/// UIScrollView で 2 本指の拡大・移動をし、1 本指のなぞりで宝石を置く
-private struct JewelBoard: UIViewRepresentable {
-    @ObservedObject var game: JewelGame
-
-    func makeCoordinator() -> Coordinator { Coordinator(game: game) }
-
-    func makeUIView(context: Context) -> FittingScrollView {
-        let scroll = FittingScrollView()
-        scroll.delegate = context.coordinator
-        scroll.backgroundColor = UIColor(white: 0.16, alpha: 1)
-        scroll.showsVerticalScrollIndicator = false
-        scroll.showsHorizontalScrollIndicator = false
-        scroll.bouncesZoom = true
-        // 1 本指はなぞって塗るのに使うので、移動は 2 本指にする
-        scroll.panGestureRecognizer.minimumNumberOfTouches = 2
-        context.coordinator.scroll = scroll
-        return scroll
-    }
-
-    func updateUIView(_ scroll: FittingScrollView, context: Context) {
-        let coordinator = context.coordinator
-        guard let puzzle = game.puzzle else { return }
-        if coordinator.version != game.version {
-            coordinator.version = game.version
-            coordinator.install(puzzle: puzzle, filled: game.filled, in: scroll)
-        }
-        coordinator.board?.selected = game.selected
-    }
-
-    final class Coordinator: NSObject, UIScrollViewDelegate {
-        let game: JewelGame
-        weak var scroll: FittingScrollView?
-        var board: JewelBoardView?
-        var version = -1
-        private let haptic = UIImpactFeedbackGenerator(style: .light)
-
-        init(game: JewelGame) { self.game = game }
-
-        @MainActor
-        func install(puzzle: JewelPuzzle, filled: [Bool], in scroll: FittingScrollView) {
-            board?.removeFromSuperview()
-            let view = JewelBoardView(puzzle: puzzle, filled: filled)
-            let pan = UIPanGestureRecognizer(target: self, action: #selector(paint(_:)))
-            pan.maximumNumberOfTouches = 1
-            view.addGestureRecognizer(pan)
-            view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(paint(_:))))
-            scroll.addSubview(view)
-            scroll.contentSize = view.bounds.size
-            scroll.board = view
-            board = view
-            scroll.needsFit = true
-            scroll.setNeedsLayout()
-        }
-
-        @MainActor @objc private func paint(_ recognizer: UIGestureRecognizer) {
-            guard let board else { return }
-            let index = board.index(at: recognizer.location(in: board))
-            guard let index, game.paint(index) else { return }
-            board.markFilled(index)
-            haptic.impactOccurred(intensity: 0.5)
-        }
-
-        func viewForZooming(in scrollView: UIScrollView) -> UIView? { board }
-
-        func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            (scrollView as? FittingScrollView)?.centerContent()
-        }
-    }
-}
-
-/// 盤面が画面に収まる倍率を最小にし、小さいときは真ん中に置くスクロールビュー
-final class FittingScrollView: UIScrollView {
-    weak var board: UIView?
-    var needsFit = false
-    private var lastSize: CGSize = .zero
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        guard let board, bounds.width > 0, bounds.height > 0 else { return }
-        if needsFit || bounds.size != lastSize {
-            lastSize = bounds.size
-            let fit = min(bounds.width / board.bounds.width, bounds.height / board.bounds.height)
-            minimumZoomScale = fit
-            maximumZoomScale = max(fit * 6, 2)
-            if needsFit || zoomScale < fit {
-                zoomScale = fit
-            }
-            needsFit = false
-        }
-        centerContent()
-    }
-
-    func centerContent() {
-        let x = max(0, (bounds.width - contentSize.width) / 2)
-        let y = max(0, (bounds.height - contentSize.height) / 2)
-        contentInset = UIEdgeInsets(top: y, left: x, bottom: y, right: x)
-    }
-}
-
-/// 宝石の盤面。CATiledLayer で、拡大しても宝石がくっきり見えるように描き、
-/// 置いたマスだけを描き直す（draw はバックグラウンドで呼ばれるので、置いた状態はロックで守る）
-final class JewelBoardView: UIView {
-    static let cell: CGFloat = 32
-
-    override class var layerClass: AnyClass { CATiledLayer.self }
-
-    private let puzzle: JewelPuzzle
-    private let lock = NSLock()
-    private var filled: [Bool]
-    private var _selected = 0
-    var selected: Int {
-        get { lock.lock(); defer { lock.unlock() }; return _selected }
-        set {
-            lock.lock()
-            let changed = _selected != newValue
-            _selected = newValue
-            lock.unlock()
-            if changed { setNeedsDisplay() }
+        current[index] = nil
+        GameAudio.shared.play(.tap)
+        launch(Flight(cell: index, color: jewel, toTray: true))
+        Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            tray.append(jewel)
+            await fillFromTray()
+            if tray.count >= capacity && !canProgress() { state = .full; GameAudio.shared.play(.lose) }
         }
     }
 
-    init(puzzle: JewelPuzzle, filled: [Bool]) {
-        self.puzzle = puzzle
-        self.filled = filled
-        let size = CGSize(width: CGFloat(puzzle.columns) * Self.cell, height: CGFloat(puzzle.rows) * Self.cell)
-        super.init(frame: CGRect(origin: .zero, size: size))
-        backgroundColor = UIColor(white: 0.93, alpha: 1)
-        if let tiled = layer as? CATiledLayer {
-            tiled.tileSize = CGSize(width: 512, height: 512)
-            tiled.levelsOfDetail = 4
-            tiled.levelsOfDetailBias = 3
-        }
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    func index(at point: CGPoint) -> Int? {
-        let column = Int(point.x / Self.cell)
-        let row = Int(point.y / Self.cell)
-        guard point.x >= 0, point.y >= 0, column < puzzle.columns, row < puzzle.rows else { return nil }
-        return row * puzzle.columns + column
-    }
-
-    func markFilled(_ index: Int) {
-        lock.lock()
-        filled[index] = true
-        lock.unlock()
-        setNeedsDisplay(rect(of: index).insetBy(dx: -1, dy: -1))
-    }
-
-    private func rect(of index: Int) -> CGRect {
-        CGRect(x: CGFloat(index % puzzle.columns) * Self.cell, y: CGFloat(index / puzzle.columns) * Self.cell,
-               width: Self.cell, height: Self.cell)
-    }
-
-    override func draw(_ rect: CGRect) {
-        guard let context = UIGraphicsGetCurrentContext() else { return }
-        lock.lock()
-        let filled = self.filled
-        let selected = _selected
-        lock.unlock()
-        let c = Self.cell
-        let firstColumn = max(0, Int(rect.minX / c))
-        let lastColumn = min(puzzle.columns - 1, Int(rect.maxX / c))
-        let firstRow = max(0, Int(rect.minY / c))
-        let lastRow = min(puzzle.rows - 1, Int(rect.maxY / c))
-        guard firstColumn <= lastColumn, firstRow <= lastRow else { return }
-        for row in firstRow...lastRow {
-            for column in firstColumn...lastColumn {
-                let index = row * puzzle.columns + column
-                let cellRect = CGRect(x: CGFloat(column) * c, y: CGFloat(row) * c, width: c, height: c)
-                let target = puzzle.targets[index]
-                if filled[index] {
-                    Self.drawJewel(in: cellRect, color: puzzle.uiColors[target], context: context)
-                } else {
-                    Self.drawNumber(target + 1, in: cellRect, highlighted: target == selected, context: context)
+    /// 空いているマスのうち、トレイに同じ色の宝石があるものへ飛ばす
+    private func fillFromTray() async {
+        guard let puzzle else { return }
+        var moved = true
+        while moved {
+            moved = false
+            for cell in current.indices where current[cell] == nil && !flyingTo.contains(cell) {
+                let need = puzzle.targets[cell]
+                guard let slot = tray.firstIndex(of: need) else { continue }
+                tray.remove(at: slot)
+                flyingTo.insert(cell)
+                current[cell] = need
+                launch(Flight(cell: cell, color: need, toTray: false))
+                moved = true
+                try? await Task.sleep(for: .milliseconds(90))
+                let landed = cell
+                Task {
+                    try? await Task.sleep(for: .milliseconds(320))
+                    flyingTo.remove(landed)
+                    GameAudio.shared.play(.place)
                 }
             }
         }
+        try? await Task.sleep(for: .milliseconds(340))
+        if current.enumerated().allSatisfy({ $0.element == puzzle.targets[$0.offset] }) && state == .playing {
+            state = .cleared
+            finishedImage = JewelBoardImage.render(puzzle)
+            GameAudio.shared.play(.complete)
+        }
     }
 
-    /// 番号のマス：薄い灰色に番号。選んでいる色のマスは濃くして目立たせる
-    private static func drawNumber(_ number: Int, in rect: CGRect, highlighted: Bool, context: CGContext) {
-        context.setFillColor(UIColor(white: highlighted ? 0.72 : 0.92, alpha: 1).cgColor)
-        context.fill(rect.insetBy(dx: 0.5, dy: 0.5))
-        let text = "\(number)" as NSString
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: rect.width * 0.36, weight: highlighted ? .bold : .medium),
-            .foregroundColor: UIColor(white: highlighted ? 0.15 : 0.5, alpha: 1),
-        ]
-        let size = text.size(withAttributes: attributes)
-        text.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
-                  withAttributes: attributes)
+    /// トレイがいっぱいでも、まだ進められるか（空きマスに合う宝石がトレイにあるなど）
+    private func canProgress() -> Bool {
+        guard let puzzle else { return false }
+        return current.indices.contains { current[$0] == nil && tray.contains(puzzle.targets[$0]) }
     }
 
-    /// 宝石 1 粒：丸いカットの宝石に、光る面（左上）、影（右下）、きらめき
-    static func drawJewel(in rect: CGRect, color: UIColor, context: CGContext) {
-        context.setFillColor(UIColor(white: 0.12, alpha: 1).cgColor)
-        context.fill(rect)
-        let gem = rect.insetBy(dx: rect.width * 0.06, dy: rect.height * 0.06)
-        context.saveGState()
-        context.addEllipse(in: gem)
-        context.clip()
-        context.setFillColor(color.cgColor)
-        context.fill(gem)
-        // 光る面と影の面
-        context.setFillColor(UIColor.white.withAlphaComponent(0.3).cgColor)
-        context.fill(CGRect(x: gem.minX, y: gem.minY, width: gem.width, height: gem.height * 0.45))
-        context.setFillColor(UIColor.black.withAlphaComponent(0.25).cgColor)
-        context.fill(CGRect(x: gem.minX, y: gem.midY + gem.height * 0.12, width: gem.width, height: gem.height * 0.4))
-        // 真ん中のテーブル面（八角形のカットに見えるよう、少し小さな丸を重ねる）
-        let table = gem.insetBy(dx: gem.width * 0.24, dy: gem.height * 0.24)
-        context.setFillColor(color.cgColor)
-        context.fillEllipse(in: table)
-        context.setFillColor(UIColor.white.withAlphaComponent(0.12).cgColor)
-        context.fillEllipse(in: table)
-        context.restoreGState()
-        // ふち
-        context.setStrokeColor(UIColor.black.withAlphaComponent(0.35).cgColor)
-        context.setLineWidth(max(0.5, rect.width * 0.03))
-        context.strokeEllipse(in: gem)
-        // きらめき
-        let spark = CGRect(x: gem.minX + gem.width * 0.2, y: gem.minY + gem.height * 0.18,
-                           width: gem.width * 0.18, height: gem.height * 0.18)
-        context.setFillColor(UIColor.white.withAlphaComponent(0.85).cgColor)
-        context.fillEllipse(in: spark)
+    private func launch(_ flight: Flight) {
+        flights.append(flight)
+        let id = flight.id
+        Task {
+            try? await Task.sleep(for: .milliseconds(420))
+            flights.removeAll { $0.id == id }
+        }
     }
+}
 
-    /// 完成した宝石の絵を画像にする
-    static func render(puzzle: JewelPuzzle, cell: CGFloat) -> UIImage {
-        let size = CGSize(width: CGFloat(puzzle.columns) * cell, height: CGFloat(puzzle.rows) * cell)
-        return UIGraphicsImageRenderer(size: size).image { renderer in
+/// 完成した宝石の絵を画像にする
+enum JewelBoardImage {
+    @MainActor
+    static func render(_ puzzle: JewelPuzzle) -> UIImage? {
+        let cell: CGFloat = 40
+        let view = Canvas { context, _ in
             for index in puzzle.targets.indices {
                 let rect = CGRect(x: CGFloat(index % puzzle.columns) * cell, y: CGFloat(index / puzzle.columns) * cell,
                                   width: cell, height: cell)
-                drawJewel(in: rect, color: puzzle.uiColors[puzzle.targets[index]], context: renderer.cgContext)
+                context.fill(Path(rect), with: .color(puzzle.palette[puzzle.targets[index]].opacity(0.35)))
+                drawGem(in: rect.insetBy(dx: 1.5, dy: 1.5), color: puzzle.palette[puzzle.targets[index]], context: &context)
             }
         }
+        .frame(width: cell * CGFloat(puzzle.columns), height: cell * CGFloat(puzzle.rows))
+        .background(Color.white)
+        return ImageRenderer(content: view).uiImage
     }
 }

@@ -19,9 +19,9 @@ struct GameHubView: View {
                 Text("ひみつのゲーム")
                     .font(.title2.weight(.heavy))
                     .padding(.top, 40)
-                gameButton(title: "ジュエル塗り絵", subtitle: "撮った写真を宝石で塗る",
+                gameButton(title: "ジュエル塗り絵", subtitle: "宝石を並べ替えて絵を完成させる",
                            systemImage: "diamond.fill", colors: [.cyan, .purple]) { playing = .jewel }
-                gameButton(title: "キャンディ・マッチ", subtitle: "3 つそろえて消すパズル",
+                gameButton(title: "キャンディ・マッチ", subtitle: "3 つそろえて消す、特別なキャンディつき",
                            systemImage: "heart.fill", colors: [.pink, .orange]) { playing = .candy }
                 Spacer()
                 Button("カメラに戻る") { dismiss() }
