@@ -380,62 +380,58 @@ private struct PanelKeyStyle: ButtonStyle {
     }
 }
 
-/// モードを選ぶスライド。横になぞって、真ん中に来たモードになる（押しても選べる）
+/// モードを選ぶスライド。名前を横に並べ、なぞって見渡し、押して選ぶ（プレビューを左右になぞっても切り替わる）。
+/// 選んだモードは自動で真ん中に来る。スクロール位置から選択を決める方式は、
+/// 選択とスクロールが互いに書き換え合って画面が止まるおそれがあるので使わない
 private struct ModeSlider: View {
     @Binding var selection: LookMode
-    @State private var centered: LookMode?
     private let itemWidth: CGFloat = 96
 
     var body: some View {
         GeometryReader { geo in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(LookMode.allCases) { mode in
-                        let selected = mode == selection
-                        Button {
-                            withAnimation(.snappy) { centered = mode }
-                        } label: {
-                            VStack(spacing: 4) {
-                                Text(mode.title)
-                                    .font(.subheadline.weight(selected ? .bold : .medium))
-                                    .foregroundStyle(selected ? Panel.ink : Panel.print.opacity(0.7))
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.7)
-                                Circle()
-                                    .fill(selected ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.clear))
-                                    .frame(width: 5, height: 5)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(LookMode.allCases) { mode in
+                            let selected = mode == selection
+                            Button {
+                                withAnimation(.snappy) { selection = mode }
+                            } label: {
+                                VStack(spacing: 4) {
+                                    Text(mode.title)
+                                        .font(.subheadline.weight(selected ? .bold : .medium))
+                                        .foregroundStyle(selected ? Panel.ink : Panel.print.opacity(0.7))
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.7)
+                                    Circle()
+                                        .fill(selected ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.clear))
+                                        .frame(width: 5, height: 5)
+                                }
+                                .frame(width: itemWidth, height: 40)
+                                .contentShape(Rectangle())
                             }
-                            .frame(width: itemWidth, height: 40)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                            .id(mode)
                         }
-                        .buttonStyle(.plain)
-                        .id(mode)
                     }
+                    .padding(.horizontal, max(0, (geo.size.width - itemWidth) / 2))
                 }
-                .scrollTargetLayout()
+                .mask(
+                    LinearGradient(stops: [.init(color: .clear, location: 0),
+                                           .init(color: .black, location: 0.18),
+                                           .init(color: .black, location: 0.82),
+                                           .init(color: .clear, location: 1)],
+                                   startPoint: .leading, endPoint: .trailing)
+                )
+                .onChange(of: selection) { _, mode in
+                    withAnimation(.snappy) { proxy.scrollTo(mode, anchor: .center) }
+                }
+                .onAppear {
+                    DispatchQueue.main.async { proxy.scrollTo(selection, anchor: .center) }
+                }
             }
-            .contentMargins(.horizontal, max(0, (geo.size.width - itemWidth) / 2), for: .scrollContent)
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $centered)
-            .mask(
-                LinearGradient(stops: [.init(color: .clear, location: 0),
-                                       .init(color: .black, location: 0.18),
-                                       .init(color: .black, location: 0.82),
-                                       .init(color: .clear, location: 1)],
-                               startPoint: .leading, endPoint: .trailing)
-            )
         }
         .frame(height: 40)
-        .animation(.snappy, value: selection)
-        .onChange(of: centered) { _, mode in
-            if let mode, mode != selection { selection = mode }
-        }
-        .onChange(of: selection) { _, mode in
-            if centered != mode { withAnimation(.snappy) { centered = mode } }
-        }
-        .onAppear {
-            DispatchQueue.main.async { centered = selection }
-        }
     }
 }
 
