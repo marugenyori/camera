@@ -1,14 +1,19 @@
 import CloudKit
 import ImageIO
+import Photos
 import SwiftUI
 import UIKit
 
 /// 共有アルバムの 1 枚
-struct AlbumPhoto: Identifiable {
+struct AlbumPhoto: Identifiable, Equatable {
     let id: CKRecord.ID
     let takenAt: Date
     let mode: String
     let thumbnail: UIImage?
+    /// 入れた人（CloudKit が自動で記録する作成者。自分が入れたものは "__defaultOwner__" のこともある）
+    let creator: String?
+
+    static func == (a: AlbumPhoto, b: AlbumPhoto) -> Bool { a.id == b.id }
 }
 
 /// 見られるアルバム（自分のアルバム、または招待された友だちのアルバム）
@@ -53,6 +58,16 @@ final class AlbumStore: ObservableObject {
         }
     }
     @Published private(set) var photos: [AlbumPhoto] = []
+    /// アルバムごとの表紙（いちばん新しい写真）と枚数。切り替えのカードに出す
+    @Published private(set) var covers: [String: UIImage] = [:]
+    @Published private(set) var counts: [String: Int] = [:]
+    /// 選んでいるアルバムのメンバー（ユーザーの recordName → 名前）。写真を入れた人の表示に使う
+    @Published private(set) var members: [String: String] = [:]
+    /// 自分の recordName（自分が入れた写真を見分ける）
+    private var myRecordName: String?
+    /// 大きく見た写真をしばらく取っておく
+    private var fullCache: [CKRecord.ID: UIImage] = [:]
+    private var fullOrder: [CKRecord.ID] = []
     @Published private(set) var isLoading = false
     @Published private(set) var uploading = 0
     /// うまくいかなかったときの説明（iCloud に未サインインなど）
@@ -141,12 +156,14 @@ final class AlbumStore: ObservableObject {
         guard let album = selected else { return }
         let db = database(for: album)
         do {
-            if album.isOwner {
-                try await Self.ensureZone(album.zoneID)
-                // もう招待を作ってあれば読んでおく（参加した人を表示し、すぐ招待を送れるように）
-                let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: album.zoneID)
-                let existing = try? await db.record(for: shareID) as? CKShare
-                if album.id == selected?.id { share = existing }
+            if album.isOwner { try await Self.ensureZone(album.zoneID) }
+            if myRecordName == nil { myRecordName = try? await Self.container.userRecordID().recordName }
+            // 招待があれば読んでおく（参加した人を表示し、すぐ招待を送れるように。写真を入れた人の名前にも使う）
+            let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: album.zoneID)
+            let existing = try? await db.record(for: shareID) as? CKShare
+            if album.id == selected?.id {
+                if album.isOwner { share = existing }
+                members = Self.memberNames(of: existing)
             }
             var records: [CKRecord] = []
             var token: CKServerChangeToken?
@@ -163,7 +180,10 @@ final class AlbumStore: ObservableObject {
                 token = changes.changeToken
                 more = changes.moreComing
             }
-            photos = records.map(Self.photo(from:)).sorted { $0.takenAt > $1.takenAt }
+            let loaded = records.map(Self.photo(from:)).sorted { $0.takenAt > $1.takenAt }
+            counts[album.id] = loaded.count
+            covers[album.id] = loaded.first?.thumbnail
+            if album.id == selected?.id { photos = loaded }
         } catch {
             photos = []
             status = Self.describe(error)
@@ -172,12 +192,108 @@ final class AlbumStore: ObservableObject {
 
     /// 1 枚をフル解像度で読む（表示用に長い辺 2400px まで縮める）
     func fullImage(of photo: AlbumPhoto) async -> UIImage? {
+        if let cached = fullCache[photo.id] { return cached }
+        guard let url = await fullFile(of: photo), let image = Self.downsample(url, maxPixel: 2400) else { return nil }
+        fullCache[photo.id] = image
+        fullOrder.append(photo.id)
+        if fullOrder.count > 12 { fullCache[fullOrder.removeFirst()] = nil }
+        return image
+    }
+
+    /// 1 枚の元のファイル（CloudKit が一時的に置いた場所）
+    private func fullFile(of photo: AlbumPhoto) async -> URL? {
         guard let album = selected else { return nil }
-        let db = database(for: album)
-        guard let results = try? await db.records(for: [photo.id], desiredKeys: ["image"]),
+        guard let results = try? await database(for: album).records(for: [photo.id], desiredKeys: ["image"]),
               case .success(let record)? = results[photo.id],
-              let asset = record["image"] as? CKAsset, let url = asset.fileURL else { return nil }
-        return Self.downsample(url, maxPixel: 2400)
+              let asset = record["image"] as? CKAsset else { return nil }
+        return asset.fileURL
+    }
+
+    // MARK: - 入れた人
+
+    /// 写真を入れた人の名前（自分なら「自分」）
+    func creatorName(of photo: AlbumPhoto) -> String {
+        guard let creator = photo.creator else { return "だれか" }
+        if isMine(photo) { return "自分" }
+        return members[creator] ?? "メンバー"
+    }
+
+    func isMine(_ photo: AlbumPhoto) -> Bool {
+        guard let creator = photo.creator else { return false }
+        return creator == CKCurrentUserDefaultName || creator == myRecordName
+    }
+
+    /// 消せる写真か（自分が入れたもの。自分のアルバムなら全部）
+    func canDelete(_ photo: AlbumPhoto) -> Bool {
+        selected?.isOwner == true || isMine(photo)
+    }
+
+    nonisolated private static func memberNames(of share: CKShare?) -> [String: String] {
+        guard let share else { return [:] }
+        var names: [String: String] = [:]
+        for participant in share.participants {
+            guard let id = participant.userIdentity.userRecordID?.recordName else { continue }
+            let name = participant.userIdentity.nameComponents
+                .map { PersonNameComponentsFormatter().string(from: $0) }
+                .flatMap { $0.isEmpty ? nil : $0 }
+            names[id] = name ?? (participant.role == .owner ? "アルバムの持ち主" : "名前なしの参加者")
+        }
+        return names
+    }
+
+    // MARK: - 消す・保存する
+
+    /// 写真を消す（消せないものは飛ばす）
+    func delete(_ targets: [AlbumPhoto]) async {
+        guard let album = selected else { return }
+        let ids = targets.filter(canDelete).map(\.id)
+        guard !ids.isEmpty else { return }
+        do {
+            let result = try await database(for: album).modifyRecords(saving: [], deleting: ids)
+            var deleted: Set<CKRecord.ID> = []
+            for (id, outcome) in result.deleteResults {
+                if case .success = outcome { deleted.insert(id) }
+            }
+            photos.removeAll { deleted.contains($0.id) }
+            counts[album.id] = photos.count
+            covers[album.id] = photos.first?.thumbnail
+            status = deleted.count < ids.count ? "消せなかった写真があります" : nil
+        } catch {
+            status = "消せませんでした：" + Self.describe(error)
+        }
+    }
+
+    /// 写真を元の画質で写真アプリに保存する。保存できた枚数を返す
+    func saveToLibrary(_ targets: [AlbumPhoto]) async -> Int {
+        let allowed = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard allowed == .authorized || allowed == .limited else {
+            status = "写真への保存が許可されていません（設定 → フィルムカメラ → 写真）"
+            return 0
+        }
+        var saved = 0
+        for photo in targets {
+            guard let url = await fullFile(of: photo), let data = try? Data(contentsOf: url) else { continue }
+            let ok = (try? await PHPhotoLibrary.shared().performChanges {
+                PHAssetCreationRequest.forAsset().addResource(with: .photo, data: data, options: nil)
+            }) != nil
+            if ok { saved += 1 }
+        }
+        return saved
+    }
+
+    /// 写真アプリから選んだ写真をアルバムに入れる
+    func importPhotos(_ files: [Data]) {
+        for data in files {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { continue }
+            let type = CGImageSourceGetType(source) as String? ?? "public.jpeg"
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 800,
+            ]
+            let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map(UIImage.init(cgImage:))
+            add(data: data, type: type, thumbnail: thumbnail, mode: "写真から")
+        }
     }
 
     // MARK: - 追加
@@ -222,9 +338,11 @@ final class AlbumStore: ObservableObject {
 
                 let saved = try await database(for: album).save(record)
                 if album.id == selected?.id {
-                    photos.insert(AlbumPhoto(id: saved.recordID, takenAt: Date(), mode: mode, thumbnail: thumbnail),
-                                  at: 0)
+                    photos.insert(AlbumPhoto(id: saved.recordID, takenAt: Date(), mode: mode, thumbnail: thumbnail,
+                                             creator: CKCurrentUserDefaultName), at: 0)
                 }
+                counts[album.id, default: 0] += 1
+                if let thumbnail { covers[album.id] = thumbnail }
                 status = nil
             } catch {
                 status = "共有アルバムに追加できませんでした：" + Self.describe(error)
@@ -270,6 +388,19 @@ final class AlbumStore: ObservableObject {
     }
 
     // MARK: - アルバムを作る・消す
+
+    /// 自分のアルバムの名前を変える（招待を作ってあれば、その題名も変える）
+    func renameSelectedAlbum(to name: String) async {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let album = selected, album.isOwner, !title.isEmpty else { return }
+        var titles = albumTitles
+        titles[album.zoneID.zoneName] = title
+        albumTitles = titles
+        if share != nil {
+            share = try? await Self.prepareShare(zoneID: album.zoneID, title: title)
+        }
+        await refresh()
+    }
 
     /// 友だちのグループ用に、新しいアルバムを作って選ぶ
     func createAlbum(named name: String) async {
@@ -352,7 +483,8 @@ final class AlbumStore: ObservableObject {
         return AlbumPhoto(id: record.recordID,
                           takenAt: record["takenAt"] as? Date ?? record.creationDate ?? .distantPast,
                           mode: record["mode"] as? String ?? "",
-                          thumbnail: thumbnail)
+                          thumbnail: thumbnail,
+                          creator: record.creatorUserRecordID?.recordName)
     }
 
     nonisolated private static func thumbnailJPEG(_ image: UIImage) -> Data? {
