@@ -136,6 +136,17 @@ struct ContentView: View {
         CameraPreview(model: camera)
             .overlay { ViewfinderFrame(showGrid: showGrid && camera.mode != .contact) }
             .overlay { statusOverlay }
+            .overlay {
+                if let diagnostic = camera.diagnostic {
+                    Text(diagnostic)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(Panel.ink)
+                        .padding(12)
+                        .background(Panel.key, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .padding(20)
+                        .textSelection(.enabled)
+                }
+            }
             .overlay(alignment: .top) {
                 if let message = camera.message {
                     Text(message)

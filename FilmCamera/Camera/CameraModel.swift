@@ -26,6 +26,8 @@ final class CameraModel: NSObject, ObservableObject {
     /// 距離の測定が動いているか（フラッシュモードで LiDAR などが使えるとき）
     @Published private(set) var isDepthActive = false
     @Published var message: String?
+    /// カメラの映像が届かないときの原因調べ用の表示（映像が届けば消える）
+    @Published private(set) var diagnostic: String?
 
     @Published var mode: LookMode {
         didSet {
@@ -166,6 +168,12 @@ final class CameraModel: NSObject, ObservableObject {
 
     private let frameLock = NSLock()
     private var _latestFrame: CIImage?
+    /// 届いた映像のコマ数（映像が止まっていないかを見張る）
+    private var _frameCount = 0
+    /// 自分で選んだ設定で映像が届かなかったので、標準の設定（.photo）に任せているか
+    private var useStandardFormat = false
+    /// セッションで起きた最後のエラー（原因調べ用）
+    private var lastRuntimeError: String?
     private var _latestFrontFrame: CIImage?
     /// 前後同時撮影を始めてから届いたコマの数（映像が来ているかの確認用）
     private var _dualFrameCount = 0
@@ -239,6 +247,9 @@ final class CameraModel: NSObject, ObservableObject {
         contactSlots = slots
         contactLabels = defaults.object(forKey: "contactLabels") as? Bool ?? true
         super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(sessionRuntimeError(_:)),
+                                               name: .AVCaptureSessionRuntimeError,
+                                               object: session)
         dual.onFrame = { [weak self] frame, isBack in
             guard let self else { return }
             self.frameLock.lock()
@@ -361,10 +372,64 @@ final class CameraModel: NSObject, ObservableObject {
             } else if !self.session.isRunning {
                 self.session.startRunning()
             }
+            if !dualOn { self.watchForFrames(retry: true) }
             DispatchQueue.main.async {
                 self.status = .running
                 self.startZoomTracking()
             }
+        }
+    }
+
+    /// 映像が届いているかを見張る（sessionQueue で呼ぶ）。
+    /// 機種によっては、自分で選んだ写真用の設定でカメラが動かないことがある（iPhone 13 で映像が真っ白になった）。
+    /// 届かなければ一度だけ標準の設定（.photo）に切り替えてやり直し、それでもだめなら原因調べ用の情報を出す
+    private func watchForFrames(retry: Bool) {
+        frameLock.lock()
+        let before = _frameCount
+        frameLock.unlock()
+        sessionQueue.asyncAfter(deadline: .now() + 2.5) {
+            self.frameLock.lock()
+            let after = self._frameCount
+            self.frameLock.unlock()
+            if after > before || self.videoInput == nil {
+                DispatchQueue.main.async { self.diagnostic = nil }
+                return
+            }
+            if retry {
+                self.useStandardFormat = true
+                self.session.beginConfiguration()
+                if self.hasDepthOutput {
+                    self.session.removeOutput(self.depthOutput)
+                    self.hasDepthOutput = false
+                    self.isDepthOn = false
+                }
+                self.session.sessionPreset = .photo
+                if let device = self.videoInput?.device { self.setUpConnections(for: device) }
+                self.session.commitConfiguration()
+                self.refreshPhotoDepthDelivery()
+                if !self.session.isRunning { self.session.startRunning() }
+                self.watchForFrames(retry: false)
+                return
+            }
+            let device = self.videoInput?.device
+            let dims = device.map { CMVideoFormatDescriptionGetDimensions($0.activeFormat.formatDescription) }
+            let info = [
+                "カメラの映像が届きません",
+                "機種のカメラ: \(device?.localizedName ?? "なし")",
+                "映像の大きさ: \(dims.map { "\($0.width)×\($0.height)" } ?? "-")",
+                "動作中: \(self.session.isRunning ? "はい" : "いいえ")",
+                "エラー: \(self.lastRuntimeError ?? "なし")",
+            ].joined(separator: "\n")
+            DispatchQueue.main.async { self.diagnostic = info }
+        }
+    }
+
+    /// セッションのエラーを記録し、止まっていれば動かし直す
+    @objc private func sessionRuntimeError(_ note: Notification) {
+        let error = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
+        sessionQueue.async {
+            self.lastRuntimeError = error.map { "\($0.code) \($0.localizedDescription)" } ?? "不明"
+            if !self.session.isRunning && !self.isDual { self.session.startRunning() }
         }
     }
 
@@ -418,8 +483,8 @@ final class CameraModel: NSObject, ObservableObject {
                 hasDepthOutput = false
             }
             // 写真がいちばん大きく撮れる設定を自分で選ぶ（標準の設定だと 1200万画素になる機種がある）
-            let photoFormatSet = Self.bestPhotoFormat(of: device)
-                .map { setFormat($0, depthFormat: nil, on: device) } ?? false
+            let photoFormatSet = !useStandardFormat && (Self.bestPhotoFormat(of: device)
+                .map { setFormat($0, depthFormat: nil, on: device) } ?? false)
             if !photoFormatSet {
                 session.sessionPreset = .photo
             }
@@ -1155,6 +1220,7 @@ extension CameraModel: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAu
         let frame = CIImage(cvPixelBuffer: pixelBuffer)
         frameLock.lock()
         _latestFrame = frame
+        _frameCount += 1
         let depth = _latestDepth
         let subject = _subjectDistance
         // 録画中で、前のコマの書き込みが終わっていれば、このコマを書き込む
