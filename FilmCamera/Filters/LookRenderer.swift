@@ -30,6 +30,7 @@ enum LookRenderer {
 
         var out: CIImage
         switch options.mode {
+        case .standard: out = image
         case .film: out = film(image, seed: options.grainSeed)
         case .flash: out = flash(image, depth: options.depth, subject: options.subjectDistance)
         case .warmFlash: out = flash(image, depth: options.depth, subject: options.subjectDistance, warm: true)

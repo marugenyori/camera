@@ -6,6 +6,9 @@ struct AlbumView: View {
     @ObservedObject var store: AlbumStore
     @Environment(\.dismiss) private var dismiss
     @State private var opened: AlbumPhoto?
+    @State private var showingNewAlbum = false
+    @State private var newAlbumName = ""
+    @State private var confirmingRemove = false
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 3)]
 
@@ -13,13 +16,40 @@ struct AlbumView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if store.albums.count > 1 {
-                        Picker("アルバム", selection: $store.selectedID) {
+                    // アルバムの切り替え（友だちのグループごとにアルバムを分けられる）
+                    HStack {
+                        Picker("アルバム", selection: Binding(
+                            get: { store.selected?.id },
+                            set: { store.selectedID = $0 }
+                        )) {
                             ForEach(store.albums) { album in
-                                Text(album.title).tag(Optional(album.id))
+                                Label(album.title, systemImage: album.isOwner ? "person.2" : "person.crop.circle")
+                                    .tag(Optional(album.id))
                             }
                         }
                         .pickerStyle(.menu)
+                        Spacer()
+                        Menu {
+                            Button {
+                                newAlbumName = ""
+                                showingNewAlbum = true
+                            } label: {
+                                Label("新しいアルバム（グループ）", systemImage: "plus.rectangle.on.rectangle")
+                            }
+                            if let album = store.selected,
+                               !album.isOwner || album.zoneID.zoneName != AlbumStore.ownZoneID.zoneName {
+                                Button(role: .destructive) {
+                                    confirmingRemove = true
+                                } label: {
+                                    Label(album.isOwner ? "このアルバムを削除" : "このアルバムから抜ける",
+                                          systemImage: album.isOwner ? "trash" : "rectangle.portrait.and.arrow.right")
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.title3)
+                        }
+                        .accessibilityLabel("アルバムの操作")
                     }
 
                     Toggle("撮った写真を自動でこのアルバムに入れる", isOn: $store.autoAdd)
@@ -98,6 +128,27 @@ struct AlbumView: View {
                 }
             }
             .task { await store.refresh() }
+            .alert("新しいアルバム", isPresented: $showingNewAlbum) {
+                TextField("名前（例：家族、サークル）", text: $newAlbumName)
+                Button("作る") {
+                    let name = newAlbumName
+                    Task { await store.createAlbum(named: name) }
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("グループごとにアルバムを作ると、それぞれ別の友だちを招待できます。")
+            }
+            .confirmationDialog(store.selected?.isOwner == true
+                                ? "このアルバムを削除しますか？" : "このアルバムから抜けますか？",
+                                isPresented: $confirmingRemove, titleVisibility: .visible) {
+                Button(store.selected?.isOwner == true ? "削除する" : "抜ける", role: .destructive) {
+                    Task { await store.removeSelectedAlbum() }
+                }
+            } message: {
+                Text(store.selected?.isOwner == true
+                     ? "アルバムの写真はすべて消え、招待した人も見られなくなります。"
+                     : "このアルバムが一覧から消えます。もう一度入るには招待のリンクが必要です。")
+            }
             .sheet(item: $opened) { photo in
                 AlbumPhotoView(store: store, photo: photo)
             }

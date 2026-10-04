@@ -3,6 +3,8 @@ import CoreImage
 
 /// 撮影モード（見え方）
 enum LookMode: String, CaseIterable, Identifiable {
+    /// フィルタなし（iPhone の標準カメラと同じ色）
+    case standard
     case film
     case flash
     case warmFlash
@@ -18,6 +20,7 @@ enum LookMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .standard: return "標準"
         case .film: return "フィルム"
         case .flash: return "フラッシュ"
         case .warmFlash: return "暖フラッシュ"
@@ -36,6 +39,7 @@ enum LookMode: String, CaseIterable, Identifiable {
 
     var caption: String {
         switch self {
+        case .standard: return "フィルタなし：iPhone の標準カメラと同じ色"
         case .film: return "低いコントラスト・暖かい白・にじむ光"
         case .flash: return "直射フラッシュのコンデジ写真"
         case .warmFlash: return "暖かい色のフラッシュ写真"
@@ -105,7 +109,7 @@ enum ContactLayout: String, CaseIterable, Identifiable {
     var title: String { "\(columns)×\(rows)" }
 
     /// 分割で選べるフィルタ（重ねたり分割したりするモードは除く）
-    static let selectableModes: [LookMode] = [.film, .flash, .warmFlash, .compact, .iwai, .cross, .harinezumi, .warmHarinezumi]
+    static let selectableModes: [LookMode] = [.standard, .film, .flash, .warmFlash, .compact, .iwai, .cross, .harinezumi, .warmHarinezumi]
 
     static let defaultModes: [LookMode] = [.film, .flash, .iwai, .cross, .harinezumi, .warmHarinezumi,
                                            .warmFlash, .film, .iwai]

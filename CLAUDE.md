@@ -16,7 +16,7 @@
 |---|---|
 | `FilmCamera/App/` | `@main` の App |
 | `FilmCamera/Camera/CameraModel.swift` | AVFoundation でカメラを動かす。映像フレームを `latestFrame` に置き、撮影した写真にフィルタをかけて写真アプリに保存する |
-| `FilmCamera/Filters/LookMode.swift` | モードの一覧（フィルム／フラッシュ／暖フラッシュ／コンデジ／岩井俊二風／クロス／ハリネズミ／暖ハリネズミ／多重露光／分割）。距離を使うのはフラッシュと暖フラッシュ（`usesDepth`） |
+| `FilmCamera/Filters/LookMode.swift` | モードの一覧（標準（フィルタなし）／フィルム／フラッシュ／暖フラッシュ／コンデジ／岩井俊二風／クロス／ハリネズミ／暖ハリネズミ／多重露光／分割）。距離を使うのはフラッシュと暖フラッシュ（`usesDepth`） |
 | `FilmCamera/Filters/LookRenderer.swift` | 各モードの見え方（Core Image のフィルタの組み合わせ）。**プレビューと保存の両方で同じ関数を使う** |
 | `FilmCamera/Views/CameraPreview.swift` | MTKView（Metal）で、フィルタをかけた映像を毎秒30コマ描く |
 | `FilmCamera/Camera/DualCameraSession.swift` | 外カメラと内カメラを同時に動かす（`AVCaptureMultiCamSession`）。「前後同時」をオンにしている間だけ使う |
@@ -52,7 +52,7 @@
 - **分割**：1 回のシャッターでコマごとに違うフィルタをかけ、1 枚に並べる。並べ方（`ContactLayout`：2×1〜4×2 など横×縦）とコマごとのフィルタ（`contactSlots`）、フィルタ名の有無を「分割の設定」シートで選べ、`UserDefaults` に残る。写真は並べた全体の長い辺が約 6000px になるようコマの大きさを決める（1 コマ最大 4000px）。プレビューと動画は元の画像に収まる大きさ。フラッシュのコマは距離なしの円形マスク。グリッド表示は分割では出さない
 - **iPhone 13 の真っ白の原因**：セッションの中断理由 4（`videoDeviceNotAvailableWithMultipleForegroundApps`＝ほかのアプリも前面にある。ピクチャ・イン・ピクチャの動画など）。`isMultitaskingCameraAccessEnabled = true`（対応時）で、その状態でもカメラを使えるようにしている（ふだんのセッションと前後同時の両方）
 - **映像の見張り**（`watchForFrames`）：iPhone 13（iOS 26.6.1）でファインダーが真っ白・撮影失敗になった（映像が 1 コマも届かない）。起動 2.5 秒後にコマが届いていなければ段階的にやり直す：①自分で選んだ写真用の設定をやめて標準の `.photo` に（`useStandardFormat`）②デュアルカメラ・距離をやめて広角カメラだけに（`useSimpleCamera`）。ビルド 90 の実機では①の後も「動作中: いいえ・エラーなし」だった。それでもだめなら中断理由・入出力の数・許可も含めて、カメラ名・映像の大きさ・動作中か・セッションのエラーをプレビューに表示する（`diagnostic`）
-- **共有アルバム**（`FilmCamera/Album/`）：iCloud（CloudKit）で友だちと写真を見せ合う。自分のアルバムは非公開データベースのゾーン `SharedAlbum`、ゾーンごと `CKShare` で共有（招待は「リンクを知っている人は誰でも参加・追加できる」共有＝`publicPermission = .readWrite` を先に保存し、その URL を `ShareLink` で LINE などに送る。宛先指定の方式はメールアドレスを求められ、リンクも作れなかった）。招待された側は共有データベース。招待の受け取りは `SceneDelegate`（`FilmCameraApp.swift`）。写真はレコード型 `AlbumPhoto`（image: Asset、thumbnail: Asset、takenAt: Date/Time、mode: String）。一覧は検索でなくゾーンの変更の取得で読むのでインデックス不要。写真を開いて「共有アルバムに追加」、またはアルバム画面の自動追加のスイッチ。
+- **共有アルバム**（`FilmCamera/Album/`）：iCloud（CloudKit）で友だちと写真を見せ合う。自分のアルバムは非公開データベースのゾーン 1 つずつ（最初は `SharedAlbum`、友だちのグループ用に追加したものは `Album-<UUID>`）。名前は端末の `albumTitles` と共有の題名に入れる。ゾーンごと `CKShare` で共有（招待は「リンクを知っている人は誰でも参加・追加できる」共有＝`publicPermission = .readWrite` を先に保存し、その URL を `ShareLink` で LINE などに送る。宛先指定の方式はメールアドレスを求められ、リンクも作れなかった）。招待された側は共有データベース。招待の受け取りは `SceneDelegate`（`FilmCameraApp.swift`）。写真はレコード型 `AlbumPhoto`（image: Asset、thumbnail: Asset、takenAt: Date/Time、mode: String）。一覧は検索でなくゾーンの変更の取得で読むのでインデックス不要。写真を開いて「共有アルバムに追加」、またはアルバム画面の自動追加のスイッチ。
   - 必要な設定（持ち主の操作）：Apple Developer で iCloud コンテナ `iCloud.com.marugenyori.filmcamera` を作り、App ID に iCloud（CloudKit）を付けてコンテナを割り当てる。CloudKit Console で Development にレコード型 `AlbumPhoto` を作り、Production に公開（TestFlight は Production を使う）
   - **共有（CKShare）には本番のスキーマに `cloudkit.share` 型が要る**。開発環境で一度も共有を保存していないと作られず、TestFlight（本番）で招待を作ると「サーバーに拒否」になった。`Config/CloudKitSchema.ckdb`（AlbumPhoto・cloudkit.share・Users）を CloudKit Console の Import Schema で Development に読み込み、Deploy Schema Changes で本番に公開する
   - entitlements は `Config/FilmCamera.entitlements`、`CKSharingSupported` は `Config/FilmCamera-Info.plist`（生成される Info.plist に合流）

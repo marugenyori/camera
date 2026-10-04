@@ -20,7 +20,8 @@ struct AlbumRef: Identifiable, Hashable {
 }
 
 /// iCloud（CloudKit）を使った共有アルバム。
-/// 自分のアルバムは非公開データベースの専用ゾーン（"SharedAlbum"）に置き、ゾーンごと CKShare で友だちと共有する。
+/// 自分のアルバムは非公開データベースのゾーン 1 つずつ（最初の 1 つは "SharedAlbum"、追加分は "Album-…"）に置き、
+/// ゾーンごと CKShare で共有する。友だちのグループごとにアルバムを分けて、それぞれ別の人を招待できる。
 /// 招待を受けた友だちのアルバムは共有データベースに現れる。写真は「AlbumPhoto」レコードとして保存する
 /// （フル解像度の image、一覧用の thumbnail、撮影日時 takenAt、モード名 mode）。
 /// 一覧は検索（インデックスが要る）ではなく、ゾーンの変更の取得で読む
@@ -31,12 +32,24 @@ final class AlbumStore: ObservableObject {
     nonisolated static let container = CKContainer.default()
     nonisolated static let recordType = "AlbumPhoto"
     nonisolated static let ownZoneID = CKRecordZone.ID(zoneName: "SharedAlbum", ownerName: CKCurrentUserDefaultName)
+    /// 追加で作ったアルバムのゾーン名の頭
+    nonisolated static let albumZonePrefix = "Album-"
+    nonisolated static let defaultShareTitle = "フィルムカメラの共有アルバム"
+
+    /// 自分で作ったアルバムの名前（ゾーン名 → 名前）。招待した後は共有の題名からも読める
+    private var albumTitles: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: "albumTitles") as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "albumTitles") }
+    }
 
     @Published private(set) var albums: [AlbumRef] = []
     @Published var selectedID: String? {
         didSet {
             UserDefaults.standard.set(selectedID, forKey: "albumSelected")
-            if oldValue != selectedID { Task { await loadPhotos() } }
+            if oldValue != selectedID {
+                share = nil
+                Task { await loadPhotos() }
+            }
         }
     }
     @Published private(set) var photos: [AlbumPhoto] = []
@@ -76,12 +89,32 @@ final class AlbumStore: ObservableObject {
                 status = "iCloud にサインインすると使えます（設定 → 自分の名前 → iCloud）"
                 return
             }
-            var list = [AlbumRef(zoneID: Self.ownZoneID, isOwner: true, title: "自分のアルバム")]
+            // 自分のアルバム（最初の 1 つは必ず用意する）
+            try await Self.ensureZone(Self.ownZoneID)
+            let privateDB = Self.container.privateCloudDatabase
+            let titles = albumTitles
+            var own: [AlbumRef] = []
+            for zone in try await privateDB.allRecordZones() {
+                let name = zone.zoneID.zoneName
+                guard name == Self.ownZoneID.zoneName || name.hasPrefix(Self.albumZonePrefix) else { continue }
+                let info = await Self.shareInfo(of: zone.zoneID, in: privateDB)
+                let title = titles[name] ?? info.title
+                    ?? (name == Self.ownZoneID.zoneName ? "自分のアルバム" : "アルバム")
+                own.append(AlbumRef(zoneID: zone.zoneID, isOwner: true, title: title))
+            }
+            own.sort { a, b in
+                if a.zoneID.zoneName == Self.ownZoneID.zoneName { return true }
+                if b.zoneID.zoneName == Self.ownZoneID.zoneName { return false }
+                return a.title < b.title
+            }
+            // 友だちのアルバム（招待を受けたもの）
+            var list = own
             let shared = Self.container.sharedCloudDatabase
             for (index, zone) in try await shared.allRecordZones().enumerated() {
-                let name = await Self.ownerName(of: zone.zoneID, in: shared)
+                let info = await Self.shareInfo(of: zone.zoneID, in: shared)
+                let title = info.title ?? "友だちのアルバム \(index + 1)"
                 list.append(AlbumRef(zoneID: zone.zoneID, isOwner: false,
-                                     title: name.map { "\($0) のアルバム" } ?? "友だちのアルバム \(index + 1)"))
+                                     title: info.owner.map { "\(title)（\($0)）" } ?? title))
             }
             albums = list
             status = nil
@@ -96,7 +129,7 @@ final class AlbumStore: ObservableObject {
         guard let album = selected else { return }
         let db = database(for: album)
         do {
-            if album.isOwner { try await Self.ensureOwnZone() }
+            if album.isOwner { try await Self.ensureZone(album.zoneID) }
             var records: [CKRecord] = []
             var token: CKServerChangeToken?
             var more = true
@@ -148,7 +181,7 @@ final class AlbumStore: ObservableObject {
             uploading += 1
             defer { uploading -= 1 }
             do {
-                if album.isOwner { try await Self.ensureOwnZone() }
+                if album.isOwner { try await Self.ensureZone(album.zoneID) }
                 let folder = FileManager.default.temporaryDirectory
                 let ext = type == "public.heic" ? "heic" : "jpg"
                 let imageURL = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
@@ -185,31 +218,75 @@ final class AlbumStore: ObservableObject {
 
     /// 自分のアルバムの共有（招待のリンク）を用意する。なければ作る。
     /// LINE などにリンクだけ送れるよう「リンクを知っている人は誰でも参加して追加できる」にする
-    /// （宛先を指定する方式だと、メールアドレスや電話番号を求められる）
-    nonisolated static func prepareShare() async throws -> CKShare {
-        try await ensureOwnZone()
+    /// （宛先を指定する方式だと、メールアドレスや電話番号を求められる）。題名はアルバムの名前にする
+    nonisolated static func prepareShare(zoneID: CKRecordZone.ID, title: String) async throws -> CKShare {
+        try await ensureZone(zoneID)
         let db = container.privateCloudDatabase
-        let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: ownZoneID)
+        let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
         if let existing = try? await db.record(for: shareID) as? CKShare {
-            guard existing.publicPermission != .readWrite else { return existing }
+            let currentTitle = existing[CKShare.SystemFieldKey.title] as? String
+            guard existing.publicPermission != .readWrite || currentTitle != title else { return existing }
             existing.publicPermission = .readWrite
+            existing[CKShare.SystemFieldKey.title] = title as NSString
             return try await db.save(existing) as? CKShare ?? existing
         }
-        let share = CKShare(recordZoneID: ownZoneID)
-        share[CKShare.SystemFieldKey.title] = "フィルムカメラの共有アルバム" as NSString
+        let share = CKShare(recordZoneID: zoneID)
+        share[CKShare.SystemFieldKey.title] = title as NSString
         share.publicPermission = .readWrite
         return try await db.save(share) as? CKShare ?? share
     }
 
-    /// 招待を用意する（うまくいかなければ理由を status に出す）
+    /// 選んでいるアルバムの招待を用意する（うまくいかなければ理由を status に出す）
     func makeShare() async {
+        guard let album = selected, album.isOwner else { return }
         isPreparingShare = true
         defer { isPreparingShare = false }
         do {
-            share = try await Self.prepareShare()
+            let title = album.zoneID.zoneName == Self.ownZoneID.zoneName && album.title == "自分のアルバム"
+                ? Self.defaultShareTitle : album.title
+            share = try await Self.prepareShare(zoneID: album.zoneID, title: title)
             status = nil
         } catch {
             status = "招待を作れませんでした：" + Self.describe(error)
+        }
+    }
+
+    // MARK: - アルバムを作る・消す
+
+    /// 友だちのグループ用に、新しいアルバムを作って選ぶ
+    func createAlbum(named name: String) async {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        let zoneID = CKRecordZone.ID(zoneName: Self.albumZonePrefix + UUID().uuidString,
+                                     ownerName: CKCurrentUserDefaultName)
+        do {
+            try await Self.ensureZone(zoneID)
+            var titles = albumTitles
+            titles[zoneID.zoneName] = title
+            albumTitles = titles
+            await refresh()
+            if let album = albums.first(where: { $0.zoneID == zoneID }) { selectedID = album.id }
+        } catch {
+            status = "アルバムを作れませんでした：" + Self.describe(error)
+        }
+    }
+
+    /// 選んでいるアルバムを消す（自分のアルバムなら写真ごと消え、招待した人も見られなくなる。
+    /// 友だちのアルバムなら、そのアルバムから抜ける）。最初の「自分のアルバム」は消さない
+    func removeSelectedAlbum() async {
+        guard let album = selected, album.zoneID.zoneName != Self.ownZoneID.zoneName || !album.isOwner else { return }
+        do {
+            _ = try await database(for: album).deleteRecordZone(withID: album.zoneID)
+            if album.isOwner {
+                var titles = albumTitles
+                titles[album.zoneID.zoneName] = nil
+                albumTitles = titles
+            }
+            selectedID = nil
+            await refresh()
+        } catch {
+            status = (album.isOwner ? "アルバムを消せませんでした：" : "アルバムから抜けられませんでした：")
+                + Self.describe(error)
         }
     }
 
@@ -233,18 +310,23 @@ final class AlbumStore: ObservableObject {
 
     // MARK: - 下ごしらえ
 
-    nonisolated private static func ensureOwnZone() async throws {
+    nonisolated private static func ensureZone(_ zoneID: CKRecordZone.ID) async throws {
         let db = container.privateCloudDatabase
-        if (try? await db.recordZone(for: ownZoneID)) != nil { return }
-        _ = try await db.save(CKRecordZone(zoneID: ownZoneID))
+        if (try? await db.recordZone(for: zoneID)) != nil { return }
+        _ = try await db.save(CKRecordZone(zoneID: zoneID))
     }
 
-    nonisolated private static func ownerName(of zoneID: CKRecordZone.ID, in db: CKDatabase) async -> String? {
+    /// アルバムの共有の題名と、作った人の名前（共有していなければどちらも nil）
+    nonisolated private static func shareInfo(of zoneID: CKRecordZone.ID,
+                                              in db: CKDatabase) async -> (title: String?, owner: String?) {
         let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
-        guard let share = try? await db.record(for: shareID) as? CKShare,
-              let components = share.owner.userIdentity.nameComponents else { return nil }
-        let name = PersonNameComponentsFormatter().string(from: components)
-        return name.isEmpty ? nil : name
+        guard let share = try? await db.record(for: shareID) as? CKShare else { return (nil, nil) }
+        var title = share[CKShare.SystemFieldKey.title] as? String
+        if title == defaultShareTitle || title?.isEmpty == true { title = nil }
+        let owner = share.owner.userIdentity.nameComponents
+            .map { PersonNameComponentsFormatter().string(from: $0) }
+            .flatMap { $0.isEmpty ? nil : $0 }
+        return (title, owner)
     }
 
     nonisolated private static func photo(from record: CKRecord) -> AlbumPhoto {
