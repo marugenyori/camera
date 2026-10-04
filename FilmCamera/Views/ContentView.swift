@@ -9,6 +9,8 @@ struct ContentView: View {
     @State private var flashOpacity = 0.0
     @State private var showingPhoto = false
     @State private var showingContactSettings = false
+    /// 隠しゲーム（倍率の黒い小窓を長押しすると開く）
+    @State private var showingGame = false
     @AppStorage("showGrid") private var showGrid = false
 
     var body: some View {
@@ -96,6 +98,14 @@ struct ContentView: View {
         .sheet(isPresented: $album.showAlbum) {
             AlbumView(store: album)
         }
+        .fullScreenCover(isPresented: $showingGame) {
+            JewelGameView(initialImage: camera.lastPhoto)
+        }
+        .onChange(of: showingGame) { _, playing in
+            // 遊んでいる間はカメラを止めて電池を節約する
+            if playing { camera.stop() } else { camera.start() }
+        }
+        .sensoryFeedback(.impact(weight: .heavy), trigger: showingGame)
     }
 
     // MARK: - 上の段（機能キーと状態）
@@ -126,6 +136,8 @@ struct ContentView: View {
                 .padding(.horizontal, 10)
                 .frame(height: 30)
                 .background(Panel.display, in: Capsule())
+                // 隠しボタン：長押しでジュエル塗り絵
+                .onLongPressGesture(minimumDuration: 1.0) { showingGame = true }
             Spacer(minLength: 6)
             FunctionKey(systemImage: "arrow.triangle.2.circlepath", isOn: nil, label: "カメラを切り替え") {
                 camera.switchCamera()

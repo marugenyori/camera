@@ -56,6 +56,7 @@
   - 必要な設定（持ち主の操作）：Apple Developer で iCloud コンテナ `iCloud.com.marugenyori.filmcamera` を作り、App ID に iCloud（CloudKit）を付けてコンテナを割り当てる。CloudKit Console で Development にレコード型 `AlbumPhoto` を作り、Production に公開（TestFlight は Production を使う）
   - **共有（CKShare）には本番のスキーマに `cloudkit.share` 型が要る**。開発環境で一度も共有を保存していないと作られず、TestFlight（本番）で招待を作ると「サーバーに拒否」になった。`Config/CloudKitSchema.ckdb`（AlbumPhoto・cloudkit.share・Users）を CloudKit Console の Import Schema で Development に読み込み、Deploy Schema Changes で本番に公開する
   - entitlements は `Config/FilmCamera.entitlements`、`CKSharingSupported` は `Config/FilmCamera-Info.plist`（生成される Info.plist に合流）
+- **隠しゲーム「ジュエル塗り絵」**（`FilmCamera/Game/JewelGameView.swift`）：上の段の黒い小窓（倍率の表示）を 1 秒長押しで開く。最後に撮った写真（なければ見本の絵、右上から写真も選べる）を縦 3:4・横 20 マスにし、k-means で 10 色程度にまとめて番号をふる。色を選んでなぞると番号が合うマスに宝石がはまる。完成したら宝石のモザイクを画像で共有できる。遊んでいる間はカメラを止める
 - **ライト**（`light`）：iPhone の本物のライト。写真は撮る瞬間にフラッシュを光らせ（`flashMode = .on`、連射のときは光らせない）、ビデオでは点けっぱなし（`torchMode`、`updateTorch()`）。フラッシュモードの「フラッシュ風の見え方」とは別もの
 - **前後同時撮影**：上のバーのボタンでオン。ふだんのセッションを止め、**カメラの入力も外してから** `DualCameraSession` に渡す（同じカメラを 2 つのセッションにつないだままだと映像が止まった）。戻すときは `DualCameraSession.stop()` で入力を外し、ふだんのセッションにつなぎ直す。2 秒たってもコマが届かなければ、メッセージを出してふだんの撮影に戻す。外と内の両方の映像・写真を受け取る。`LookOptions.front` に内カメラを渡すと、両方に同じフィルタをかけて内カメラを左上に角丸・白フチで重ねる（`pictureInPicture`）。2 台同時はカメラの負荷に上限があるため、写真は 4800万画素ではなくマルチカメラで使える設定の最大（1200万画素前後）。動画・ズーム・カメラ切り替え・多重露光・6分割（フィルムになる）・距離は使わない
 - 色ごとのトーンカーブは `CIColorPolynomial`（3次式）、にじみはぼかした像のスクリーン合成（`diffusion`）で作っている
