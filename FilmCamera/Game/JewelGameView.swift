@@ -4,8 +4,10 @@ import UIKit
 
 /// 隠しゲーム「ジュエル塗り絵」（Jewel Coloring のような、宝石を並べ替えて絵を完成させるパズル）。
 /// 宝石のドット絵の一部が、ちがう色の宝石とまざっている。マスのふちに見える色が、そのマスの正しい色。
-/// 色がちがう宝石をタップすると下のトレイに移り、空いたマスと同じ色の宝石がトレイにあれば、自動で飛んでいく。
-/// トレイがいっぱいになると負け（3 回までマスを増やせる）。全部正しい色になればレベルクリア
+/// 色がちがう宝石をタップすると、まわりにつながった同じ色のまちがった宝石ごと持ち上がる。
+/// 持ったまま、その色がふちに見えるマスをタップすると入れ替わる。
+/// 持っている宝石は下のトレイに入れておくこともでき（14 マス、3 回まで +7）、空いたマスに合う色は自動で飛んでいく。
+/// 全部正しい色になればレベルクリア
 struct JewelGameView: View {
     /// 写真で遊ぶときに使う写真（最後に撮った写真）
     let initialImage: UIImage?
@@ -28,13 +30,14 @@ struct JewelGameView: View {
                             .frame(width: cell * CGFloat(puzzle.columns), height: cell * CGFloat(puzzle.rows))
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
+                    handBar(puzzle)
                     trayView(puzzle)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
             if game.showConfetti { ConfettiView() }
-            if game.state != .playing { resultBanner }
+            if game.state == .cleared { resultBanner }
         }
         .preferredColorScheme(.light)
         .onAppear {
@@ -91,7 +94,9 @@ struct JewelGameView: View {
     // MARK: - 絵
 
     private func boardView(_ puzzle: JewelPuzzle, cell: CGFloat) -> some View {
-        ZStack(alignment: .topLeading) {
+        let heldColor = game.heldColor
+        let held = Set(game.held)
+        return ZStack(alignment: .topLeading) {
             Canvas { context, _ in
                 for index in puzzle.targets.indices {
                     let rect = CGRect(x: CGFloat(index % puzzle.columns) * cell, y: CGFloat(index / puzzle.columns) * cell,
@@ -99,7 +104,14 @@ struct JewelGameView: View {
                     let target = puzzle.palette[puzzle.targets[index]]
                     // マスの土台（正しい色を薄く）
                     context.fill(Path(rect), with: .color(target.opacity(0.35)))
-                    if let jewel = game.current[index], !game.flyingTo.contains(index) {
+                    if let color = heldColor, puzzle.targets[index] == color, game.current[index] != color {
+                        // 持っている色を入れられるマスを、白い枠で知らせる
+                        context.stroke(Path(roundedRect: rect.insetBy(dx: 1.5, dy: 1.5), cornerRadius: cell * 0.18),
+                                       with: .color(.white), lineWidth: max(1.5, cell * 0.08))
+                    }
+                    if held.contains(index) {
+                        // 持ち上げている宝石は、ほかのマスの上に重ねて最後に描く
+                    } else if let jewel = game.current[index], !game.flyingTo.contains(index) {
                         let correct = jewel == puzzle.targets[index]
                         // まちがった宝石は少し小さく置き、ふちに正しい色が見えるようにする
                         drawGem(in: rect.insetBy(dx: cell * (correct ? 0.04 : 0.16), dy: cell * (correct ? 0.04 : 0.16)),
@@ -110,6 +122,16 @@ struct JewelGameView: View {
                         context.fill(Path(ellipseIn: hole), with: .color(target.opacity(0.55)))
                         context.stroke(Path(ellipseIn: hole), with: .color(.black.opacity(0.12)), lineWidth: 1)
                     }
+                }
+                // 持ち上げている宝石：少し大きく浮かせて、光らせる
+                for index in game.held {
+                    guard let jewel = game.current[index] else { continue }
+                    let rect = CGRect(x: CGFloat(index % puzzle.columns) * cell, y: CGFloat(index / puzzle.columns) * cell,
+                                      width: cell, height: cell)
+                    context.fill(Path(ellipseIn: rect.insetBy(dx: -cell * 0.06, dy: -cell * 0.06)),
+                                 with: .color(.white.opacity(0.7)))
+                    drawGem(in: rect.insetBy(dx: -cell * 0.02, dy: -cell * 0.02).offsetBy(dx: 0, dy: -cell * 0.1),
+                            color: puzzle.palette[jewel], context: &context)
                 }
             }
             ForEach(game.flights) { flight in
@@ -130,6 +152,46 @@ struct JewelGameView: View {
             guard column >= 0, row >= 0, column < puzzle.columns, row < puzzle.rows else { return }
             game.tap(row * puzzle.columns + column)
         }
+    }
+
+    // MARK: - 持っている宝石
+
+    private func handBar(_ puzzle: JewelPuzzle) -> some View {
+        HStack(spacing: 10) {
+            if let color = game.heldColor {
+                GemShape(color: puzzle.palette[color])
+                    .frame(width: 30, height: 30)
+                Text("×\(game.held.count)")
+                    .font(.headline.weight(.heavy).monospacedDigit())
+                    .foregroundStyle(Color(red: 0.45, green: 0.42, blue: 0.7))
+                Text("白い枠のマスをタップで入れ替え")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Button {
+                    game.stack()
+                } label: {
+                    Label("トレイへ", systemImage: "tray.and.arrow.down.fill")
+                        .font(.footnote.weight(.heavy))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color(red: 1, green: 0.66, blue: 0.45)))
+                }
+            } else {
+                Image(systemName: "hand.tap.fill")
+                    .foregroundStyle(Color(red: 0.62, green: 0.62, blue: 0.85))
+                Text("色がちがう宝石をタップすると、まわりの同じ色ごと持ち上がります")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(minHeight: 40)
+        .padding(.horizontal, 12)
+        .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.7)))
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: game.held)
     }
 
     // MARK: - トレイ
@@ -160,6 +222,8 @@ struct JewelGameView: View {
             }
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 20).fill(Color(red: 1, green: 0.95, blue: 0.9)))
+            .contentShape(Rectangle())
+            .onTapGesture { game.stack() }    // 持っている宝石をトレイに入れる
             .shadow(color: Color(red: 0.85, green: 0.75, blue: 0.65), radius: 0, x: 0, y: 5)
             HStack {
                 Text("トレイ \(game.tray.count)/\(game.capacity)")
@@ -185,28 +249,19 @@ struct JewelGameView: View {
 
     private var resultBanner: some View {
         VStack(spacing: 14) {
-            Text(game.state == .cleared ? "完成！" : "トレイがいっぱい！")
+            Text("完成！")
                 .font(.largeTitle.weight(.heavy))
-                .foregroundStyle(game.state == .cleared ? Color.orange : Color.purple)
-            Text(game.state == .cleared ? "きれいな宝石の絵ができました" : "マスを増やすか、やり直そう")
+                .foregroundStyle(Color.orange)
+            Text("きれいな宝石の絵ができました")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            if game.state == .cleared {
-                if let image = game.finishedImage {
-                    ShareLink(item: Image(uiImage: image), preview: SharePreview("ジュエル塗り絵", image: Image(uiImage: image))) {
-                        Label("保存・共有", systemImage: "square.and.arrow.up")
-                    }
+            if let image = game.finishedImage {
+                ShareLink(item: Image(uiImage: image), preview: SharePreview("ジュエル塗り絵", image: Image(uiImage: image))) {
+                    Label("保存・共有", systemImage: "square.and.arrow.up")
                 }
-                Button(game.isPhotoMode ? "もう一度" : "次のレベルへ") { game.nextLevel() }
-                    .buttonStyle(.borderedProminent).tint(.green)
-            } else {
-                if game.extraUses > 0 {
-                    Button("+7 マスで続ける") { game.addSlots() }
-                        .buttonStyle(.borderedProminent).tint(.green)
-                }
-                Button("やり直す") { game.restart() }
-                    .buttonStyle(.bordered)
             }
+            Button(game.isPhotoMode ? "もう一度" : "次のレベルへ") { game.nextLevel() }
+                .buttonStyle(.borderedProminent).tint(.green)
         }
         .padding(28)
         .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(.white))
@@ -262,7 +317,7 @@ private struct GemShape: View {
     }
 }
 
-/// トレイとマスのあいだを飛ぶ宝石
+/// マスどうし、またはトレイとマスのあいだを飛ぶ宝石
 private struct FlyingGem: View {
     let flight: JewelGame.Flight
     let color: Color
@@ -271,13 +326,15 @@ private struct FlyingGem: View {
     let boardHeight: CGFloat
     @State private var arrived = false
 
+    private func point(_ index: Int) -> CGPoint {
+        CGPoint(x: (CGFloat(index % columns) + 0.5) * cell, y: (CGFloat(index / columns) + 0.5) * cell)
+    }
+
     var body: some View {
-        let cellPoint = CGPoint(x: (CGFloat(flight.cell % columns) + 0.5) * cell,
-                                y: (CGFloat(flight.cell / columns) + 0.5) * cell)
         // トレイは盤の下のほうにあるとみなす
         let trayPoint = CGPoint(x: cell * CGFloat(columns) / 2, y: boardHeight + 120)
-        let from = flight.toTray ? cellPoint : trayPoint
-        let to = flight.toTray ? trayPoint : cellPoint
+        let from = flight.from.map(point) ?? trayPoint
+        let to = flight.to.map(point) ?? trayPoint
         GemShape(color: color)
             .frame(width: cell * 0.92, height: cell * 0.92)
             .scaleEffect(arrived ? 1 : 1.4)
@@ -291,18 +348,21 @@ private struct FlyingGem: View {
 
 @MainActor
 final class JewelGame: ObservableObject {
-    enum State { case playing, cleared, full }
+    enum State { case playing, cleared }
 
+    /// 宝石が飛ぶ動き（nil はトレイ）
     struct Flight: Identifiable {
         let id = UUID()
-        let cell: Int
+        let from: Int?
+        let to: Int?
         let color: Int
-        let toTray: Bool
     }
 
     @Published private(set) var puzzle: JewelPuzzle?
     /// 各マスにいま置いてある宝石の色（nil = 空き）
     @Published private(set) var current: [Int?] = []
+    /// 持ち上げている宝石のマス（タップしたマスと、つながった同じ色のまちがった宝石）
+    @Published private(set) var held: [Int] = []
     @Published private(set) var tray: [Int] = []
     @Published private(set) var capacity = 14
     @Published private(set) var extraUses = 3
@@ -321,6 +381,9 @@ final class JewelGame: ObservableObject {
     /// 続けて宝石がはまった数（テンポよくはまるほど音が高くなる）
     private var streak = 0
     private var lastPlaced = Date.distantPast
+
+    /// 持っている宝石の色
+    var heldColor: Int? { held.first.flatMap { current[$0] } }
 
     init() {
         level = max(1, UserDefaults.standard.integer(forKey: "jewelLevel"))
@@ -368,6 +431,7 @@ final class JewelGame: ObservableObject {
         let shuffled = chosen.map { jewels[$0] }.shuffled()
         for (cell, jewel) in zip(chosen, shuffled) { jewels[cell] = jewel }
         current = jewels
+        held = []
         tray = []
         capacity = 14
         extraUses = 3
@@ -378,38 +442,104 @@ final class JewelGame: ObservableObject {
         floats = []
         showConfetti = false
         streak = 0
-        state = jewels.enumerated().allSatisfy({ $0.element == made.targets[$0.offset] }) ? .cleared : .playing
+        state = isComplete ? .cleared : .playing
     }
 
     func addSlots() {
         guard extraUses > 0 else { return }
         extraUses -= 1
         capacity += 7
-        if state == .full { state = .playing }
         GameAudio.shared.play(.special)
     }
 
-    /// マスをタップ：色がちがう宝石ならトレイへ移し、空いたマスに合う宝石をトレイから飛ばす
+    /// マスをタップ。
+    /// 宝石を持っていて、そのマスが持っている色の場所なら入れ替える。
+    /// そうでなければ、色がちがう宝石と、つながった同じ色のまちがった宝石をまとめて持ち上げる
     func tap(_ index: Int) {
-        guard state == .playing, let puzzle, current.indices.contains(index),
-              let jewel = current[index] else { return }
-        if jewel == puzzle.targets[index] {
+        guard state == .playing, let puzzle, current.indices.contains(index), !flyingTo.contains(index) else { return }
+        if let color = heldColor {
+            if held.contains(index) {
+                held = []                 // もう一度さわると置く
+                GameAudio.shared.tick()
+                return
+            }
+            if puzzle.targets[index] == color && current[index] != color {
+                swap(into: index, color: color)
+                return
+            }
+        }
+        guard let jewel = current[index], jewel != puzzle.targets[index] else {
+            if !held.isEmpty { held = [] }
             GameAudio.shared.tick()       // 正しい宝石はそのまま
             return
         }
-        guard tray.count < capacity else {
-            state = .full
+        held = connected(from: index) { [current] cell in
+            current[cell] == jewel && puzzle.targets[cell] != jewel
+        }
+        GameAudio.shared.play(.tap)
+    }
+
+    /// 持っている宝石を、タップしたマスのまわりの同じ色の場所と入れ替える
+    private func swap(into index: Int, color: Int) {
+        guard let puzzle else { return }
+        let spots = connected(from: index) { [current] cell in
+            puzzle.targets[cell] == color && current[cell] != color
+        }
+        let pairs = Array(zip(held, spots))
+        var landed: [Int] = []
+        for (from, to) in pairs {
+            let displaced = current[to]
+            current[to] = color
+            current[from] = displaced
+            flyingTo.insert(to)
+            launch(Flight(from: from, to: to, color: color))
+            landed.append(to)
+            if let displaced {
+                flyingTo.insert(from)
+                launch(Flight(from: to, to: from, color: displaced))
+                landed.append(from)
+            }
+        }
+        held.removeFirst(pairs.count)
+        if heldColor != color { held = [] }
+        GameAudio.shared.play(.swap)
+        Task {
+            try? await Task.sleep(for: .milliseconds(320))
+            // 正しい場所にはまった宝石を、ひとつずつテンポよくはじけさせる
+            for cell in landed {
+                flyingTo.remove(cell)
+                if let jewel = current[cell], jewel == puzzle.targets[cell] {
+                    landedEffects(at: cell, color: jewel)
+                    try? await Task.sleep(for: .milliseconds(60))
+                }
+            }
+            await fillFromTray()
+        }
+    }
+
+    /// 持っている宝石をトレイに入れる（空いたマスに合う色がトレイにあれば、自動で飛んでいく）
+    func stack() {
+        guard state == .playing, let color = heldColor else { return }
+        let room = capacity - tray.count
+        guard room > 0 else {
             GameAudio.shared.play(.invalid)
+            if let puzzle {
+                addFloat(FloatingText(text: "トレイがいっぱい", x: CGFloat(puzzle.columns) / 2,
+                                      y: CGFloat(puzzle.rows) - 0.5, color: .purple))
+            }
             return
         }
-        current[index] = nil
+        let moving = Array(held.prefix(room))
+        held = []
+        for cell in moving {
+            current[cell] = nil
+            launch(Flight(from: cell, to: nil, color: color))
+        }
         GameAudio.shared.play(.tap)
-        launch(Flight(cell: index, color: jewel, toTray: true))
         Task {
             try? await Task.sleep(for: .milliseconds(300))
-            tray.append(jewel)
+            tray.append(contentsOf: moving.map { _ in color })
             await fillFromTray()
-            if tray.count >= capacity && !canProgress() { state = .full; GameAudio.shared.play(.lose) }
         }
     }
 
@@ -425,7 +555,7 @@ final class JewelGame: ObservableObject {
                 tray.remove(at: slot)
                 flyingTo.insert(cell)
                 current[cell] = need
-                launch(Flight(cell: cell, color: need, toTray: false))
+                launch(Flight(from: nil, to: cell, color: need))
                 moved = true
                 try? await Task.sleep(for: .milliseconds(90))
                 let landed = cell
@@ -437,12 +567,42 @@ final class JewelGame: ObservableObject {
             }
         }
         try? await Task.sleep(for: .milliseconds(340))
-        if current.enumerated().allSatisfy({ $0.element == puzzle.targets[$0.offset] }) && state == .playing {
+        if isComplete && state == .playing {
             state = .cleared
+            held = []
             showConfetti = true
             finishedImage = JewelBoardImage.render(puzzle)
             GameAudio.shared.play(.complete)
         }
+    }
+
+    private var isComplete: Bool {
+        guard let puzzle else { return false }
+        return current.enumerated().allSatisfy { $0.element == puzzle.targets[$0.offset] }
+    }
+
+    /// start から上下左右につながっていて、条件に合うマス（start に近い順）
+    private func connected(from start: Int, where matches: (Int) -> Bool) -> [Int] {
+        guard let puzzle, matches(start) else { return [] }
+        var result = [start]
+        var seen: Set<Int> = [start]
+        var next = 0
+        while next < result.count {
+            let cell = result[next]
+            next += 1
+            let row = cell / puzzle.columns
+            let column = cell % puzzle.columns
+            var around: [Int] = []
+            if row > 0 { around.append(cell - puzzle.columns) }
+            if row < puzzle.rows - 1 { around.append(cell + puzzle.columns) }
+            if column > 0 { around.append(cell - 1) }
+            if column < puzzle.columns - 1 { around.append(cell + 1) }
+            for neighbor in around where !seen.contains(neighbor) && !flyingTo.contains(neighbor) && matches(neighbor) {
+                seen.insert(neighbor)
+                result.append(neighbor)
+            }
+        }
+        return result
     }
 
     /// 宝石がはまったときの演出：粒がはじけ、テンポよく続くと音が上がり、1 色そろうと大きくお祝い
@@ -491,12 +651,6 @@ final class JewelGame: ObservableObject {
             try? await Task.sleep(for: .milliseconds(1100))
             floats.removeAll { $0.id == id }
         }
-    }
-
-    /// トレイがいっぱいでも、まだ進められるか（空きマスに合う宝石がトレイにあるなど）
-    private func canProgress() -> Bool {
-        guard let puzzle else { return false }
-        return current.indices.contains { current[$0] == nil && tray.contains(puzzle.targets[$0]) }
     }
 
     private func launch(_ flight: Flight) {
