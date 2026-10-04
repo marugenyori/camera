@@ -6,6 +6,7 @@ enum LookMode: String, CaseIterable, Identifiable {
     case film
     case flash
     case warmFlash
+    case compact
     case iwai
     case cross
     case harinezumi
@@ -20,6 +21,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .film: return "フィルム"
         case .flash: return "フラッシュ"
         case .warmFlash: return "暖フラッシュ"
+        case .compact: return "コンデジ"
         case .iwai: return "岩井俊二風"
         case .cross: return "クロス"
         case .harinezumi: return "ハリネズミ"
@@ -39,6 +41,7 @@ enum LookMode: String, CaseIterable, Identifiable {
         case .warmFlash: return "暖かい色のフラッシュ写真"
         case .iwai: return "澄んだ青空・紺の影・にじむ光"
         case .cross: return "暖色と寒色がぶつかる、濃く硬い色"
+        case .compact: return "2000年代のコンデジ：飛びやすい白・鮮やかな青・カリッとした輪郭"
         case .harinezumi: return "トイデジ風：白飛び・マゼンタ・どぎつい緑"
         case .warmHarinezumi: return "トイデジ風：琥珀色・濃い青空・暗い四隅"
         case .double: return "何枚かを 1 枚に重ねる"
@@ -102,7 +105,7 @@ enum ContactLayout: String, CaseIterable, Identifiable {
     var title: String { "\(columns)×\(rows)" }
 
     /// 分割で選べるフィルタ（重ねたり分割したりするモードは除く）
-    static let selectableModes: [LookMode] = [.film, .flash, .warmFlash, .iwai, .cross, .harinezumi, .warmHarinezumi]
+    static let selectableModes: [LookMode] = [.film, .flash, .warmFlash, .compact, .iwai, .cross, .harinezumi, .warmHarinezumi]
 
     static let defaultModes: [LookMode] = [.film, .flash, .iwai, .cross, .harinezumi, .warmHarinezumi,
                                            .warmFlash, .film, .iwai]

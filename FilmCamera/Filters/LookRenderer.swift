@@ -33,6 +33,7 @@ enum LookRenderer {
         case .film: out = film(image, seed: options.grainSeed)
         case .flash: out = flash(image, depth: options.depth, subject: options.subjectDistance)
         case .warmFlash: out = flash(image, depth: options.depth, subject: options.subjectDistance, warm: true)
+        case .compact: out = compact(image)
         case .iwai: out = iwai(image, seed: options.grainSeed)
         case .cross: out = cross(image)
         case .harinezumi: out = harinezumi(image)
@@ -382,6 +383,41 @@ enum LookRenderer {
         unsharp.intensity = 0.8
         let crisp = (unsharp.outputImage ?? toned).cropped(to: extent)
         return toLinear(vignette(crisp, strength: 0.15, inner: 0.45))
+    }
+
+    /// 2000年代の CCD のコンデジの写り（持ち主が見せたファミレスの写真が目標）。
+    /// 白は少し青みのある素っ気ない白で、照明や窓などの明るい所はすぐ真っ白に飛ぶ
+    /// （ダイナミックレンジが狭い）。青がくっきり鮮やかに出て、影はつぶれすぎない。
+    /// 輪郭はデジタルらしくカリッと強調するが、粒子やノイズは足さない（画質は落とさない）
+    private static func compact(_ image: CIImage) -> CIImage {
+        let extent = image.extent
+
+        let controls = CIFilter.colorControls()
+        controls.inputImage = toSRGB(exposure(image, ev: 0.25))
+        controls.saturation = 1.1
+        controls.contrast = 1.06
+
+        // 中間はほぼそのまま、明るい所は早めに白へ張り付く
+        let clipped = toneCurve(controls.outputImage, [
+            (0.00, 0.02), (0.25, 0.23), (0.55, 0.58), (0.82, 0.96), (1.00, 1.00),
+        ])
+        // 少し寒色寄りの白（赤をわずかに引き、青を中間で持ち上げる）
+        let toned = polynomial(clipped,
+                               r: (0.00, 0.97, 0.03, -0.01),
+                               g: (0.00, 1.00, 0.00, 0.00),
+                               b: (0.01, 1.06, 0.00, -0.06))
+        // 色の薄い所ほど彩度を上げ、青い服や看板の色をはっきりさせる
+        let vibrance = CIFilter.vibrance()
+        vibrance.inputImage = toned
+        vibrance.amount = 0.3
+
+        // コンデジの画像処理らしい、細かく硬めの輪郭強調
+        let unsharp = CIFilter.unsharpMask()
+        unsharp.inputImage = vibrance.outputImage ?? toned
+        unsharp.radius = Float(max(1, longSide(extent) / 2000) * 1.5)
+        unsharp.intensity = 0.6
+        let crisp = (unsharp.outputImage ?? toned).cropped(to: extent)
+        return toLinear(crisp)
     }
 
     /// ハリネズミのもう一つの写り（持ち主が見せたお城の写真が目標）。
