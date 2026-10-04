@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // 恋愛アドベンチャーの絵（立ち絵と背景）。画像ファイルは持たず、図形で描く
 
@@ -73,13 +74,20 @@ struct HeroinePortrait: View {
     let face: Face
 
     var body: some View {
-        Canvas { context, size in
-            let scale = min(size.width / 300, size.height / 400)
-            context.translateBy(x: (size.width - 300 * scale) / 2, y: size.height - 400 * scale)
-            context.scaleBy(x: scale, y: scale)
-            draw(in: &context)
+        if let image = RomanceImages.sprite(heroine, face) {
+            // 入れた画像があればそれを使う（背景が透明の PNG）
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+        } else {
+            Canvas { context, size in
+                let scale = min(size.width / 300, size.height / 400)
+                context.translateBy(x: (size.width - 300 * scale) / 2, y: size.height - 400 * scale)
+                context.scaleBy(x: scale, y: scale)
+                draw(in: &context)
+            }
+            .aspectRatio(3.0 / 4.0, contentMode: .fit)
         }
-        .aspectRatio(3.0 / 4.0, contentMode: .fit)
     }
 
     private func draw(in context: inout GraphicsContext) {
@@ -446,8 +454,18 @@ struct BackdropView: View {
 
     var body: some View {
         ZStack {
-            Canvas { context, size in
-                draw(size: size, in: &context)
+            if let image = RomanceImages.background(backdrop) {
+                GeometryReader { geo in
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                }
+            } else {
+                Canvas { context, size in
+                    draw(size: size, in: &context)
+                }
             }
             if [Backdrop.street, .sakuraHill, .courtyard].contains(backdrop) {
                 PetalsView()
@@ -768,5 +786,64 @@ private struct PetalsView: View {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+// MARK: - 入れた画像
+
+/// 恋愛アドベンチャーの画像（立ち絵・背景・イベント CG）。
+/// `FilmCamera/Game/Romance/Images/` に決まった名前の PNG（または JPG）を置くと、図形の絵の代わりに使う。
+/// 名前は docs/ROMANCE_IMAGES.md を参照。ない画像は図形の絵のまま
+enum RomanceImages {
+    private static let cache = NSCache<NSString, UIImage>()
+    private static var missing: Set<String> = []
+
+    static func image(_ name: String) -> UIImage? {
+        if let cached = cache.object(forKey: name as NSString) { return cached }
+        if missing.contains(name) { return nil }
+        let found = UIImage(named: name)
+            ?? ["png", "jpg", "jpeg"].lazy.compactMap { ext in
+                Bundle.main.path(forResource: name, ofType: ext).flatMap(UIImage.init(contentsOfFile:))
+            }.first
+        if let found {
+            cache.setObject(found, forKey: name as NSString)
+        } else {
+            missing.insert(name)
+        }
+        return found
+    }
+
+    /// 立ち絵。その表情がなければ、ふつうの顔の画像を使う
+    static func sprite(_ heroine: Heroine, _ face: Face) -> UIImage? {
+        image("\(heroine.rawValue)_\(face.rawValue)") ?? image("\(heroine.rawValue)_normal")
+    }
+
+    static func background(_ backdrop: Backdrop) -> UIImage? {
+        guard backdrop != .black else { return nil }
+        return image("bg_" + backdrop.fileName)
+    }
+
+    static func cg(_ name: String) -> UIImage? { image("cg_" + name) }
+}
+
+extension Backdrop {
+    /// 画像のファイル名（bg_ の後ろ）
+    var fileName: String {
+        switch self {
+        case .black: return "black"
+        case .roomMorning: return "room_morning"
+        case .street: return "street"
+        case .classroom: return "classroom"
+        case .classroomEvening: return "classroom_evening"
+        case .library: return "library"
+        case .libraryEvening: return "library_evening"
+        case .rooftop: return "rooftop"
+        case .rooftopSunset: return "rooftop_sunset"
+        case .rooftopNight: return "rooftop_night"
+        case .clubroom: return "clubroom"
+        case .courtyard: return "courtyard"
+        case .shopping: return "shopping"
+        case .sakuraHill: return "sakura_hill"
+        }
     }
 }

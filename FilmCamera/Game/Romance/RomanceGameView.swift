@@ -8,6 +8,7 @@ struct RomanceGameView: View {
     @StateObject private var game = RomanceGame()
     @State private var showingLog = false
     @State private var confirmingTitle = false
+    @State private var viewingCG: String?
 
     var body: some View {
         ZStack {
@@ -30,6 +31,15 @@ struct RomanceGameView: View {
         .onAppear { GameAudio.shared.playMusic(.school) }
         .onDisappear { GameAudio.shared.stop() }
         .sheet(isPresented: $showingLog) { logSheet }
+        .fullScreenCover(item: Binding(get: { viewingCG.map(CGName.init) }, set: { viewingCG = $0?.id })) { item in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let image = RomanceImages.cg(item.id) {
+                    Image(uiImage: image).resizable().scaledToFit()
+                }
+            }
+            .onTapGesture { viewingCG = nil }
+        }
         .confirmationDialog("タイトルに戻りますか？", isPresented: $confirmingTitle, titleVisibility: .visible) {
             Button("タイトルへ") { game.toTitle() }
         } message: {
@@ -41,7 +51,15 @@ struct RomanceGameView: View {
 
     private var titleScreen: some View {
         ZStack {
-            BackdropView(backdrop: .sakuraHill)
+            if let image = RomanceImages.image("title") {
+                GeometryReader { geo in
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height).clipped()
+                }
+                .ignoresSafeArea()
+            } else {
+                BackdropView(backdrop: .sakuraHill)
+            }
             VStack {
                 Spacer()
                 HStack(alignment: .bottom, spacing: -40) {
@@ -121,6 +139,30 @@ struct RomanceGameView: View {
                         .padding(12)
                         .background(RoundedRectangle(cornerRadius: 14).fill(.black.opacity(0.4)))
                     }
+                    let cgs = RomanceGame.allCGs.filter { RomanceImages.cg($0) != nil }
+                    if !cgs.isEmpty {
+                        Text("CG モード").font(.headline)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 8) {
+                            ForEach(cgs, id: \.self) { name in
+                                let seen = game.cgsSeen.contains(name)
+                                Button {
+                                    if seen { viewingCG = name }
+                                } label: {
+                                    ZStack {
+                                        Color.black.opacity(0.5)
+                                        if seen, let image = RomanceImages.cg(name) {
+                                            Image(uiImage: image).resizable().scaledToFill()
+                                        } else {
+                                            Image(systemName: "lock.fill").foregroundStyle(.white.opacity(0.5))
+                                        }
+                                    }
+                                    .frame(height: 130)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
                     let normal = RomanceScript.ending(nil).title
                     Label(game.endingsSeen.contains(normal) ? normal : "？？？", systemImage: "sparkles")
                         .font(.footnote.weight(.bold))
@@ -161,6 +203,17 @@ struct RomanceGameView: View {
                         .transition(.opacity)
                         .allowsHitTesting(false)
                 }
+                if let name = game.cg, let image = RomanceImages.cg(name) {
+                    // イベント CG は画面いっぱいに（立ち絵の上に重ねる）
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
                 FlashView(trigger: game.flash)
                 if game.phase == .scene {
                     VStack(spacing: 0) {
@@ -181,6 +234,7 @@ struct RomanceGameView: View {
             .onTapGesture { if game.phase == .scene { game.tap() } }
             .animation(.easeInOut(duration: 0.4), value: game.backdrop)
             .animation(.easeOut(duration: 0.25), value: game.heroine)
+            .animation(.easeInOut(duration: 0.6), value: game.cg)
         }
     }
 
@@ -440,6 +494,9 @@ private struct FlashView: View {
 
 @MainActor
 final class RomanceGame: ObservableObject {
+    /// シナリオに出てくるイベント CG の名前（cg_〇〇.png）
+    static let allCGs = ["bump", "hinata_sunset", "shizuku_stars", "rin_photo", "hinata_end", "shizuku_end", "rin_end"]
+
     enum Phase: Equatable {
         case title, gallery, dayCard(String), scene, map, theEnd(String)
     }
@@ -467,6 +524,10 @@ final class RomanceGame: ObservableObject {
     @Published private(set) var auto = false
     @Published private(set) var skipping = false
     @Published private(set) var flash = 0
+    /// 表示中のイベント CG（画像があるときだけ）
+    @Published private(set) var cg: String?
+    /// 見たイベント CG（おもいでの CG モードに出す）
+    @Published private(set) var cgsSeen: Set<String>
     @Published private(set) var day = 1
     @Published private(set) var endingsSeen: Set<String>
     private var love: [Heroine: Int] = [:]
@@ -478,6 +539,7 @@ final class RomanceGame: ObservableObject {
 
     init() {
         endingsSeen = Set(UserDefaults.standard.stringArray(forKey: "romanceEndings") ?? [])
+        cgsSeen = Set(UserDefaults.standard.stringArray(forKey: "romanceCGs") ?? [])
     }
 
     var hasSave: Bool { UserDefaults.standard.integer(forKey: "romanceDay") > 0 }
@@ -508,6 +570,7 @@ final class RomanceGame: ObservableObject {
         completion = nil
         choices = nil
         heroine = nil
+        cg = nil
         auto = false
         skipping = false
         phase = .title
@@ -522,6 +585,7 @@ final class RomanceGame: ObservableObject {
         stopTimers()
         heroine = nil
         choices = nil
+        cg = nil
         GameAudio.shared.stopMusic()
         let title = RomanceScript.dayTitle(day)
         phase = .dayCard(title)
@@ -602,6 +666,16 @@ final class RomanceGame: ObservableObject {
             case .flash:
                 flash += 1
                 GameAudio.shared.play(.invalid)
+            case .cg(let name):
+                if let name, RomanceImages.cg(name) != nil {
+                    cg = name
+                    if !cgsSeen.contains(name) {
+                        cgsSeen.insert(name)
+                        UserDefaults.standard.set(Array(cgsSeen), forKey: "romanceCGs")
+                    }
+                } else {
+                    cg = nil
+                }
             case .line(let speaker, let face, let text):
                 if case .heroine(let heroine) = speaker {
                     self.heroine = heroine
@@ -701,4 +775,8 @@ final class RomanceGame: ObservableObject {
         typing = nil
         waiter = nil
     }
+}
+
+private struct CGName: Identifiable {
+    let id: String
 }

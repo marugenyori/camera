@@ -20,6 +20,8 @@ indirect enum Step {
     case love(Heroine, Int)
     case music(GameAudio.Song)
     case flash
+    /// 一枚絵（イベント CG）を出す・消す。画像がなければ何もしない
+    case cg(String?)
 }
 
 struct Option {
@@ -143,7 +145,7 @@ enum RomanceScript {
         h(.hinata, .blush, "く、腐れ縁って言わないでよ……"),
         .hide,
         n("角を曲がった、そのとき——"),
-        .flash,
+        .flash, .cg("bump"),
         n("「きゃっ！？」"),
         n("誰かと思いきりぶつかった。"),
         h(.rin, .surprised, "いったぁ……ちょっと！　どこ見て歩いてるのよ！"),
@@ -155,7 +157,7 @@ enum RomanceScript {
                 h(.rin, .angry, "なっ……！　し、失礼な先輩ね！")),
         ]),
         h(.rin, .angry, "……覚えてなさいよ！"),
-        .hide,
+        .cg(nil), .hide,
         n("女の子は、ぷんぷんしながら走り去っていった。"),
         h(.hinata, .surprised, "今の子、一年生かな？　カメラ持ってたね"),
         .hide, .bg(.classroom),
@@ -258,7 +260,9 @@ enum RomanceScript {
         ],
         [
             .music(.love), .bg(.rooftopSunset),
+            .cg("hinata_sunset"),
             n("夕焼けの屋上。ひなたはフェンスにもたれて、遠くを見ていた。"),
+            .cg(nil),
             h(.hinata, .normal, "明日、桜まつりだね"),
             h(.hinata, .shy, "……ねえ、ユウちゃん。小さいころ、桜の丘で約束したの、覚えてる？"),
             .choice([
@@ -308,7 +312,9 @@ enum RomanceScript {
         ],
         [
             .music(.love), .bg(.rooftopNight),
+            .cg("shizuku_stars"),
             n("日が暮れた屋上で、しずくが空を見上げていた。"),
+            .cg(nil),
             h(.shizuku, .surprised, "……あなた。どうしてここに"),
             me("星、見てるって言ってたから"),
             h(.shizuku, .shy, "……覚えてたの"),
@@ -408,7 +414,9 @@ enum RomanceScript {
         [
             .music(.love), .bg(.clubroom),
             h(.rin, .normal, "現像、できたよ"),
+            .cg("rin_photo"),
             n("写真には、中庭で笑う自分が写っていた。"),
+            .cg(nil),
             h(.rin, .shy, "……この一枚、すごくよく撮れたの。先輩、いい顔してる"),
             h(.rin, .blush, "明日の桜まつり……撮影、付き合ってくれない？　二人で"),
             .choice([
@@ -435,6 +443,7 @@ enum RomanceScript {
                 h(.hinata, .laugh, "ふふ、ユウちゃん、真っ赤"),
                 h(.hinata, .blush, "わたしね、あの日からずっと……ユウちゃんのことが好き"),
                 h(.hinata, .shy, "幼なじみじゃなくて……わたしを、ユウちゃんの彼女にしてくれますか？"),
+                .cg("hinata_end"),
                 me("……ああ。俺も、ひなたが好きだ"),
                 h(.hinata, .sad, "……うれしくて、泣いちゃいそう"),
                 h(.hinata, .laugh, "……ううん、笑う！　だって、今いちばん幸せだもん！"),
@@ -450,6 +459,7 @@ enum RomanceScript {
                 h(.shizuku, .shy, "わたし、ずっと本の中の世界のほうが好きだった。現実は、静かすぎて、さみしくて"),
                 h(.shizuku, .blush, "でも、あなたと話すようになって……物語の続きが、知りたくなった"),
                 h(.shizuku, .blush, "……好き。あなたのことが"),
+                .cg("shizuku_end"),
                 me("俺も、しずくが好きだ"),
                 h(.shizuku, .smile, "……ありがとう。これからのお話、二人で読んでいこう"),
                 .hide,
@@ -464,6 +474,7 @@ enum RomanceScript {
                 n("リンが、カメラをこちらに向けた。"),
                 h(.rin, .blush, "わたしがいちばん撮りたいのは……先輩なの"),
                 h(.rin, .shy, "……すき。先輩のことが、すき。……返事、現像するまで待てないんだけど"),
+                .cg("rin_end"),
                 me("俺も、リンが好きだよ"),
                 h(.rin, .blush, "……っ！　……い、今の顔、絶対撮ったからね！"),
                 .hide,
