@@ -211,7 +211,7 @@ struct RomanceGameView: View {
     private var speakerName: String? {
         switch game.speaker {
         case .narration: return nil
-        case .me: return RomanceScript.me
+        case .me: return RomanceScript.heroName
         case .heroine(let heroine): return heroine.name
         }
     }
@@ -612,7 +612,7 @@ final class RomanceGame: ObservableObject {
                 let name: String?
                 switch speaker {
                 case .narration: name = nil
-                case .me: name = RomanceScript.me
+                case .me: name = RomanceScript.heroName
                 case .heroine(let heroine): name = heroine.name
                 }
                 log.append(LogLine(name: name, text: text))

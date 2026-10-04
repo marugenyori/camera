@@ -45,7 +45,7 @@ private func opt(_ text: String, _ heroine: Heroine, _ love: Int, _ steps: Step.
 enum RomanceScript {
     static let title = "放課後メモリーズ"
     static let subtitle = "〜桜色のアルバム〜"
-    static let me = "ユウ"
+    static let heroName = "ユウ"
     static let days = 5
     /// エンディングに入るのに必要な好感度
     static let endingLove = 8
