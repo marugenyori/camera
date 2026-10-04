@@ -8,7 +8,7 @@ struct GameHubView: View {
     @State private var playing: Game?
 
     enum Game: String, Identifiable {
-        case jewel, candy
+        case jewel, candy, romance
         var id: String { rawValue }
     }
 
@@ -23,6 +23,8 @@ struct GameHubView: View {
                            systemImage: "diamond.fill", colors: [.cyan, .purple]) { playing = .jewel }
                 gameButton(title: "キャンディ・マッチ", subtitle: "3 つそろえて消す、特別なキャンディつき",
                            systemImage: "heart.fill", colors: [.pink, .orange]) { playing = .candy }
+                gameButton(title: "放課後メモリーズ", subtitle: "2000年代のギャルゲー風・恋愛アドベンチャー",
+                           systemImage: "envelope.open.fill", colors: [.purple, .pink]) { playing = .romance }
                 Spacer()
                 Button("カメラに戻る") { dismiss() }
                     .padding(.bottom, 24)
@@ -34,6 +36,7 @@ struct GameHubView: View {
             switch game {
             case .jewel: JewelGameView(initialImage: initialImage)
             case .candy: CandyGameView()
+            case .romance: RomanceGameView()
             }
         }
     }

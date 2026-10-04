@@ -86,7 +86,7 @@ final class GameAudio {
     // MARK: - BGM
 
     /// BGM の曲（ノリのいいキャンディ風／きらきらした塗り絵風）
-    enum Song { case candy, jewel }
+    enum Song { case candy, jewel, school, love }
 
     func playMusic(_ song: Song) {
         start()
@@ -337,6 +337,26 @@ private struct Sequencer {
                 [76, -1, 81, -1, 84, -1, 81, 76, -1, 72, 76, -1, 81, -1, -1, -1],
                 [77, -1, 81, -1, 84, -1, 86, 84, -1, 81, 79, -1, 77, -1, 76, -1],
             ]
+        case .school:
+            // 恋愛アドベンチャーの日常曲：C → Am → F → G、テンポ 100 の明るい曲
+            stepLength = Int(sampleRate * 60 / 100 / 4)
+            chords = [[48, 60, 64, 67], [45, 57, 60, 64], [41, 57, 60, 65], [43, 55, 59, 62]]
+            melody = [
+                [72, -1, 74, -1, 76, -1, 79, -1, 76, -1, 74, -1, 72, -1, -1, -1],
+                [69, -1, 72, -1, 76, -1, 72, -1, 74, -1, 72, -1, 69, -1, -1, -1],
+                [65, -1, 69, -1, 72, -1, 77, -1, 76, -1, 74, -1, 72, -1, 69, -1],
+                [67, -1, 71, -1, 74, -1, 79, -1, 77, -1, 76, -1, 74, -1, -1, -1],
+            ]
+        case .love:
+            // 告白の曲：F → G → Em → Am、テンポ 76、ドラムなし
+            stepLength = Int(sampleRate * 60 / 76 / 4)
+            chords = [[41, 57, 60, 65], [43, 55, 59, 62], [40, 55, 59, 64], [45, 57, 60, 64]]
+            melody = [
+                [77, -1, -1, -1, 76, -1, 72, -1, 74, -1, -1, -1, 72, -1, -1, -1],
+                [74, -1, -1, -1, 72, -1, 71, -1, 67, -1, -1, -1, -1, -1, -1, -1],
+                [71, -1, -1, -1, 72, -1, 74, -1, 76, -1, -1, -1, 79, -1, -1, -1],
+                [76, -1, -1, -1, 74, -1, 72, -1, 72, -1, -1, -1, -1, -1, -1, -1],
+            ]
         case .jewel:
             // Fmaj7 → Em7 → Dm7 → Cmaj7、テンポ 100 のゆったりしたビート
             stepLength = Int(sampleRate * 60 / 100 / 4)
@@ -371,13 +391,14 @@ private struct Sequencer {
         let stepSeconds = Double(stepLength) / sampleRate
         var out: [Voice] = []
         let candy = song == .candy
+        let drums = song != .love
 
         // ドラム
-        if candy ? s % 4 == 0 : (s == 0 || s == 8 || s == 11) {
+        if drums, candy ? s % 4 == 0 : (s == 0 || s == 8 || s == 11) {
             out.append(Voice(sr, f0: 220, f1: 90, length: 0.07, wave: .sine, volume: candy ? 0.22 : 0.14, decay: 4))
             out.append(Voice(sr, f0: 0, length: 0.012, wave: .noise, volume: 0.15, decay: 6, highPass: true))
         }
-        if s == 4 || s == 12 {
+        if drums, s == 4 || s == 12 {
             if candy {
                 out.append(Voice(sr, f0: 0, length: 0.18, wave: .noise, volume: 0.3, decay: 4, filter: 0.5, highPass: true))
                 out.append(Voice(sr, f0: 240, f1: 180, length: 0.09, wave: .triangle, volume: 0.18))
@@ -385,7 +406,7 @@ private struct Sequencer {
                 out.append(Voice(sr, f0: 900, length: 0.05, wave: .bell, volume: 0.12, decay: 8))   // リム
             }
         }
-        if candy || s % 2 == 0 {
+        if drums, candy || s % 2 == 0 {
             let open = candy && s % 4 == 2
             out.append(Voice(sr, f0: 0, length: open ? 0.12 : 0.035, wave: .noise,
                              volume: s % 2 == 0 ? 0.09 : 0.05, decay: open ? 4 : 9, filter: 0.9, highPass: true))
