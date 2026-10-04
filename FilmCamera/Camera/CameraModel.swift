@@ -473,7 +473,16 @@ final class CameraModel: NSObject, ObservableObject {
     /// セッションが中断されたときの理由を記録する
     @objc private func sessionWasInterrupted(_ note: Notification) {
         let raw = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? NSNumber)?.intValue
-        sessionQueue.async { self.lastInterruption = raw.map { "理由 \($0)" } ?? "理由不明" }
+        let reason: String
+        switch raw {
+        case 1: reason = "1 アプリが裏に回った"
+        case 2: reason = "2 マイクを別のアプリが使用中"
+        case 3: reason = "3 カメラを別のアプリが使用中"
+        case 4: reason = "4 ほかのアプリも前面にある（PiP など）"
+        case 5: reason = "5 本体が熱いなど"
+        default: reason = raw.map { "\($0)" } ?? "不明"
+        }
+        sessionQueue.async { self.lastInterruption = reason }
     }
 
     /// セッションのエラーを記録し、止まっていれば動かし直す
@@ -491,6 +500,12 @@ final class CameraModel: NSObject, ObservableObject {
         defer { session.commitConfiguration() }
 
         session.sessionPreset = .photo
+        // ほかのアプリが画面に出ている（ピクチャ・イン・ピクチャの動画など）とき、
+        // iOS は「複数のアプリが前面にある」とみなしてカメラを止める（iPhone 13 で理由 4 の中断が起きた）。
+        // 対応していれば、その状態でもカメラを使えるようにする
+        if session.isMultitaskingCameraAccessSupported {
+            session.isMultitaskingCameraAccessEnabled = true
+        }
 
         guard let device = Self.camera(at: position, wantDepth: wantDepth),
               let input = try? AVCaptureDeviceInput(device: device),

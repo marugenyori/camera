@@ -55,6 +55,9 @@ final class DualCameraSession: NSObject {
 
     private func setUp(back: AVCaptureDevice, front: AVCaptureDevice, maxVideoArea: Int32) -> Bool {
         session.beginConfiguration()
+        if session.isMultitaskingCameraAccessSupported {
+            session.isMultitaskingCameraAccessEnabled = true
+        }
         for connection in session.connections { session.removeConnection(connection) }
         for input in session.inputs { session.removeInput(input) }
         for output in session.outputs { session.removeOutput(output) }
