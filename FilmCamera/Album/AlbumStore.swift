@@ -265,7 +265,7 @@ final class AlbumStore: ObservableObject {
         selected?.isOwner == true || isMine(photo)
     }
 
-    nonisolated private static func memberNames(of share: CKShare?) -> [String: String] {
+    nonisolated static func memberNames(of share: CKShare?) -> [String: String] {
         guard let share else { return [:] }
         var names: [String: String] = [:]
         for participant in share.participants {

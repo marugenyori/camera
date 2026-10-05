@@ -14,8 +14,24 @@ struct FilmCameraApp: App {
     }
 }
 
-/// 共有アルバムの招待（iCloud のリンク）を受け取るため、シーンの受け取り役を差し込む
+/// 共有アルバムの招待（iCloud のリンク）を受け取るため、シーンの受け取り役を差し込む。
+/// コメントの通知のため、iCloud からの音の出ないプッシュも受け取る
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        AlbumNotifier.shared.start()
+        return true
+    }
+
+    /// 共有アルバムに変更があったとき（iCloud の見張りから）
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        Task {
+            await AlbumNotifier.shared.catchUp(notify: true)
+            completionHandler(.newData)
+        }
+    }
+
     func application(_ application: UIApplication,
                      configurationForConnecting connectingSceneSession: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
@@ -32,6 +48,11 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
         if let metadata = connectionOptions.cloudKitShareMetadata {
             Task { @MainActor in AlbumStore.shared.accept(metadata) }
         }
+    }
+
+    /// アプリに戻ってきたとき、プッシュが届かなかった分の反応も確かめる
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        Task { await AlbumNotifier.shared.catchUp(notify: true) }
     }
 
     /// アプリを開いている状態で招待のリンクを開いたとき

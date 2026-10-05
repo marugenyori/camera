@@ -69,7 +69,10 @@ struct AlbumView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Deck.body, for: .navigationBar)
             .toolbar { toolbar }
-            .task { await store.refresh() }
+            .task {
+                AlbumNotifier.shared.requestPermission()
+                await store.refresh()
+            }
             .onChange(of: store.selectedID) { _, _ in
                 personFilter = nil
                 endSelecting()
