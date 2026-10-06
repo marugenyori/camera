@@ -11,6 +11,8 @@ struct ContentView: View {
     @State private var showingContactSettings = false
     /// 隠しゲーム（倍率の黒い小窓を長押しすると開く）
     @State private var showingGame = false
+    /// 起動したときに一度だけ、共有アルバムを最初に開く
+    @State private var openedAlbumAtLaunch = false
     @AppStorage("showGrid") private var showGrid = false
 
     var body: some View {
@@ -57,7 +59,13 @@ struct ContentView: View {
                 .allowsHitTesting(false)
         }
         .statusBarHidden(true)
-        .onAppear { camera.start() }
+        .onAppear {
+            camera.start()
+            if !openedAlbumAtLaunch {
+                openedAlbumAtLaunch = true
+                album.showAlbum = true
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active: camera.start()
