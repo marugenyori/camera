@@ -541,21 +541,29 @@ final class AlbumStore: ObservableObject {
         let folder = FileManager.default.temporaryDirectory
         let imageURL = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
         let thumbURL = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+        let originalURL = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
         defer {
-            try? FileManager.default.removeItem(at: imageURL)
-            try? FileManager.default.removeItem(at: thumbURL)
+            for url in [imageURL, thumbURL, originalURL] { try? FileManager.default.removeItem(at: url) }
         }
         do {
-            let record = try await db.record(for: photo.id)
+            let record = try await Self.retrying { try await db.record(for: photo.id) }
             try jpeg.write(to: imageURL)
             if let small = Self.thumbnailJPEG(image) { try small.write(to: thumbURL) }
             if (record["edited"] as? Int64 ?? 0) == 0 {
-                record["original"] = record["image"]
+                // 元の写真は、iCloud が置いた場所のファイルをそのまま使わず、自分の一時ファイルに写してから送る
+                guard let source = (record["image"] as? CKAsset)?.fileURL else {
+                    status = "元の写真を読み込めませんでした"
+                    return false
+                }
+                try FileManager.default.copyItem(at: source, to: originalURL)
+                record["original"] = CKAsset(fileURL: originalURL)
             }
             record["image"] = CKAsset(fileURL: imageURL)
             record["thumbnail"] = CKAsset(fileURL: thumbURL)
             record["edited"] = 1 as Int64
-            _ = try await db.modifyRecords(saving: [record], deleting: [], savePolicy: .changedKeys)
+            _ = try await Self.retrying {
+                try await db.modifyRecords(saving: [record], deleting: [], savePolicy: .changedKeys)
+            }
             updateLocally(photo, full: image, edited: true)
             status = nil
             return true
@@ -569,14 +577,22 @@ final class AlbumStore: ObservableObject {
     func revertDoodle(_ photo: AlbumPhoto) async -> Bool {
         guard let album = selected else { return false }
         let db = database(for: album)
-        let thumbURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
-        defer { try? FileManager.default.removeItem(at: thumbURL) }
+        let folder = FileManager.default.temporaryDirectory
+        let thumbURL = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+        let url = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+        defer {
+            try? FileManager.default.removeItem(at: thumbURL)
+            try? FileManager.default.removeItem(at: url)
+        }
         do {
-            let record = try await db.record(for: photo.id)
-            guard let original = record["original"] as? CKAsset, let url = original.fileURL,
-                  let full = Self.downsample(url, maxPixel: 2400) else {
+            let record = try await Self.retrying { try await db.record(for: photo.id) }
+            guard let source = (record["original"] as? CKAsset)?.fileURL else {
                 status = "元の写真が見つかりませんでした"
+                return false
+            }
+            try FileManager.default.copyItem(at: source, to: url)
+            guard let full = Self.downsample(url, maxPixel: 2400) else {
+                status = "元の写真を読み込めませんでした"
                 return false
             }
             if let small = Self.downsample(url, maxPixel: 800).flatMap(Self.thumbnailJPEG(_:)) {
@@ -586,13 +602,30 @@ final class AlbumStore: ObservableObject {
             record["image"] = CKAsset(fileURL: url)
             record["original"] = nil
             record["edited"] = nil
-            _ = try await db.modifyRecords(saving: [record], deleting: [], savePolicy: .changedKeys)
+            _ = try await Self.retrying {
+                try await db.modifyRecords(saving: [record], deleting: [], savePolicy: .changedKeys)
+            }
             updateLocally(photo, full: full, edited: false)
             status = nil
             return true
         } catch {
             status = "元に戻せませんでした：" + Self.describe(error)
             return false
+        }
+    }
+
+    /// iCloud が一時的に使えないとき（混雑・つながらない）は、少し待って 2 回までやり直す
+    private static func retrying<T>(_ work: () async throws -> T) async throws -> T {
+        var attempt = 0
+        while true {
+            do {
+                return try await work()
+            } catch let error as CKError where attempt < 2 &&
+                [.serviceUnavailable, .requestRateLimited, .zoneBusy, .networkFailure].contains(error.code) {
+                attempt += 1
+                let wait = error.retryAfterSeconds ?? Double(attempt) * 1.5
+                try? await Task.sleep(for: .seconds(wait))
+            }
         }
     }
 
