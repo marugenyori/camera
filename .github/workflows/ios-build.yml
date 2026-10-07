@@ -7,6 +7,7 @@ on:
     paths:
       - "FilmCamera/**"
       - "FilmCameraWidget/**"
+      - "FilmCameraNotify/**"
       - "Shared/**"
       - "FilmCamera.xcodeproj/**"
       - ".github/workflows/ios-build.yml"

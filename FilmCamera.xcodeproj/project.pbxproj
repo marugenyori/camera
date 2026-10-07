@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		B7C8D9E0F1A200000000001B /* FilmCameraWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B7C8D9E0F1A2000000000010 /* FilmCameraWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B7C8D9E0F1A2000000000021 /* FilmCameraNotify.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B7C8D9E0F1A2000000000020 /* FilmCameraNotify.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -17,6 +18,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = B7C8D9E0F1A2000000000016;
 			remoteInfo = FilmCameraWidget;
+		};
+		B7C8D9E0F1A200000000002A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B7C8D9E0F1A200000000000A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B7C8D9E0F1A2000000000026;
+			remoteInfo = FilmCameraNotify;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -28,6 +36,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				B7C8D9E0F1A200000000001B /* FilmCameraWidget.appex in Embed Foundation Extensions */,
+				B7C8D9E0F1A2000000000021 /* FilmCameraNotify.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -37,6 +46,7 @@
 /* Begin PBXFileReference section */
 		B7C8D9E0F1A2000000000001 /* FilmCamera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FilmCamera.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B7C8D9E0F1A2000000000010 /* FilmCameraWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FilmCameraWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B7C8D9E0F1A2000000000020 /* FilmCameraNotify.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FilmCameraNotify.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -53,6 +63,11 @@
 		B7C8D9E0F1A2000000000012 /* FilmCameraWidget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = FilmCameraWidget;
+			sourceTree = "<group>";
+		};
+		B7C8D9E0F1A2000000000022 /* FilmCameraNotify */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FilmCameraNotify;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -72,6 +87,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B7C8D9E0F1A2000000000023 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -81,6 +103,7 @@
 				B7C8D9E0F1A2000000000002 /* FilmCamera */,
 				B7C8D9E0F1A2000000000011 /* Shared */,
 				B7C8D9E0F1A2000000000012 /* FilmCameraWidget */,
+				B7C8D9E0F1A2000000000022 /* FilmCameraNotify */,
 				B7C8D9E0F1A2000000000005 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,6 +113,7 @@
 			children = (
 				B7C8D9E0F1A2000000000001 /* FilmCamera.app */,
 				B7C8D9E0F1A2000000000010 /* FilmCameraWidget.appex */,
+				B7C8D9E0F1A2000000000020 /* FilmCameraNotify.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -110,6 +134,7 @@
 			);
 			dependencies = (
 				B7C8D9E0F1A200000000001D /* PBXTargetDependency */,
+				B7C8D9E0F1A200000000002B /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				B7C8D9E0F1A2000000000002 /* FilmCamera */,
@@ -145,6 +170,29 @@
 			productReference = B7C8D9E0F1A2000000000010 /* FilmCameraWidget.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		B7C8D9E0F1A2000000000026 /* FilmCameraNotify */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B7C8D9E0F1A2000000000027 /* Build configuration list for PBXNativeTarget "FilmCameraNotify" */;
+			buildPhases = (
+				B7C8D9E0F1A2000000000024 /* Sources */,
+				B7C8D9E0F1A2000000000023 /* Frameworks */,
+				B7C8D9E0F1A2000000000025 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B7C8D9E0F1A2000000000011 /* Shared */,
+				B7C8D9E0F1A2000000000022 /* FilmCameraNotify */,
+			);
+			name = FilmCameraNotify;
+			packageProductDependencies = (
+			);
+			productName = FilmCameraNotify;
+			productReference = B7C8D9E0F1A2000000000020 /* FilmCameraNotify.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -159,6 +207,9 @@
 						CreatedOnToolsVersion = 16.0;
 					};
 					B7C8D9E0F1A2000000000016 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					B7C8D9E0F1A2000000000026 = {
 						CreatedOnToolsVersion = 16.0;
 					};
 				};
@@ -180,6 +231,7 @@
 			targets = (
 				B7C8D9E0F1A2000000000006 /* FilmCamera */,
 				B7C8D9E0F1A2000000000016 /* FilmCameraWidget */,
+				B7C8D9E0F1A2000000000026 /* FilmCameraNotify */,
 			);
 		};
 /* End PBXProject section */
@@ -193,6 +245,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		B7C8D9E0F1A2000000000015 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B7C8D9E0F1A2000000000025 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -216,6 +275,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B7C8D9E0F1A2000000000024 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -223,6 +289,11 @@
 			isa = PBXTargetDependency;
 			target = B7C8D9E0F1A2000000000016 /* FilmCameraWidget */;
 			targetProxy = B7C8D9E0F1A200000000001C /* PBXContainerItemProxy */;
+		};
+		B7C8D9E0F1A200000000002B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B7C8D9E0F1A2000000000026 /* FilmCameraNotify */;
+			targetProxy = B7C8D9E0F1A200000000002A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -416,6 +487,58 @@
 			};
 			name = Release;
 		};
+		B7C8D9E0F1A2000000000028 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/FilmCameraNotify.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/FilmCameraNotify-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "フィルムカメラ";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_ID).notify";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B7C8D9E0F1A2000000000029 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/FilmCameraNotify.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/FilmCameraNotify-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "フィルムカメラ";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_ID).notify";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -442,6 +565,15 @@
 			buildConfigurations = (
 				B7C8D9E0F1A2000000000018 /* Debug */,
 				B7C8D9E0F1A2000000000019 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B7C8D9E0F1A2000000000027 /* Build configuration list for PBXNativeTarget "FilmCameraNotify" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B7C8D9E0F1A2000000000028 /* Debug */,
+				B7C8D9E0F1A2000000000029 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

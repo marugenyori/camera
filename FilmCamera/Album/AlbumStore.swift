@@ -419,16 +419,7 @@ final class AlbumStore: ObservableObject {
     }
 
     nonisolated static func memberNames(of share: CKShare?) -> [String: String] {
-        guard let share else { return [:] }
-        var names: [String: String] = [:]
-        for participant in share.participants {
-            guard let id = participant.userIdentity.userRecordID?.recordName else { continue }
-            let name = participant.userIdentity.nameComponents
-                .map { PersonNameComponentsFormatter().string(from: $0) }
-                .flatMap { $0.isEmpty ? nil : $0 }
-            names[id] = name ?? (participant.role == .owner ? "アルバムの持ち主" : "名前なしの参加者")
-        }
-        return names
+        AlbumActivity.memberNames(of: share)
     }
 
     // MARK: - いいね・絵文字・コメント
