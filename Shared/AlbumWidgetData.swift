@@ -15,8 +15,18 @@ struct AlbumWidgetData: Codable {
 
     var entries: [Entry] = []
     var updatedAt = Date()
+    /// アルバムの写真の枚数（ロック画面の「写真の枚数」用。古いデータには無い）
+    var totalCount: Int? = nil
+    /// 新しい写真の撮った日時（今日・今週の枚数を数えるため。新しい順に最大 maxDates 件）
+    var recentDates: [Date]? = nil
 
     static let maxEntries = 4
+    static let maxDates = 500
+
+    /// 今日撮った（入れた）枚数
+    func count(since start: Date) -> Int {
+        (recentDates ?? []).filter { $0 >= start }.count
+    }
 
     /// App Group の名前（アプリの Bundle ID の前に group. を付けたもの）
     static var groupID: String {

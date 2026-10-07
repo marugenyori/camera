@@ -1,11 +1,16 @@
 import SwiftUI
 import WidgetKit
 
-/// ホーム画面のウィジェット：共有アルバムの新しい写真（小：1 枚、中：大きい 1 枚と小さい 2 枚、大：4 枚）
+/// ウィジェットの一覧
+/// - 共有アルバム：新しい写真（ホーム画面の小・中・大、ロック画面の丸・四角・1 行）
+/// - カメラ：選んだフィルタでカメラを開く（ロック画面の丸・四角・1 行、ホーム画面の小）
+/// - 写真の枚数：今日・今週・全部の枚数（ロック画面の丸・四角・1 行、ホーム画面の小）
 @main
 struct FilmCameraWidgets: WidgetBundle {
     var body: some Widget {
         AlbumWidget()
+        CameraWidget()
+        AlbumCountWidget()
     }
 }
 
@@ -17,7 +22,8 @@ struct AlbumWidget: Widget {
         }
         .configurationDisplayName("共有アルバム")
         .description("友だちと共有しているアルバムの、新しい写真を表示します。")
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge,
+                            .accessoryCircular, .accessoryRectangular, .accessoryInline])
         .contentMarginsDisabled()
     }
 }
@@ -66,6 +72,85 @@ struct AlbumWidgetView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
+        switch family {
+        case .accessoryCircular: circular
+        case .accessoryRectangular: rectangular
+        case .accessoryInline: inline
+        default: home
+        }
+    }
+
+    // MARK: ロック画面
+
+    /// 丸：いちばん新しい写真を丸く切り抜く
+    private var circular: some View {
+        ZStack {
+            AccessoryWidgetBackground()
+            if let image = entry.items.first?.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .clipShape(Circle())
+            } else {
+                Image(systemName: "photo.stack")
+                    .font(.title2)
+            }
+        }
+        .widgetURL(URL(string: "filmcamera://album"))
+    }
+
+    /// 四角：写真と、アルバム名・入れた人・何分前か
+    private var rectangular: some View {
+        HStack(spacing: 6) {
+            if let item = entry.items.first {
+                if let image = item.image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 46, height: 46)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(item.albumTitle)
+                        .font(.headline)
+                        .widgetAccentable()
+                        .lineLimit(1)
+                    Text(item.who)
+                        .font(.caption)
+                        .lineLimit(1)
+                    Text("\(item.takenAt, style: .relative)前")
+                        .font(.caption)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            } else {
+                Label("共有アルバムを開くと写真が出ます", systemImage: "photo.stack")
+                    .font(.caption)
+            }
+        }
+        .widgetURL(URL(string: "filmcamera://album"))
+    }
+
+    /// 1 行（時計の上）：だれが何分前に入れたか
+    private var inline: some View {
+        Group {
+            if let item = entry.items.first {
+                Label {
+                    Text("\(item.who)・\(item.takenAt, style: .relative)前")
+                } icon: {
+                    Image(systemName: "photo.on.rectangle")
+                }
+            } else {
+                Label("共有アルバム", systemImage: "photo.stack")
+            }
+        }
+        .widgetURL(URL(string: "filmcamera://album"))
+    }
+
+    // MARK: ホーム画面
+
+    @ViewBuilder
+    private var home: some View {
         if entry.items.isEmpty {
             VStack(spacing: 8) {
                 Image(systemName: "photo.stack")

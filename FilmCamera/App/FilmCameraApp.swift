@@ -47,6 +47,16 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
         if let metadata = connectionOptions.cloudKitShareMetadata {
             Task { @MainActor in AlbumStore.shared.accept(metadata) }
         }
+        // ロック画面などのウィジェットから開かれたとき
+        if let url = connectionOptions.urlContexts.first?.url {
+            Task { @MainActor in AlbumStore.shared.open(url) }
+        }
+    }
+
+    /// アプリを開いている状態で、ウィジェットから開かれたとき
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        guard let url = URLContexts.first?.url else { return }
+        Task { @MainActor in AlbumStore.shared.open(url) }
     }
 
     /// アプリに戻ってきたとき、プッシュが届かなかった分の反応も確かめる

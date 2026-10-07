@@ -89,6 +89,8 @@ final class AlbumStore: ObservableObject {
     @Published private(set) var reactions: [String: [AlbumReaction]] = [:]
     /// 撮影画面で使いたいモード（写真の「このフィルタで撮る」）。カメラの画面が受け取って切り替える
     @Published var requestedMode: String?
+    /// ウィジェットの「カメラ」から開かれた（そのままのモードでカメラを開く）
+    @Published var openCamera = false
     /// 自分の recordName（自分が入れた写真を見分ける）
     private var myRecordName: String?
     /// 大きく見た写真をしばらく取っておく
@@ -329,7 +331,9 @@ final class AlbumStore: ObservableObject {
         let newest = Array(list.prefix(AlbumWidgetData.maxEntries))
         let files = newest.map { $0.id.recordName + ".jpg" }
         let current = AlbumWidgetData.load()
-        guard current.entries.map(\.file) != files || current.entries.first?.albumTitle != album.title,
+        let dates = Array(list.prefix(AlbumWidgetData.maxDates).map(\.takenAt))
+        guard current.entries.map(\.file) != files || current.entries.first?.albumTitle != album.title
+                || current.totalCount != list.count || current.recentDates != dates,
               let folder = AlbumWidgetData.folder else { return }
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // 前の画像は消して、新しい分だけ置く
@@ -337,6 +341,8 @@ final class AlbumStore: ObservableObject {
             try? FileManager.default.removeItem(at: folder.appendingPathComponent(old.file))
         }
         var data = AlbumWidgetData()
+        data.totalCount = list.count
+        data.recentDates = dates
         for (photo, file) in zip(newest, files) {
             if let image = photo.thumbnail, let jpeg = image.jpegData(compressionQuality: 0.8) {
                 try? jpeg.write(to: folder.appendingPathComponent(file), options: .atomic)
@@ -879,6 +885,23 @@ final class AlbumStore: ObservableObject {
         } catch {
             status = (album.isOwner ? "アルバムを消せませんでした：" : "アルバムから抜けられませんでした：")
                 + Self.describe(error)
+        }
+    }
+
+    /// ウィジェットをタップして開かれたとき（filmcamera://camera?mode=film、filmcamera://album）
+    func open(_ url: URL) {
+        guard url.scheme == "filmcamera" else { return }
+        switch url.host {
+        case "camera":
+            let mode = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "mode" })?.value
+            if let mode, let look = LookMode(rawValue: mode) {
+                requestedMode = look.title
+            } else {
+                openCamera = true
+            }
+        default:
+            showAlbum = true
         }
     }
 

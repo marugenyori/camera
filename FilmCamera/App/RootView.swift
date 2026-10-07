@@ -35,5 +35,19 @@ struct RootView: View {
             guard title != nil, !showingCamera else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showingCamera = true }
         }
+        // ロック画面などのウィジェットの「カメラ」
+        .onChange(of: album.openCamera) { _, open in
+            guard open else { return }
+            album.openCamera = false
+            showingCamera = true
+        }
+        .onOpenURL { album.open($0) }
+        .onAppear {
+            // ウィジェットからアプリが起動したとき（画面ができる前に受け取っている）
+            if album.openCamera || album.requestedMode != nil {
+                album.openCamera = false
+                showingCamera = true
+            }
+        }
     }
 }
