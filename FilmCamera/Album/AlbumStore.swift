@@ -116,9 +116,20 @@ final class AlbumStore: ObservableObject {
 
     var selected: AlbumRef? { albums.first { $0.id == selectedID } ?? albums.first }
 
+    /// 一覧用の小さい画像を、読み込み直さずに使い回す（アルバム ID|レコード名 → 画像）
+    private var thumbMemory: [String: UIImage] = [:]
+
     private init() {
         autoAdd = UserDefaults.standard.bool(forKey: "albumAutoAdd")
         selectedID = UserDefaults.standard.string(forKey: "albumSelected")
+        // 前回の控えから、アルバムの一覧と写真をすぐ出す（iCloud からは後で差分だけ取り込む）
+        albums = AlbumCache.loadAlbums().map {
+            AlbumRef(zoneID: CKRecordZone.ID(zoneName: $0.zoneName, ownerName: $0.ownerName),
+                     isOwner: $0.isOwner, title: $0.title)
+        }
+        for album in albums {
+            apply(AlbumCache(albumID: album.id).load(), to: album)
+        }
     }
 
     private func database(for album: AlbumRef) -> CKDatabase {
@@ -164,6 +175,10 @@ final class AlbumStore: ObservableObject {
                                      title: info.owner.map { "\(title)（\($0)）" } ?? title))
             }
             albums = list
+            AlbumCache.saveAlbums(list.map {
+                AlbumCache.Album(zoneName: $0.zoneID.zoneName, ownerName: $0.zoneID.ownerName,
+                                 isOwner: $0.isOwner, title: $0.title)
+            })
             status = nil
             await loadPhotos()
         } catch {
@@ -171,9 +186,13 @@ final class AlbumStore: ObservableObject {
         }
     }
 
-    /// 選んでいるアルバムの写真を読む（一覧用の小さい画像だけ受け取る）
+    /// 選んでいるアルバムの写真を読む。まず端末の控えをすぐ出し、
+    /// iCloud からは前回読んだ位置より後の変更（追加・削除・反応）だけを受け取って控えに足す
     func loadPhotos() async {
         guard let album = selected else { return }
+        let cache = AlbumCache(albumID: album.id)
+        var state = cache.load()
+        apply(state, to: album)
         let db = database(for: album)
         do {
             if album.isOwner { try await Self.ensureZone(album.zoneID) }
@@ -185,43 +204,122 @@ final class AlbumStore: ObservableObject {
                 if album.isOwner { share = existing }
                 members = Self.memberNames(of: existing)
             }
-            var records: [CKRecord] = []
-            var reactionRecords: [CKRecord] = []
-            var token: CKServerChangeToken?
-            var more = true
-            while more {
-                let changes = try await db.recordZoneChanges(inZoneWith: album.zoneID, since: token,
-                                                             desiredKeys: ["thumbnail", "takenAt", "mode",
-                                                                           "photo", "kind", "text", "createdAt"])
-                for (_, result) in changes.modificationResultsByID {
-                    guard case .success(let modification) = result else { continue }
-                    switch modification.record.recordType {
-                    case Self.recordType: records.append(modification.record)
-                    case Self.reactionType: reactionRecords.append(modification.record)
-                    default: break
-                    }
-                }
-                token = changes.changeToken
-                more = changes.moreComing
+            do {
+                try await fetchChanges(db, album: album, cache: cache, state: &state)
+            } catch let error as CKError where error.code == .changeTokenExpired {
+                // 読んだ位置が古すぎるときは、控えを捨てて最初から
+                cache.clear()
+                thumbMemory = thumbMemory.filter { !$0.key.hasPrefix(album.id + "|") }
+                state = AlbumCache.State()
+                try await fetchChanges(db, album: album, cache: cache, state: &state)
             }
-            let loaded = records.map(Self.photo(from:)).sorted { $0.takenAt > $1.takenAt }
-            counts[album.id] = loaded.count
-            covers[album.id] = loaded.first?.thumbnail
-            if album.id == selected?.id {
-                photos = loaded
-                reactions = Dictionary(grouping: reactionRecords.compactMap(Self.reaction(from:)), by: \.photo)
-                    .mapValues { $0.sorted { $0.createdAt < $1.createdAt } }
-            }
+            cache.save(state)
+            apply(state, to: album)
         } catch {
-            photos = []
+            // つながらないときも、控えの写真はそのまま見られる
             status = Self.describe(error)
         }
+    }
+
+    /// 前回の位置から後の変更を受け取って、控え（state と画像のファイル）に反映する
+    private func fetchChanges(_ db: CKDatabase, album: AlbumRef, cache: AlbumCache,
+                              state: inout AlbumCache.State) async throws {
+        var token = state.changeToken
+        var more = true
+        while more {
+            let changes = try await db.recordZoneChanges(inZoneWith: album.zoneID, since: token,
+                                                         desiredKeys: ["thumbnail", "takenAt", "mode",
+                                                                       "photo", "kind", "text", "createdAt"])
+            for (_, result) in changes.modificationResultsByID {
+                guard case .success(let modification) = result else { continue }
+                let record = modification.record
+                let name = record.recordID.recordName
+                switch record.recordType {
+                case Self.recordType:
+                    state.photos[name] = AlbumCache.Photo(
+                        name: name,
+                        takenAt: record["takenAt"] as? Date ?? record.creationDate ?? .distantPast,
+                        mode: record["mode"] as? String ?? "",
+                        creator: record.creatorUserRecordID?.recordName)
+                    if let url = (record["thumbnail"] as? CKAsset)?.fileURL,
+                       let image = Self.downsample(url, maxPixel: 600) {
+                        cache.store(image, at: cache.thumbnailURL(name), quality: 0.8)
+                        thumbMemory[album.id + "|" + name] = image
+                    }
+                case Self.reactionType:
+                    guard let photo = record["photo"] as? String, let kind = record["kind"] as? String else { continue }
+                    state.reactions[name] = AlbumCache.Reaction(
+                        name: name, photo: photo, kind: kind,
+                        text: record["text"] as? String ?? "",
+                        creator: record.creatorUserRecordID?.recordName,
+                        createdAt: record["createdAt"] as? Date ?? record.creationDate ?? .distantPast)
+                default:
+                    break
+                }
+            }
+            for deletion in changes.deletions {
+                let name = deletion.recordID.recordName
+                state.photos[name] = nil
+                state.reactions[name] = nil
+                cache.removeImages(name)
+                thumbMemory[album.id + "|" + name] = nil
+            }
+            token = changes.changeToken
+            more = changes.moreComing
+        }
+        state.changeToken = token
+    }
+
+    /// 控えの中身を画面に出す。選んでいないアルバムは、枚数と表紙だけ
+    private func apply(_ state: AlbumCache.State, to album: AlbumRef) {
+        let cache = AlbumCache(albumID: album.id)
+        counts[album.id] = state.photos.count
+        guard album.id == selected?.id else {
+            if let newest = state.photos.values.max(by: { $0.takenAt < $1.takenAt }) {
+                covers[album.id] = thumbnail(newest.name, album: album, cache: cache)
+            } else {
+                covers[album.id] = nil
+            }
+            return
+        }
+        let list = state.photos.values.map { photo in
+            AlbumPhoto(id: CKRecord.ID(recordName: photo.name, zoneID: album.zoneID),
+                       takenAt: photo.takenAt, mode: photo.mode,
+                       thumbnail: thumbnail(photo.name, album: album, cache: cache),
+                       creator: photo.creator)
+        }
+        .sorted { $0.takenAt > $1.takenAt }
+        covers[album.id] = list.first?.thumbnail
+        photos = list
+        let loaded = state.reactions.values.compactMap { item -> AlbumReaction? in
+            guard let kind = AlbumReaction.Kind(rawValue: item.kind) else { return nil }
+            return AlbumReaction(id: CKRecord.ID(recordName: item.name, zoneID: album.zoneID), photo: item.photo,
+                                 kind: kind, text: item.text, creator: item.creator, createdAt: item.createdAt)
+        }
+        reactions = Dictionary(grouping: loaded, by: \.photo).mapValues { $0.sorted { $0.createdAt < $1.createdAt } }
+    }
+
+    private func thumbnail(_ name: String, album: AlbumRef, cache: AlbumCache) -> UIImage? {
+        let key = album.id + "|" + name
+        if let image = thumbMemory[key] { return image }
+        let image = cache.thumbnail(name)
+        if let image { thumbMemory[key] = image }
+        return image
     }
 
     /// 1 枚をフル解像度で読む（表示用に長い辺 2400px まで縮める）
     func fullImage(of photo: AlbumPhoto) async -> UIImage? {
         if let cached = fullCache[photo.id] { return cached }
-        guard let url = await fullFile(of: photo), let image = Self.downsample(url, maxPixel: 2400) else { return nil }
+        // 一度見た写真は端末の控えから（iCloud から受け取り直さない）
+        let cache = selected.map { AlbumCache(albumID: $0.id) }
+        let image: UIImage
+        if let stored = cache?.fullImage(photo.id.recordName) {
+            image = stored
+        } else {
+            guard let url = await fullFile(of: photo), let downloaded = Self.downsample(url, maxPixel: 2400) else { return nil }
+            if let cache { cache.store(downloaded, at: cache.fullURL(photo.id.recordName), quality: 0.9) }
+            image = downloaded
+        }
         fullCache[photo.id] = image
         fullOrder.append(photo.id)
         if fullOrder.count > 12 { fullCache[fullOrder.removeFirst()] = nil }
@@ -582,6 +680,7 @@ final class AlbumStore: ObservableObject {
         guard let album = selected, album.zoneID.zoneName != Self.ownZoneID.zoneName || !album.isOwner else { return }
         do {
             _ = try await database(for: album).deleteRecordZone(withID: album.zoneID)
+            AlbumCache(albumID: album.id).clear()
             if album.isOwner {
                 var titles = albumTitles
                 titles[album.zoneID.zoneName] = nil
