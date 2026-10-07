@@ -29,6 +29,16 @@ struct AlbumView: View {
     @State private var personFilter: String?
     @State private var selecting = false
     @State private var picked: Set<CKRecord.ID> = []
+    /// 長押しで選び始めた直後の「指を離した」タップを無視する
+    @State private var justLongPressed = false
+    /// まとめて共有する画像（用意できたら共有の画面を出す）
+    @State private var sharing: ShareItems?
+    @State private var preparingShare = false
+
+    struct ShareItems: Identifiable {
+        let id = UUID()
+        let images: [UIImage]
+    }
     @State private var confirmingDelete = false
     @State private var importItems: [PhotosPickerItem] = []
     @State private var toast: String?
@@ -139,6 +149,11 @@ struct AlbumView: View {
                 }
             } message: {
                 Text("アルバムのメンバー全員から見えなくなります。")
+            }
+            .sheet(item: $sharing) { items in
+                ActivityView(items: items.images)
+                    .presentationDetents([.medium, .large])
+                    .onDisappear { endSelecting() }
             }
             .fullScreenCover(item: $viewing) { start in
                 AlbumViewer(store: store, photos: start.photos, index: start.index)
@@ -416,17 +431,38 @@ struct AlbumView: View {
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(Deck.print)
                         Spacer()
+                        if selecting {
+                            // その日の写真をまとめて選ぶ・外す
+                            let ids = Set(section.photos.map(\.id))
+                            let all = ids.isSubset(of: picked)
+                            Button(all ? "選択を解除" : "すべて選択") {
+                                if all { picked.subtract(ids) } else { picked.formUnion(ids) }
+                            }
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Deck.orange)
+                        }
                     }
                     .padding(.horizontal, 16)
                     LazyVGrid(columns: columns, spacing: 3) {
                         ForEach(section.photos) { photo in
                             thumbnail(photo) {
-                                if selecting {
+                                if justLongPressed {
+                                    justLongPressed = false
+                                } else if selecting {
                                     toggle(photo)
                                 } else if let index = all.firstIndex(of: photo) {
                                     viewing = ViewerStart(photos: all, index: index)
                                 }
                             }
+                            // 長押しで、その写真を選んだ状態で選択を始める
+                            .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                                guard !selecting else { return }
+                                justLongPressed = true
+                                withAnimation(.snappy) {
+                                    selecting = true
+                                    picked = [photo.id]
+                                }
+                            })
                         }
                     }
                 }
@@ -607,11 +643,46 @@ struct AlbumView: View {
     }
 
     private var selectionBar: some View {
-        HStack(spacing: 12) {
-            Text(picked.isEmpty ? "写真を選んでください" : "\(picked.count) 枚を選択中")
-                .font(.footnote.weight(.semibold))
+        HStack(spacing: 6) {
+            Text(picked.isEmpty ? "写真を選んでください" : "\(picked.count) 枚")
+                .font(.footnote.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.white)
             Spacer()
+            // まとめて共有（LINE などに一度に送る）
+            Button {
+                shareSelected()
+            } label: {
+                Group {
+                    if preparingShare {
+                        ProgressView().tint(Deck.orange)
+                    } else {
+                        Image(systemName: "square.and.arrow.up").font(.headline)
+                    }
+                }
+                .frame(width: 44, height: 40)
+            }
+            .disabled(picked.isEmpty || preparingShare)
+            // ほかのアルバムにまとめて入れる
+            let others = store.albums.filter { $0.id != store.selected?.id }
+            if !others.isEmpty {
+                Menu {
+                    ForEach(others) { album in
+                        Button(album.title) {
+                            let targets = pickedPhotos
+                            Task {
+                                for photo in targets { _ = await store.copy(photo, to: album) }
+                                show("\(targets.count) 枚を「\(album.title)」に追加しています")
+                                endSelecting()
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "rectangle.stack.badge.plus")
+                        .font(.headline)
+                        .frame(width: 44, height: 40)
+                }
+                .disabled(picked.isEmpty)
+            }
             Button {
                 let targets = pickedPhotos
                 Task {
@@ -642,6 +713,20 @@ struct AlbumView: View {
         .padding(.horizontal, 16)
     }
 
+    /// 選んだ写真を大きい画像で用意して、共有の画面を出す
+    private func shareSelected() {
+        let targets = pickedPhotos
+        preparingShare = true
+        Task {
+            var images: [UIImage] = []
+            for photo in targets {
+                if let image = await store.fullImage(of: photo) { images.append(image) }
+            }
+            preparingShare = false
+            if !images.isEmpty { sharing = ShareItems(images: images) }
+        }
+    }
+
     private func show(_ message: String) {
         withAnimation { toast = message }
         Task {
@@ -662,6 +747,20 @@ struct AlbumView: View {
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            if selecting {
+                // 表示中の写真をまとめて選ぶ・外す
+                let ids = Set(visiblePhotos.map(\.id))
+                Button(ids.isSubset(of: picked) && !ids.isEmpty ? "選択を解除" : "すべて選択") {
+                    if ids.isSubset(of: picked) { picked = [] } else { picked = ids }
+                }
+                .fontWeight(.semibold)
+            } else {
+                Button("選択") {
+                    withAnimation(.snappy) { selecting = true }
+                }
+                .fontWeight(.semibold)
+                .disabled(store.photos.isEmpty || showingMap)
+            }
             if !selecting {
                 Button {
                     withAnimation { showingMap.toggle() }
@@ -679,7 +778,7 @@ struct AlbumView: View {
                 Button {
                     selecting = true
                 } label: {
-                    Label("写真を選ぶ（保存・削除）", systemImage: "checkmark.circle")
+                    Label("写真をまとめて選ぶ", systemImage: "checkmark.circle")
                 }
                 .disabled(store.photos.isEmpty)
                 Button {
@@ -1430,4 +1529,15 @@ private struct CompactLabelStyle: LabelStyle {
             configuration.title
         }
     }
+}
+
+/// iOS の共有の画面（複数の写真をまとめて LINE などに送る）
+private struct ActivityView: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
