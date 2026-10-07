@@ -13,6 +13,8 @@ struct ContentView: View {
     @State private var showingGame = false
     /// 起動したときに一度だけ、共有アルバムを最初に開く
     @State private var openedAlbumAtLaunch = false
+    /// 起動画面（レンズの絞りが開く）
+    @State private var showingSplash = true
     @AppStorage("showGrid") private var showGrid = false
 
     var body: some View {
@@ -57,14 +59,23 @@ struct ContentView: View {
                 .opacity(flashOpacity)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
+
+            if showingSplash {
+                SplashView {
+                    withAnimation(.easeOut(duration: 0.4)) { showingSplash = false }
+                    // 起動画面が消えたら、共有アルバムを開く
+                    if !openedAlbumAtLaunch {
+                        openedAlbumAtLaunch = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { album.showAlbum = true }
+                    }
+                }
+                .transition(.opacity)
+                .zIndex(10)
+            }
         }
         .statusBarHidden(true)
         .onAppear {
             camera.start()
-            if !openedAlbumAtLaunch {
-                openedAlbumAtLaunch = true
-                album.showAlbum = true
-            }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
