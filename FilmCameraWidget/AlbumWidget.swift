@@ -1,14 +1,18 @@
+import CoreImage
+import CoreImage.CIFilterBuiltins
 import SwiftUI
 import WidgetKit
 
 /// ウィジェットの一覧
 /// - 共有アルバム：新しい写真（ホーム画面の小・中・大、ロック画面の丸・四角・1 行）
+/// - 写真だけ：ロック画面の四角いっぱいに、新しい写真を 1 枚
 /// - カメラ：選んだフィルタでカメラを開く（ロック画面の丸・四角・1 行、ホーム画面の小）
 /// - 写真の枚数：今日・今週・全部の枚数（ロック画面の丸・四角・1 行、ホーム画面の小）
 @main
 struct FilmCameraWidgets: WidgetBundle {
     var body: some Widget {
         AlbumWidget()
+        AlbumPhotoWidget()
         CameraWidget()
         AlbumCountWidget()
     }
@@ -35,6 +39,8 @@ struct AlbumTimelineEntry: TimelineEntry {
     struct Item: Identifiable {
         let id: String
         let image: UIImage?
+        /// ロック画面用：白黒にしてコントラストを上げたもの（ロック画面は写真が白黒の半透明になり、そのままだと薄くて見えない）
+        let lockImage: UIImage?
         let albumTitle: String
         let who: String
         let takenAt: Date
@@ -57,13 +63,35 @@ struct AlbumProvider: TimelineProvider {
 
     private func load() -> AlbumTimelineEntry {
         let data = AlbumWidgetData.load()
-        let items = data.entries.map { entry in
+        var items = data.entries.map { entry in
             AlbumTimelineEntry.Item(
                 id: entry.file,
                 image: AlbumWidgetData.imageURL(entry.file).flatMap { UIImage(contentsOfFile: $0.path) },
+                lockImage: nil,
                 albumTitle: entry.albumTitle, who: entry.who, takenAt: entry.takenAt)
         }
+        // ロック画面用の画像は、いちばん新しい 1 枚だけ作る
+        if let first = items.first {
+            items[0] = AlbumTimelineEntry.Item(id: first.id, image: first.image,
+                                               lockImage: first.image.flatMap(Self.lockScreenImage),
+                                               albumTitle: first.albumTitle, who: first.who, takenAt: first.takenAt)
+        }
         return AlbumTimelineEntry(date: Date(), items: items)
+    }
+
+    private static let ciContext = CIContext()
+
+    /// 白黒・コントラスト強め・少し明るく（ロック画面の半透明の表示でも、何が写っているか分かるように）
+    static func lockScreenImage(_ image: UIImage) -> UIImage? {
+        guard let input = CIImage(image: image) else { return nil }
+        let filter = CIFilter.colorControls()
+        filter.inputImage = input
+        filter.saturation = 0
+        filter.contrast = 1.45
+        filter.brightness = 0.06
+        guard let output = filter.outputImage,
+              let cgImage = ciContext.createCGImage(output, from: input.extent) else { return nil }
+        return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
     }
 }
 
@@ -86,7 +114,7 @@ struct AlbumWidgetView: View {
     private var circular: some View {
         ZStack {
             AccessoryWidgetBackground()
-            if let image = entry.items.first?.image {
+            if let image = entry.items.first.flatMap({ $0.lockImage ?? $0.image }) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -103,12 +131,16 @@ struct AlbumWidgetView: View {
     private var rectangular: some View {
         HStack(spacing: 6) {
             if let item = entry.items.first {
-                if let image = item.image {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 46, height: 46)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                if let image = item.lockImage ?? item.image {
+                    // ウィジェットの高さいっぱいの正方形にする
+                    Color.clear
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 VStack(alignment: .leading, spacing: 0) {
                     Text(item.albumTitle)
@@ -225,5 +257,45 @@ struct AlbumWidgetView: View {
                 }
             }
         }
+    }
+}
+
+/// ロック画面の四角いっぱいに、共有アルバムのいちばん新しい写真を出す
+struct AlbumPhotoWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "AlbumPhotoWidget", provider: AlbumProvider()) { entry in
+            AlbumPhotoWidgetView(entry: entry)
+                .containerBackground(Color(red: 0.07, green: 0.07, blue: 0.07), for: .widget)
+        }
+        .configurationDisplayName("写真だけ")
+        .description("共有アルバムの新しい写真を、ロック画面に大きく表示します。")
+        .supportedFamilies([.accessoryRectangular])
+        .contentMarginsDisabled()
+    }
+}
+
+struct AlbumPhotoWidgetView: View {
+    let entry: AlbumTimelineEntry
+
+    var body: some View {
+        Group {
+            if let image = entry.items.first.flatMap({ $0.lockImage ?? $0.image }) {
+                Color.clear
+                    .overlay {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            } else {
+                ZStack {
+                    AccessoryWidgetBackground()
+                    Label("共有アルバム", systemImage: "photo.stack")
+                        .font(.caption)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .widgetURL(URL(string: "filmcamera://album"))
     }
 }
