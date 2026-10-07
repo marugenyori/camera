@@ -1,4 +1,6 @@
 import Foundation
+import ImageIO
+import UIKit
 
 /// アプリとウィジェットで共有する、共有アルバムの新しい写真の一覧。
 /// アプリが App Group（group. + Bundle ID）の中の widget/ フォルダに entries.json と小さい画像を書き、
@@ -57,5 +59,18 @@ struct AlbumWidgetData: Codable {
 
     static func imageURL(_ file: String) -> URL? {
         folder?.appendingPathComponent(file)
+    }
+
+    /// 画像を、長い辺 maxPixel まで縮めて読む（ウィジェットは使えるメモリがとても少ないので、大きいまま開かない）
+    static func image(_ file: String, maxPixel: CGFloat = 500) -> UIImage? {
+        guard let url = imageURL(file),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: image)
     }
 }

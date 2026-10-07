@@ -1,5 +1,3 @@
-import CoreImage
-import CoreImage.CIFilterBuiltins
 import SwiftUI
 import WidgetKit
 
@@ -66,7 +64,7 @@ struct AlbumProvider: TimelineProvider {
         var items = data.entries.map { entry in
             AlbumTimelineEntry.Item(
                 id: entry.file,
-                image: AlbumWidgetData.imageURL(entry.file).flatMap { UIImage(contentsOfFile: $0.path) },
+                image: AlbumWidgetData.image(entry.file),
                 lockImage: nil,
                 albumTitle: entry.albumTitle, who: entry.who, takenAt: entry.takenAt)
         }
@@ -79,19 +77,30 @@ struct AlbumProvider: TimelineProvider {
         return AlbumTimelineEntry(date: Date(), items: items)
     }
 
-    private static let ciContext = CIContext()
-
-    /// 白黒・コントラスト強め・少し明るく（ロック画面の半透明の表示でも、何が写っているか分かるように）
+    /// 白黒・コントラスト強め・少し明るく（ロック画面の半透明の表示でも、何が写っているか分かるように）。
+    /// ウィジェットは使えるメモリがとても少ないので、CoreImage は使わず、小さく縮めてから 1 画素ずつ計算する
     static func lockScreenImage(_ image: UIImage) -> UIImage? {
-        guard let input = CIImage(image: image) else { return nil }
-        let filter = CIFilter.colorControls()
-        filter.inputImage = input
-        filter.saturation = 0
-        filter.contrast = 1.45
-        filter.brightness = 0.06
-        guard let output = filter.outputImage,
-              let cgImage = ciContext.createCGImage(output, from: input.extent) else { return nil }
-        return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
+        guard let source = image.cgImage else { return nil }
+        let maxSide = 320.0
+        let scale = min(1, maxSide / Double(max(source.width, source.height)))
+        let width = max(1, Int(Double(source.width) * scale))
+        let height = max(1, Int(Double(source.height) * scale))
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
+                                      space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        context.interpolationQuality = .medium
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data else { return nil }
+        let pixels = data.bindMemory(to: UInt8.self, capacity: width * height)
+        // ロック画面は暗い所ほど透けて消えるので、全体を持ち上げてからコントラストを付ける
+        var table = [UInt8](repeating: 0, count: 256)
+        for i in 0..<256 {
+            let v = pow(Double(i) / 255, 0.75)
+            table[i] = UInt8(max(0, min(255, ((v - 0.5) * 1.35 + 0.55) * 255)))
+        }
+        for i in 0..<(width * height) { pixels[i] = table[Int(pixels[i])] }
+        guard let output = context.makeImage() else { return nil }
+        return UIImage(cgImage: output, scale: 1, orientation: image.imageOrientation)
     }
 }
 

@@ -344,7 +344,7 @@ final class AlbumStore: ObservableObject {
         data.totalCount = list.count
         data.recentDates = dates
         for (photo, file) in zip(newest, files) {
-            if let image = photo.thumbnail, let jpeg = image.jpegData(compressionQuality: 0.8) {
+            if let image = photo.thumbnail.map(Self.widgetSized), let jpeg = image.jpegData(compressionQuality: 0.8) {
                 try? jpeg.write(to: folder.appendingPathComponent(file), options: .atomic)
             }
             data.entries.append(.init(file: file, albumTitle: album.title, who: creatorName(of: photo),
@@ -961,6 +961,19 @@ final class AlbumStore: ObservableObject {
             image.draw(in: CGRect(origin: .zero, size: size))
         }
         return small.jpegData(compressionQuality: 0.8)
+    }
+
+    /// ウィジェットに渡す画像は長い辺 600px まで（撮ったばかりの写真は元の大きさのことがある）
+    nonisolated private static func widgetSized(_ image: UIImage) -> UIImage {
+        let longest = max(image.size.width, image.size.height) * image.scale
+        guard longest > 600 else { return image }
+        let ratio = 600 / longest * image.scale
+        let size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
     }
 
     nonisolated static func downsample(_ url: URL, maxPixel: CGFloat) -> UIImage? {
