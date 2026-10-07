@@ -11,11 +11,13 @@ struct AlbumPhoto: Identifiable, Equatable {
     let id: CKRecord.ID
     let takenAt: Date
     let mode: String
-    let thumbnail: UIImage?
+    var thumbnail: UIImage?
     /// 入れた人（CloudKit が自動で記録する作成者。自分が入れたものは "__defaultOwner__" のこともある）
     let creator: String?
     /// 撮った場所（記録されていれば）
     var location: CLLocationCoordinate2D? = nil
+    /// 落書きで上書きした写真か（元の写真に戻せる）
+    var edited = false
 
     static func == (a: AlbumPhoto, b: AlbumPhoto) -> Bool { a.id == b.id }
 }
@@ -242,7 +244,7 @@ final class AlbumStore: ObservableObject {
         var more = true
         while more {
             let changes = try await db.recordZoneChanges(inZoneWith: album.zoneID, since: token,
-                                                         desiredKeys: ["thumbnail", "takenAt", "mode", "location",
+                                                         desiredKeys: ["thumbnail", "takenAt", "mode", "location", "edited",
                                                                        "photo", "kind", "text", "createdAt"])
             for (_, result) in changes.modificationResultsByID {
                 guard case .success(let modification) = result else { continue }
@@ -256,7 +258,8 @@ final class AlbumStore: ObservableObject {
                         mode: record["mode"] as? String ?? "",
                         creator: record.creatorUserRecordID?.recordName,
                         latitude: (record["location"] as? CLLocation)?.coordinate.latitude,
-                        longitude: (record["location"] as? CLLocation)?.coordinate.longitude)
+                        longitude: (record["location"] as? CLLocation)?.coordinate.longitude,
+                        edited: (record["edited"] as? Int64 ?? 0) != 0)
                     if let url = (record["thumbnail"] as? CKAsset)?.fileURL,
                        let image = Self.downsample(url, maxPixel: 600) {
                         cache.store(image, at: cache.thumbnailURL(name), quality: 0.8)
@@ -305,7 +308,8 @@ final class AlbumStore: ObservableObject {
                        creator: photo.creator,
                        location: photo.latitude.flatMap { latitude in
                            photo.longitude.map { CLLocationCoordinate2D(latitude: latitude, longitude: $0) }
-                       })
+                       },
+                       edited: photo.edited ?? false)
         }
         .sorted { $0.takenAt > $1.takenAt }
         covers[album.id] = list.first?.thumbnail
@@ -522,6 +526,100 @@ final class AlbumStore: ObservableObject {
                              text: record["text"] as? String ?? "",
                              creator: record.creatorUserRecordID?.recordName,
                              createdAt: record["createdAt"] as? Date ?? record.creationDate ?? .distantPast)
+    }
+
+    // MARK: - 落書き（上書きと、元に戻す）
+
+    func isEdited(_ id: CKRecord.ID) -> Bool {
+        photos.first { $0.id == id }?.edited ?? false
+    }
+
+    /// 落書きした画像で写真を上書きする。元の写真は original に取っておく（2 回目以降の落書きでは、最初の元の写真を残す）
+    func applyDoodle(to photo: AlbumPhoto, image: UIImage) async -> Bool {
+        guard let album = selected, let jpeg = image.jpegData(compressionQuality: 0.9) else { return false }
+        let db = database(for: album)
+        let folder = FileManager.default.temporaryDirectory
+        let imageURL = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+        let thumbURL = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+        defer {
+            try? FileManager.default.removeItem(at: imageURL)
+            try? FileManager.default.removeItem(at: thumbURL)
+        }
+        do {
+            let record = try await db.record(for: photo.id)
+            try jpeg.write(to: imageURL)
+            if let small = Self.thumbnailJPEG(image) { try small.write(to: thumbURL) }
+            if (record["edited"] as? Int64 ?? 0) == 0 {
+                record["original"] = record["image"]
+            }
+            record["image"] = CKAsset(fileURL: imageURL)
+            record["thumbnail"] = CKAsset(fileURL: thumbURL)
+            record["edited"] = 1 as Int64
+            _ = try await db.modifyRecords(saving: [record], deleting: [], savePolicy: .changedKeys)
+            updateLocally(photo, full: image, edited: true)
+            status = nil
+            return true
+        } catch {
+            status = "落書きを保存できませんでした：" + Self.describe(error)
+            return false
+        }
+    }
+
+    /// 落書きを消して、元の写真に戻す
+    func revertDoodle(_ photo: AlbumPhoto) async -> Bool {
+        guard let album = selected else { return false }
+        let db = database(for: album)
+        let thumbURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+        defer { try? FileManager.default.removeItem(at: thumbURL) }
+        do {
+            let record = try await db.record(for: photo.id)
+            guard let original = record["original"] as? CKAsset, let url = original.fileURL,
+                  let full = Self.downsample(url, maxPixel: 2400) else {
+                status = "元の写真が見つかりませんでした"
+                return false
+            }
+            if let small = Self.downsample(url, maxPixel: 800).flatMap(Self.thumbnailJPEG(_:)) {
+                try small.write(to: thumbURL)
+                record["thumbnail"] = CKAsset(fileURL: thumbURL)
+            }
+            record["image"] = CKAsset(fileURL: url)
+            record["original"] = nil
+            record["edited"] = nil
+            _ = try await db.modifyRecords(saving: [record], deleting: [], savePolicy: .changedKeys)
+            updateLocally(photo, full: full, edited: false)
+            status = nil
+            return true
+        } catch {
+            status = "元に戻せませんでした：" + Self.describe(error)
+            return false
+        }
+    }
+
+    /// 上書き・元に戻したあと、画面と端末の控えをすぐ新しくする（次の差分の取り込みでも同じ内容が届く）
+    private func updateLocally(_ photo: AlbumPhoto, full: UIImage, edited: Bool) {
+        guard let album = selected else { return }
+        let cache = AlbumCache(albumID: album.id)
+        let name = photo.id.recordName
+        let small = Self.thumbnailJPEG(full).flatMap(UIImage.init(data:))
+        if let small {
+            cache.store(small, at: cache.thumbnailURL(name), quality: 0.8)
+            thumbMemory[album.id + "|" + name] = small
+        }
+        cache.store(full, at: cache.fullURL(name), quality: 0.9)
+        fullCache[photo.id] = full
+        var state = cache.load()
+        if let entry = state.photos[name] {
+            state.photos[name] = AlbumCache.Photo(name: entry.name, takenAt: entry.takenAt, mode: entry.mode,
+                                                  creator: entry.creator, latitude: entry.latitude,
+                                                  longitude: entry.longitude, edited: edited)
+            cache.save(state)
+        }
+        if let index = photos.firstIndex(where: { $0.id == photo.id }) {
+            photos[index].thumbnail = small ?? photos[index].thumbnail
+            photos[index].edited = edited
+        }
+        if photos.first?.id == photo.id { covers[album.id] = small }
     }
 
     // MARK: - ほかのアルバムへ

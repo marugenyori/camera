@@ -833,6 +833,7 @@ private struct AlbumViewer: View {
     @State private var doodling: DoodleTarget?
     /// 撮った場所の名前（写真ごと）
     @State private var places: [CKRecord.ID: String] = [:]
+    @State private var confirmingRevert = false
 
     struct DoodleTarget: Identifiable {
         let id = UUID()
@@ -902,13 +903,30 @@ private struct AlbumViewer: View {
         }
         .fullScreenCover(item: $doodling) { target in
             DoodleEditor(image: target.image) { result in
-                guard let jpeg = result.jpegData(compressionQuality: 0.9) else { return }
-                let location = target.photo.location.map { CLLocation(latitude: $0.latitude, longitude: $0.longitude) }
-                store.add(data: jpeg, type: "public.jpeg", thumbnail: result, mode: "落書き", location: location)
-                flash("落書きをアルバムに追加しています")
+                // 写真に上書き（元の写真は取っておくので、あとで「元に戻す」ができる）
+                full[target.photo.id] = result
+                flash("落書きを保存しています")
+                Task {
+                    let ok = await store.applyDoodle(to: target.photo, image: result)
+                    flash(ok ? "落書きを保存しました（元に戻せます）" : (store.status ?? "保存できませんでした"))
+                    if !ok { full[target.photo.id] = target.image }
+                }
             }
         }
         .task(id: index) { await lookUpPlace() }
+        .confirmationDialog("落書きを消して、元の写真に戻しますか？", isPresented: $confirmingRevert,
+                            titleVisibility: .visible) {
+            Button("元に戻す", role: .destructive) {
+                guard let photo = current else { return }
+                Task {
+                    let ok = await store.revertDoodle(photo)
+                    if ok { full[photo.id] = await store.fullImage(of: photo) }
+                    flash(ok ? "元の写真に戻しました" : (store.status ?? "元に戻せませんでした"))
+                }
+            }
+        } message: {
+            Text("アルバムのメンバー全員の画面で、元の写真に戻ります。")
+        }
         .confirmationDialog("この写真を削除しますか？", isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("削除する", role: .destructive) {
                 guard let photo = current else { return }
@@ -1145,6 +1163,13 @@ private struct AlbumViewer: View {
                         doodling = DoodleTarget(photo: photo, image: image)
                     } label: {
                         actionKey("落書き", systemImage: "pencil.tip.crop.circle")
+                    }
+                }
+                if store.isEdited(photo.id) {
+                    Button {
+                        confirmingRevert = true
+                    } label: {
+                        actionKey("元に戻す", systemImage: "arrow.uturn.backward.circle")
                     }
                 }
                 if canShootLikeThis {

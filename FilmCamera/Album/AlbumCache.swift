@@ -15,6 +15,8 @@ struct AlbumCache {
         /// 撮った場所（記録されていれば）
         var latitude: Double? = nil
         var longitude: Double? = nil
+        /// 落書きで上書きしてあるか
+        var edited: Bool? = nil
     }
 
     struct Reaction: Codable {

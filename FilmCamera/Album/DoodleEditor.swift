@@ -2,7 +2,7 @@ import PencilKit
 import SwiftUI
 
 /// 写真への落書き。PencilKit のペン・マーカー・消しゴム・色えらび（下の道具パレット）で写真の上に描き、
-/// 「アルバムに追加」で、写真と落書きを重ねた 1 枚を新しい写真として共有アルバムに入れる（元の写真はそのまま）
+/// 「保存」で、写真と落書きを重ねた 1 枚で写真を上書きする（元の写真は iCloud に取っておき、「元に戻す」で戻せる）
 struct DoodleEditor: View {
     let image: UIImage
     /// 重ねた画像を受け取る
@@ -38,7 +38,7 @@ struct DoodleEditor: View {
                     Button("やめる") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("アルバムに追加") {
+                    Button("保存") {
                         onSave(composite())
                         dismiss()
                     }
