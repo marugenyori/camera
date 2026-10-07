@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreLocation
 
 /// 撮影画面（共有アルバムの右下のボタンで全画面で開く。「アルバムに戻る」で閉じる）。teenage engineering の機材のような見た目：
 /// アルミ色の筐体に画面を大きくはめ込み、上にランプつきの機能キー、下にスライドで選ぶモードと大きなシャッター、オレンジの差し色
@@ -61,11 +62,13 @@ struct ContentView: View {
         .statusBarHidden(true)
         .onAppear {
             camera.start()
+            LocationProvider.shared.start()
             applyRequestedMode()
         }
         .onDisappear {
             if camera.isRecording { camera.stopRecording() }
             camera.stop()
+            LocationProvider.shared.stop()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -100,7 +103,8 @@ struct ContentView: View {
         .sheet(isPresented: $showingPhoto) {
             if let photo = camera.lastPhoto {
                 PhotoSheet(image: photo, addToAlbum: camera.lastPhotoFile.map { file -> () -> Void in
-                    { album.add(data: file.data, type: file.type, thumbnail: photo, mode: file.mode) }
+                    { album.add(data: file.data, type: file.type, thumbnail: photo, mode: file.mode,
+                                location: LocationProvider.shared.recent) }
                 })
             }
         }

@@ -1,8 +1,10 @@
 import CloudKit
+import CoreLocation
 import ImageIO
 import Photos
 import SwiftUI
 import UIKit
+import WidgetKit
 
 /// 共有アルバムの 1 枚
 struct AlbumPhoto: Identifiable, Equatable {
@@ -12,6 +14,8 @@ struct AlbumPhoto: Identifiable, Equatable {
     let thumbnail: UIImage?
     /// 入れた人（CloudKit が自動で記録する作成者。自分が入れたものは "__defaultOwner__" のこともある）
     let creator: String?
+    /// 撮った場所（記録されていれば）
+    var location: CLLocationCoordinate2D? = nil
 
     static func == (a: AlbumPhoto, b: AlbumPhoto) -> Bool { a.id == b.id }
 }
@@ -238,7 +242,7 @@ final class AlbumStore: ObservableObject {
         var more = true
         while more {
             let changes = try await db.recordZoneChanges(inZoneWith: album.zoneID, since: token,
-                                                         desiredKeys: ["thumbnail", "takenAt", "mode",
+                                                         desiredKeys: ["thumbnail", "takenAt", "mode", "location",
                                                                        "photo", "kind", "text", "createdAt"])
             for (_, result) in changes.modificationResultsByID {
                 guard case .success(let modification) = result else { continue }
@@ -250,7 +254,9 @@ final class AlbumStore: ObservableObject {
                         name: name,
                         takenAt: record["takenAt"] as? Date ?? record.creationDate ?? .distantPast,
                         mode: record["mode"] as? String ?? "",
-                        creator: record.creatorUserRecordID?.recordName)
+                        creator: record.creatorUserRecordID?.recordName,
+                        latitude: (record["location"] as? CLLocation)?.coordinate.latitude,
+                        longitude: (record["location"] as? CLLocation)?.coordinate.longitude)
                     if let url = (record["thumbnail"] as? CKAsset)?.fileURL,
                        let image = Self.downsample(url, maxPixel: 600) {
                         cache.store(image, at: cache.thumbnailURL(name), quality: 0.8)
@@ -296,18 +302,46 @@ final class AlbumStore: ObservableObject {
             AlbumPhoto(id: CKRecord.ID(recordName: photo.name, zoneID: album.zoneID),
                        takenAt: photo.takenAt, mode: photo.mode,
                        thumbnail: thumbnail(photo.name, album: album, cache: cache),
-                       creator: photo.creator)
+                       creator: photo.creator,
+                       location: photo.latitude.flatMap { latitude in
+                           photo.longitude.map { CLLocationCoordinate2D(latitude: latitude, longitude: $0) }
+                       })
         }
         .sorted { $0.takenAt > $1.takenAt }
         covers[album.id] = list.first?.thumbnail
         photos = list
         shownAlbumID = album.id
+        updateWidget(list, album: album)
         let loaded = state.reactions.values.compactMap { item -> AlbumReaction? in
             guard let kind = AlbumReaction.Kind(rawValue: item.kind) else { return nil }
             return AlbumReaction(id: CKRecord.ID(recordName: item.name, zoneID: album.zoneID), photo: item.photo,
                                  kind: kind, text: item.text, creator: item.creator, createdAt: item.createdAt)
         }
         reactions = Dictionary(grouping: loaded, by: \.photo).mapValues { $0.sorted { $0.createdAt < $1.createdAt } }
+    }
+
+    /// ホーム画面のウィジェットに、選んでいるアルバムの新しい写真を渡す（変わったときだけ書き直す）
+    private func updateWidget(_ list: [AlbumPhoto], album: AlbumRef) {
+        let newest = Array(list.prefix(AlbumWidgetData.maxEntries))
+        let files = newest.map { $0.id.recordName + ".jpg" }
+        let current = AlbumWidgetData.load()
+        guard current.entries.map(\.file) != files || current.entries.first?.albumTitle != album.title,
+              let folder = AlbumWidgetData.folder else { return }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // 前の画像は消して、新しい分だけ置く
+        for old in current.entries where !files.contains(old.file) {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(old.file))
+        }
+        var data = AlbumWidgetData()
+        for (photo, file) in zip(newest, files) {
+            if let image = photo.thumbnail, let jpeg = image.jpegData(compressionQuality: 0.8) {
+                try? jpeg.write(to: folder.appendingPathComponent(file), options: .atomic)
+            }
+            data.entries.append(.init(file: file, albumTitle: album.title, who: creatorName(of: photo),
+                                      takenAt: photo.takenAt))
+        }
+        data.save()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func thumbnail(_ name: String, album: AlbumRef, cache: AlbumCache) -> UIImage? {
@@ -497,7 +531,8 @@ final class AlbumStore: ObservableObject {
         guard let url = await fullFile(of: photo), let data = try? Data(contentsOf: url) else { return false }
         let type = CGImageSourceCreateWithData(data as CFData, nil)
             .flatMap { CGImageSourceGetType($0) as String? } ?? "public.jpeg"
-        add(data: data, type: type, thumbnail: photo.thumbnail, mode: photo.mode, to: target)
+        add(data: data, type: type, thumbnail: photo.thumbnail, mode: photo.mode,
+            location: photo.location.map { CLLocation(latitude: $0.latitude, longitude: $0.longitude) }, to: target)
         return true
     }
 
@@ -557,7 +592,8 @@ final class AlbumStore: ObservableObject {
                 kCGImageSourceThumbnailMaxPixelSize: 800,
             ]
             let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map(UIImage.init(cgImage:))
-            add(data: data, type: type, thumbnail: thumbnail, mode: "写真から")
+            add(data: data, type: type, thumbnail: thumbnail, mode: "写真から",
+                location: LocationProvider.location(inImage: data))
         }
     }
 
@@ -566,11 +602,12 @@ final class AlbumStore: ObservableObject {
     /// 撮った写真を自動で入れる設定なら、選んでいるアルバムに入れる
     func addIfAutomatic(data: Data, type: String, thumbnail: UIImage?, mode: String) {
         guard autoAdd else { return }
-        add(data: data, type: type, thumbnail: thumbnail, mode: mode)
+        add(data: data, type: type, thumbnail: thumbnail, mode: mode, location: LocationProvider.shared.recent)
     }
 
     /// 写真をアルバムに入れる（target を省くと、選んでいるアルバム）
-    func add(data: Data, type: String, thumbnail: UIImage?, mode: String, to target: AlbumRef? = nil) {
+    func add(data: Data, type: String, thumbnail: UIImage?, mode: String, location: CLLocation? = nil,
+             to target: AlbumRef? = nil) {
         Task {
             if albums.isEmpty { await refresh() }
             guard let album = target ?? selected else {
@@ -601,10 +638,19 @@ final class AlbumStore: ObservableObject {
                 }
                 defer { if let thumbURL { try? FileManager.default.removeItem(at: thumbURL) } }
 
-                let saved = try await database(for: album).save(record)
+                // 撮った場所。iCloud のスキーマに location がまだない（Deploy 前）ときは、場所なしで保存し直す
+                record["location"] = location
+                let saved: CKRecord
+                if location != nil, let withPlace = try? await database(for: album).save(record) {
+                    saved = withPlace
+                } else {
+                    record["location"] = nil
+                    saved = try await database(for: album).save(record)
+                }
                 if album.id == selected?.id {
                     photos.insert(AlbumPhoto(id: saved.recordID, takenAt: Date(), mode: mode, thumbnail: thumbnail,
-                                             creator: CKCurrentUserDefaultName), at: 0)
+                                             creator: CKCurrentUserDefaultName,
+                                             location: (saved["location"] as? CLLocation)?.coordinate), at: 0)
                 }
                 counts[album.id, default: 0] += 1
                 if let thumbnail { covers[album.id] = thumbnail }

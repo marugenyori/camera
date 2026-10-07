@@ -6,6 +6,8 @@ on:
     branches: [main]
     paths:
       - "FilmCamera/**"
+      - "FilmCameraWidget/**"
+      - "Shared/**"
       - "FilmCamera.xcodeproj/**"
       - ".github/workflows/ios-build.yml"
   workflow_dispatch:

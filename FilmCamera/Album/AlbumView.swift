@@ -1,4 +1,6 @@
 import CloudKit
+import CoreLocation
+import MapKit
 import PhotosUI
 import SwiftUI
 
@@ -30,6 +32,8 @@ struct AlbumView: View {
     @State private var confirmingDelete = false
     @State private var importItems: [PhotosPickerItem] = []
     @State private var toast: String?
+    /// 写真を地図で見る
+    @State private var showingMap = false
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 3)]
 
@@ -57,7 +61,7 @@ struct AlbumView: View {
                     infoPanel
                     if !people.isEmpty { personChips }
                     messages
-                    photoSections
+                    if showingMap { mapSection } else { photoSections }
                 }
                 .padding(.vertical, 12)
             }
@@ -431,6 +435,67 @@ struct AlbumView: View {
         .padding(.bottom, selecting ? 90 : (onOpenCamera == nil ? 20 : 110))
     }
 
+    // MARK: - 地図
+
+    /// 撮った場所が記録されている写真を、地図の上に並べる。押すとその写真を開く
+    private var mapSection: some View {
+        let located = visiblePhotos.filter { $0.location != nil }
+        return VStack(alignment: .leading, spacing: 8) {
+            if located.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "map")
+                        .font(.largeTitle)
+                        .foregroundStyle(Deck.print.opacity(0.6))
+                    Text("場所の付いた写真がまだありません")
+                        .font(.headline)
+                        .foregroundStyle(Deck.ink)
+                    Text("カメラで撮ると、撮った場所が記録されます（位置情報を許可してください）。写真アプリから入れた写真も、場所の情報があれば地図に出ます。")
+                        .font(.footnote)
+                        .foregroundStyle(Deck.print)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 30)
+            } else {
+                Text("\(located.count) 枚に場所が記録されています")
+                    .font(.caption)
+                    .foregroundStyle(Deck.print)
+                Map(initialPosition: .automatic) {
+                    ForEach(located) { photo in
+                        Annotation("", coordinate: photo.location ?? CLLocationCoordinate2D()) {
+                            Button {
+                                if let index = located.firstIndex(of: photo) {
+                                    viewing = ViewerStart(photos: located, index: index)
+                                }
+                            } label: {
+                                mapPin(photo)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(height: 480)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, onOpenCamera == nil ? 20 : 110)
+    }
+
+    private func mapPin(_ photo: AlbumPhoto) -> some View {
+        Group {
+            if let image = photo.thumbnail {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Deck.display
+            }
+        }
+        .frame(width: 46, height: 46)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(.white, lineWidth: 2.5))
+        .shadow(color: .black.opacity(0.35), radius: 3, y: 2)
+    }
+
     private func thumbnail(_ photo: AlbumPhoto, action: @escaping () -> Void) -> some View {
         let isPicked = picked.contains(photo.id)
         let mine = store.isMine(photo)
@@ -598,6 +663,12 @@ struct AlbumView: View {
         }
         ToolbarItemGroup(placement: .primaryAction) {
             if !selecting {
+                Button {
+                    withAnimation { showingMap.toggle() }
+                } label: {
+                    Image(systemName: showingMap ? "square.grid.2x2" : "map")
+                }
+                .accessibilityLabel(showingMap ? "一覧で見る" : "地図で見る")
                 PhotosPicker(selection: $importItems, maxSelectionCount: 30, matching: .images) {
                     Image(systemName: "plus")
                 }
@@ -659,6 +730,16 @@ private struct AlbumViewer: View {
     @State private var toast: String?
     /// コメントを写真の上に流すか（ニコニコ動画のように）
     @AppStorage("albumDanmaku") private var danmakuOn = true
+    /// 落書きする写真
+    @State private var doodling: DoodleTarget?
+    /// 撮った場所の名前（写真ごと）
+    @State private var places: [CKRecord.ID: String] = [:]
+
+    struct DoodleTarget: Identifiable {
+        let id = UUID()
+        let photo: AlbumPhoto
+        let image: UIImage
+    }
     @State private var draft = ""
 
     /// すぐ押せる絵文字
@@ -720,6 +801,15 @@ private struct AlbumViewer: View {
                     .presentationDetents([.medium, .large])
             }
         }
+        .fullScreenCover(item: $doodling) { target in
+            DoodleEditor(image: target.image) { result in
+                guard let jpeg = result.jpegData(compressionQuality: 0.9) else { return }
+                let location = target.photo.location.map { CLLocation(latitude: $0.latitude, longitude: $0.longitude) }
+                store.add(data: jpeg, type: "public.jpeg", thumbnail: result, mode: "落書き", location: location)
+                flash("落書きをアルバムに追加しています")
+            }
+        }
+        .task(id: index) { await lookUpPlace() }
         .confirmationDialog("この写真を削除しますか？", isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("削除する", role: .destructive) {
                 guard let photo = current else { return }
@@ -801,6 +891,11 @@ private struct AlbumViewer: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.subheadline.weight(.bold))
                 Text(detail).font(.caption).foregroundStyle(.white.opacity(0.65))
+                if let place = places[photo.id] {
+                    Label(place, systemImage: "mappin.and.ellipse")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
             }
             Spacer(minLength: 4)
             Button {
@@ -946,6 +1041,13 @@ private struct AlbumViewer: View {
                 } label: {
                     actionKey("保存", systemImage: "square.and.arrow.down")
                 }
+                if let image = full[photo.id] {
+                    Button {
+                        doodling = DoodleTarget(photo: photo, image: image)
+                    } label: {
+                        actionKey("落書き", systemImage: "pencil.tip.crop.circle")
+                    }
+                }
                 if canShootLikeThis {
                     Button {
                         store.requestedMode = photo.mode
@@ -1000,6 +1102,18 @@ private struct AlbumViewer: View {
             heartPop += 1
         }
         Task { await store.toggleLike(photo) }
+    }
+
+    /// 開いている写真の撮った場所を、地名にする（例：東京都渋谷区）
+    private func lookUpPlace() async {
+        guard let photo = current, places[photo.id] == nil, let coordinate = photo.location else { return }
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        guard let mark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return }
+        let name = [mark.administrativeArea, mark.locality, mark.subLocality]
+            .compactMap { $0 }
+            .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            .joined()
+        places[photo.id] = name.isEmpty ? (mark.name ?? "") : name
     }
 
     private func load(_ photo: AlbumPhoto) async {

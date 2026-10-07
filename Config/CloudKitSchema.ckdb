@@ -8,6 +8,7 @@ DEFINE SCHEMA
         "___modifiedBy" REFERENCE,
         "___recordID"   REFERENCE,
         image           ASSET,
+        location        LOCATION,
         mode            STRING,
         takenAt         TIMESTAMP,
         thumbnail       ASSET,

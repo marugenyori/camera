@@ -12,6 +12,9 @@ struct AlbumCache {
         let takenAt: Date
         let mode: String
         let creator: String?
+        /// 撮った場所（記録されていれば）
+        var latitude: Double? = nil
+        var longitude: Double? = nil
     }
 
     struct Reaction: Codable {
