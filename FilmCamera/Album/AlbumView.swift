@@ -63,7 +63,11 @@ struct AlbumView: View {
             }
             .background(Deck.body.ignoresSafeArea())
             .overlay {
-                if store.isLoading && store.photos.isEmpty { ProgressView() }
+                if store.isLoading && store.photos.isEmpty {
+                    ProgressView("写真を読み込んでいます")
+                        .font(.footnote)
+                        .padding(.top, 260)
+                }
             }
             .overlay(alignment: .bottom) { bottomBar }
             .refreshable { await store.refresh() }

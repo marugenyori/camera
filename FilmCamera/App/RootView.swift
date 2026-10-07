@@ -4,6 +4,7 @@ import SwiftUI
 /// 起動直後はレンズの絞りが開く起動画面を重ねる
 struct RootView: View {
     @ObservedObject private var album = AlbumStore.shared
+    @StateObject private var camera = CameraModel()
     @State private var showingCamera = false
     @State private var showingSplash = true
 
@@ -20,7 +21,7 @@ struct RootView: View {
         }
         .preferredColorScheme(.light)
         .fullScreenCover(isPresented: $showingCamera) {
-            ContentView()
+            ContentView(camera: camera)
                 .preferredColorScheme(.dark)
         }
         // 招待を受けたときや通知をタップしたとき：カメラを閉じてアルバムに戻る

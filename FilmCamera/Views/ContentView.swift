@@ -3,7 +3,8 @@ import SwiftUI
 /// 撮影画面（共有アルバムの右下のボタンで全画面で開く。「アルバムに戻る」で閉じる）。teenage engineering の機材のような見た目：
 /// アルミ色の筐体に画面を大きくはめ込み、上にランプつきの機能キー、下にスライドで選ぶモードと大きなシャッター、オレンジの差し色
 struct ContentView: View {
-    @StateObject private var camera = CameraModel()
+    /// カメラはアプリ全体で 1 つ（閉じても最後に撮った写真や設定が残るよう、RootView が持つ）
+    @ObservedObject var camera: CameraModel
     @ObservedObject private var album = AlbumStore.shared
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss

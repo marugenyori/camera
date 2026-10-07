@@ -118,6 +118,8 @@ final class AlbumStore: ObservableObject {
 
     /// 一覧用の小さい画像を、読み込み直さずに使い回す（アルバム ID|レコード名 → 画像）
     private var thumbMemory: [String: UIImage] = [:]
+    /// いま画面に出している写真がどのアルバムのものか
+    private var shownAlbumID: String?
 
     private init() {
         autoAdd = UserDefaults.standard.bool(forKey: "albumAutoAdd")
@@ -192,7 +194,15 @@ final class AlbumStore: ObservableObject {
         guard let album = selected else { return }
         let cache = AlbumCache(albumID: album.id)
         var state = cache.load()
-        apply(state, to: album)
+        if state.token != nil || !state.photos.isEmpty {
+            apply(state, to: album)
+        } else if shownAlbumID != album.id {
+            // 控えがまだない（初めて開く）アルバム：読み終わるまで「読み込み中」を出す
+            photos = []
+            reactions = [:]
+        }
+        isLoading = true
+        defer { isLoading = false }
         let db = database(for: album)
         do {
             if album.isOwner { try await Self.ensureZone(album.zoneID) }
@@ -291,6 +301,7 @@ final class AlbumStore: ObservableObject {
         .sorted { $0.takenAt > $1.takenAt }
         covers[album.id] = list.first?.thumbnail
         photos = list
+        shownAlbumID = album.id
         let loaded = state.reactions.values.compactMap { item -> AlbumReaction? in
             guard let kind = AlbumReaction.Kind(rawValue: item.kind) else { return nil }
             return AlbumReaction(id: CKRecord.ID(recordName: item.name, zoneID: album.zoneID), photo: item.photo,

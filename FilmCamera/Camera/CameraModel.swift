@@ -20,7 +20,20 @@ final class CameraModel: NSObject, ObservableObject {
 
     @Published private(set) var status: Status = .idle
     @Published private(set) var position: AVCaptureDevice.Position = .back
-    @Published private(set) var lastPhoto: UIImage?
+    /// 最後に撮った写真（左下の小窓）。アプリを閉じても残るよう、小さく保存しておく
+    @Published private(set) var lastPhoto: UIImage? {
+        didSet {
+            let url = Self.lastPhotoURL
+            let data = lastPhoto?.jpegData(compressionQuality: 0.8)
+            DispatchQueue.global(qos: .utility).async {
+                if let data { try? data.write(to: url, options: .atomic) } else { try? FileManager.default.removeItem(at: url) }
+            }
+        }
+    }
+    private static var lastPhotoURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("lastPhoto.jpg")
+    }
     /// 最後に保存した写真のファイル（共有アルバムに送るため）
     private(set) var lastPhotoFile: (data: Data, type: String, mode: String)?
     @Published private(set) var isSaving = false
@@ -252,6 +265,9 @@ final class CameraModel: NSObject, ObservableObject {
         contactSlots = slots
         contactLabels = defaults.object(forKey: "contactLabels") as? Bool ?? true
         super.init()
+        try? FileManager.default.createDirectory(at: Self.lastPhotoURL.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        lastPhoto = UIImage(contentsOfFile: Self.lastPhotoURL.path)
         NotificationCenter.default.addObserver(self, selector: #selector(sessionRuntimeError(_:)),
                                                name: .AVCaptureSessionRuntimeError,
                                                object: session)
