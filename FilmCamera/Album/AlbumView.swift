@@ -15,6 +15,8 @@ private enum Deck {
 /// 共有アルバムの画面：アルバムの切り替え、メンバーと招待、入れた人で絞り込み、日付ごとの写真、まとめて保存・削除
 struct AlbumView: View {
     @ObservedObject var store: AlbumStore
+    /// アプリの最初の画面として使うとき、カメラを開く（右下の大きなボタン）
+    var onOpenCamera: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var viewing: ViewerStart?
     @State private var showingNewAlbum = false
@@ -422,7 +424,7 @@ struct AlbumView: View {
                 }
             }
         }
-        .padding(.bottom, selecting ? 90 : 20)
+        .padding(.bottom, selecting ? 90 : (onOpenCamera == nil ? 20 : 110))
     }
 
     private func thumbnail(_ photo: AlbumPhoto, action: @escaping () -> Void) -> some View {
@@ -506,9 +508,33 @@ struct AlbumView: View {
                     .background(Capsule().fill(Deck.display))
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            if selecting { selectionBar }
+            if selecting {
+                selectionBar
+            } else if let onOpenCamera {
+                cameraButton(onOpenCamera)
+            }
         }
         .padding(.bottom, 8)
+    }
+
+    /// カメラを開く大きなボタン（カメラのシャッターと同じ形）
+    private func cameraButton(_ open: @escaping () -> Void) -> some View {
+        Button(action: open) {
+            ZStack {
+                Circle()
+                    .fill(Deck.key)
+                    .shadow(color: .black.opacity(0.25), radius: 0, x: 0, y: 3)
+                Circle()
+                    .fill(Deck.orange)
+                    .padding(7)
+                Image(systemName: "camera.fill")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 72, height: 72)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("カメラで撮る")
     }
 
     private var selectionBar: some View {
@@ -559,9 +585,11 @@ struct AlbumView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .cancellationAction) {
-            Button(selecting ? "完了" : "閉じる") {
-                if selecting { endSelecting() } else { dismiss() }
+        if selecting || onOpenCamera == nil {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(selecting ? "完了" : "閉じる") {
+                    if selecting { endSelecting() } else { dismiss() }
+                }
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {
@@ -917,6 +945,7 @@ private struct AlbumViewer: View {
                 if canShootLikeThis {
                     Button {
                         store.requestedMode = photo.mode
+                        dismiss()
                     } label: {
                         actionKey("このフィルタで撮る", systemImage: "camera.filters")
                     }

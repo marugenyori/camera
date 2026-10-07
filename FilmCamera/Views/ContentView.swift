@@ -1,20 +1,17 @@
 import SwiftUI
 
-/// 撮影画面。teenage engineering の機材のような見た目：
+/// 撮影画面（共有アルバムの右下のボタンで全画面で開く。「アルバムに戻る」で閉じる）。teenage engineering の機材のような見た目：
 /// アルミ色の筐体に画面を大きくはめ込み、上にランプつきの機能キー、下にスライドで選ぶモードと大きなシャッター、オレンジの差し色
 struct ContentView: View {
     @StateObject private var camera = CameraModel()
     @ObservedObject private var album = AlbumStore.shared
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dismiss) private var dismiss
     @State private var flashOpacity = 0.0
     @State private var showingPhoto = false
     @State private var showingContactSettings = false
     /// 隠しゲーム（倍率の黒い小窓を長押しすると開く）
     @State private var showingGame = false
-    /// 起動したときに一度だけ、共有アルバムを最初に開く
-    @State private var openedAlbumAtLaunch = false
-    /// 起動画面（レンズの絞りが開く）
-    @State private var showingSplash = true
     @AppStorage("showGrid") private var showGrid = false
 
     var body: some View {
@@ -59,23 +56,15 @@ struct ContentView: View {
                 .opacity(flashOpacity)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
-
-            if showingSplash {
-                SplashView {
-                    withAnimation(.easeOut(duration: 0.4)) { showingSplash = false }
-                    // 起動画面が消えたら、共有アルバムを開く
-                    if !openedAlbumAtLaunch {
-                        openedAlbumAtLaunch = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { album.showAlbum = true }
-                    }
-                }
-                .transition(.opacity)
-                .zIndex(10)
-            }
         }
         .statusBarHidden(true)
         .onAppear {
             camera.start()
+            applyRequestedMode()
+        }
+        .onDisappear {
+            if camera.isRecording { camera.stopRecording() }
+            camera.stop()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -114,16 +103,7 @@ struct ContentView: View {
                 })
             }
         }
-        .sheet(isPresented: $album.showAlbum) {
-            AlbumView(store: album)
-        }
-        .onChange(of: album.requestedMode) { _, title in
-            // アルバムの写真の「このフィルタで撮る」：そのモードに切り替えて撮影に戻る
-            guard let title else { return }
-            if let mode = LookMode.allCases.first(where: { $0.title == title }) { camera.mode = mode }
-            album.requestedMode = nil
-            album.showAlbum = false
-        }
+        .onChange(of: album.requestedMode) { _, _ in applyRequestedMode() }
         .fullScreenCover(isPresented: $showingGame) {
             GameHubView(initialImage: camera.lastPhoto)
         }
@@ -252,6 +232,13 @@ struct ContentView: View {
     // MARK: - 操作パネル
 
     /// 下の段：スライドで選ぶモードと、シャッター・最後の写真・写真／ビデオ
+    /// アルバムの写真の「このフィルタで撮る」で選ばれたモードに切り替える
+    private func applyRequestedMode() {
+        guard let title = album.requestedMode else { return }
+        if let mode = LookMode.allCases.first(where: { $0.title == title }) { camera.mode = mode }
+        album.requestedMode = nil
+    }
+
     private var controlPanel: some View {
         VStack(spacing: 6) {
             ModeSlider(selection: $camera.mode)
@@ -260,8 +247,8 @@ struct ContentView: View {
             HStack {
                 HStack(spacing: 8) {
                     thumbnail
-                    FunctionKey(systemImage: "person.2.fill", isOn: album.autoAdd, label: "共有アルバム") {
-                        album.showAlbum = true
+                    FunctionKey(systemImage: "person.2.fill", isOn: album.autoAdd, label: "アルバムに戻る") {
+                        dismiss()
                     }
                 }
                 .frame(width: 96, alignment: .leading)
