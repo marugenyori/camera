@@ -130,6 +130,7 @@ final class AlbumStore: ObservableObject {
     private var shownAlbumID: String?
 
     private init() {
+        AlbumCache.clearFullImagesOnce()
         autoAdd = UserDefaults.standard.bool(forKey: "albumAutoAdd")
         selectedID = UserDefaults.standard.string(forKey: "albumSelected")
         // 前回の控えから、アルバムの一覧と写真をすぐ出す（iCloud からは後で差分だけ取り込む）

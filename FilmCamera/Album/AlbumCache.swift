@@ -113,6 +113,18 @@ struct AlbumCache {
         try? FileManager.default.removeItem(at: fullURL(name))
     }
 
+    /// 大きく見る用の控え（full/）を、全アルバムで一度だけ消す。
+    /// 落書きで写真が書き換わっても古い控えが残り、開くと落書き前の写真が出ていたため（今は書き換わったら消している）
+    static func clearFullImagesOnce() {
+        let key = "albumFullCacheCleared1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let folders = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        for folder in folders {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent("full", isDirectory: true))
+        }
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
     // MARK: アルバムの一覧
 
     static func loadAlbums() -> [Album] {
