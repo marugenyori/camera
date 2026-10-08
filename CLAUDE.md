@@ -65,7 +65,7 @@
   - 撮った場所と地図：カメラを開いている間だけ位置情報を受け取り（`LocationProvider`、10 分以内のものだけ使う）、写真のレコードの `location`（LOCATION）に入れる。写真アプリから入れた写真は EXIF の GPS。**スキーマに location を足したので Deploy が必要**（Deploy 前は場所なしで保存し直すので写真は入る）。アルバム右上の地図ボタンで、場所のある写真を地図に並べる（`Map`、押すと開く）。写真を開くと地名（逆ジオコーディング）
   - まとめて選ぶ：右上の「選択」、または写真の長押しで選択を始める。日付ごと・全体の「すべて選択」。選んだ写真はまとめて共有（`ActivityView`）・写真アプリに保存・ほかのアルバムへ・削除
   - コメントの通知：非公開 DB と共有 DB に `CKDatabaseSubscription`（ID は `album-private-alert` / `album-shared-alert`）を**目に見える通知＋ mutable-content** で登録する（音の出ないプッシュだけだと、アプリを閉じていると届かないことが多かったため。旧 ID `album-private` / `album-shared` は消す）。届いた通知は**通知拡張 `FilmCameraNotify/`**（ターゲット ID 末尾 `026`、Bundle ID は `$(APP_BUNDLE_ID).notify`）が iCloud から変更を読み、「〇〇さんがコメントしました：本文」に書き換える。友だちの動きでなければ文を空にして出さない
-    - 読み取りと通知の文は `Shared/AlbumActivity.swift`（アプリと拡張の両方）：友だちのコメント、自分の写真へのいいね・絵文字、友だちが追加した写真（人ごとにまとめる）。読んだ位置（`CKServerChangeToken`）は App Group の UserDefaults に置き、アプリと拡張で共有（二重に出さない）。初めて見るアルバムは位置を覚えるだけ
+    - 読み取りと通知の文は `Shared/AlbumActivity.swift`（アプリと拡張の両方）：友だちのコメント（だれの写真か・本文）、自分の写真へのいいね・絵文字、友だちが追加した写真（人ごとにまとめる）、友だちの落書き（`lastModifiedUserRecordID` で判定）。対象の写真の小さい画像を通知に添える（`UNNotificationAttachment`）。自分の recordName は App Group に覚えて、毎回 iCloud に聞かない。読んだ位置（`CKServerChangeToken`）は App Group の UserDefaults に置き、アプリと拡張で共有（二重に出さない）。初めて見るアルバムは位置を覚えるだけ
     - 拡張の中では `CKContainer.default()` が拡張の名前になるので、`CKContainer(identifier: "iCloud." + アプリの Bundle ID)` を使う
     - アプリ側（`AlbumNotifier.swift`）：許可をたずねる、見張りの登録、アプリに戻ったときの取りこぼし確認、タップでアルバムを開く
     - **Apple Developer の作業**：App ID で Push Notifications（アプリ本体）、`…notify` の App ID に iCloud（コンテナ `iCloud.` + Bundle ID）と App Group（`group.` + Bundle ID）

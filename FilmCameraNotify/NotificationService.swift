@@ -20,7 +20,7 @@ final class NotificationService: UNNotificationServiceExtension {
                 content.body = ""
                 content.sound = nil
             } else {
-                AlbumActivity.fill(content, with: events)
+                AlbumActivity.fill(content, with: events[0], others: events.count - 1)
             }
             finish()
         }

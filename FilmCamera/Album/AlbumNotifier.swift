@@ -87,12 +87,7 @@ final class AlbumNotifier: NSObject, UNUserNotificationCenterDelegate {
         // たくさんあるときは 3 件まで出して、残りはまとめる
         for event in events.prefix(3) {
             let content = UNMutableNotificationContent()
-            content.title = event.title
-            content.subtitle = event.album
-            content.body = event.body
-            content.sound = .default
-            content.threadIdentifier = "album"
-            content.userInfo = ["album": true]
+            AlbumActivity.fill(content, with: event)
             try? await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
         if events.count > 3 {

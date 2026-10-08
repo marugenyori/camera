@@ -254,6 +254,11 @@ final class AlbumStore: ObservableObject {
                 let name = record.recordID.recordName
                 switch record.recordType {
                 case Self.recordType:
+                    // 前からある写真が書き換わった（落書き・元に戻す）：大きく見る用の控えは古いので捨てて、次に開いたとき読み直す
+                    if state.photos[name] != nil {
+                        try? FileManager.default.removeItem(at: cache.fullURL(name))
+                        fullCache[record.recordID] = nil
+                    }
                     state.photos[name] = AlbumCache.Photo(
                         name: name,
                         takenAt: record["takenAt"] as? Date ?? record.creationDate ?? .distantPast,
