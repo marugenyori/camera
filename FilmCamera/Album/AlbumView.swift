@@ -814,7 +814,7 @@ struct AlbumView: View {
 
 // MARK: - 1 枚ずつ大きく見る
 
-/// 写真を大きく見る。左右にめくり、ピンチで拡大、ダブルタップでいいね。
+/// 写真を大きく見る。左右にめくり、ピンチ・ダブルタップで拡大。
 /// 下のパネルに、入れた人・日時・フィルタ、いいね・絵文字・コメント、共有・保存・このフィルタで撮る・ほかのアルバムへ・削除
 private struct AlbumViewer: View {
     @ObservedObject var store: AlbumStore
@@ -859,9 +859,7 @@ private struct AlbumViewer: View {
             TabView(selection: $index) {
                 ForEach(photos.indices, id: \.self) { offset in
                     let photo = photos[offset]
-                    ZoomableImage(image: full[photo.id] ?? photo.thumbnail) {
-                        like(photo, fromDoubleTap: true)
-                    }
+                    ZoomableImage(image: full[photo.id] ?? photo.thumbnail)
                     .overlay {
                         if full[photo.id] == nil { ProgressView().tint(.white) }
                     }
@@ -1489,10 +1487,9 @@ private struct CommentsSheet: View {
 }
 
 /// ピンチで拡大できる画像。拡大中だけドラッグで動かせる（それ以外は左右にめくれる）。
-/// ダブルタップは、拡大中なら元に戻し、そうでなければ onDoubleTap（いいね）
+/// ダブルタップは、拡大中なら元に戻し、そうでなければタップした所を中心に 2.5 倍に拡大
 private struct ZoomableImage: View {
     let image: UIImage?
-    var onDoubleTap: () -> Void = {}
     @State private var scale: CGFloat = 1
     @State private var lastScale: CGFloat = 1
     @State private var offset: CGSize = .zero
@@ -1528,11 +1525,20 @@ private struct ZoomableImage: View {
                     .onEnded { _ in lastOffset = offset },
                 including: scale > 1 ? .all : .subviews
             )
-            .onTapGesture(count: 2) {
-                if scale > 1 {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { reset() }
-                } else {
-                    onDoubleTap()
+            .onTapGesture(count: 2, coordinateSpace: .local) { location in
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    if scale > 1 {
+                        reset()
+                    } else {
+                        // タップした所が画面の同じ位置に残るように、拡大してずらす
+                        let zoom: CGFloat = 2.5
+                        let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+                        scale = zoom
+                        lastScale = zoom
+                        offset = CGSize(width: (center.x - location.x) * (zoom - 1),
+                                        height: (center.y - location.y) * (zoom - 1))
+                        lastOffset = offset
+                    }
                 }
             }
         }
