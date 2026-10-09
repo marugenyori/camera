@@ -78,6 +78,8 @@ final class ExilimModel: ObservableObject {
     @Published var whiteBalance: Int?
     @Published var battery: Int?
     @Published var capacity: Int?
+    /// カメラがアプリからの設定（タイマー・露出・色合い・電池）に答えるか。EX-FR100（API 4.0.0）は断った
+    @Published var settingsSupported = true
     @Published var autoAdd = UserDefaults.standard.object(forKey: "exilimAutoAdd") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoAdd, forKey: "exilimAutoAdd") }
     }
@@ -123,7 +125,7 @@ final class ExilimModel: ObservableObject {
         phase = .searching
         // Wi-Fi が切り替わってカメラが答えるまで、0.3 秒おきに聞く（最大 45 秒）。
         // いつもの 192.168.100.2 だけを聞き、近くのアドレスまで探すのはときどき
-        let deadline = Date().addingTimeInterval(joinError == nil ? 45 : 4)
+        var deadline = Date().addingTimeInterval(joinError == nil ? 45 : 4)
         var round = 0
         var lastReport = Date()
         var lastWiFiCheck = Date()
@@ -137,7 +139,17 @@ final class ExilimModel: ObservableObject {
             if joinError == nil, Date().timeIntervalSince(lastWiFiCheck) >= 2 {
                 lastWiFiCheck = Date()
                 let elapsed = Date().timeIntervalSince(started)
-                if await ExilimWiFi.isOnCameraWiFi() == false, elapsed >= 10 {
+                let onCamera = await ExilimWiFi.isOnCameraWiFi()
+                // カメラの Wi-Fi には入れているのに 12 秒たっても答えないときも、1 回入り直す
+                // （実機では、閉じて開き直すと 6 秒でつながった。1 回目はカメラが前の接続を引きずっていることがある）
+                if onCamera != false, elapsed >= 12, !rejoined {
+                    rejoined = true
+                    ExilimLog.shared.add(String(format: "カメラが答えないので、Wi-Fi に入り直します（%.0f 秒）", elapsed))
+                    ExilimWiFi.leave()
+                    try? await Task.sleep(for: .seconds(1))
+                    _ = await ExilimWiFi.join()
+                    deadline = max(deadline, Date().addingTimeInterval(20))
+                } else if onCamera == false, elapsed >= 10 {
                     if !rejoined {
                         rejoined = true
                         ExilimLog.shared.add(String(format: "Wi-Fi：まだカメラの Wi-Fi に入れていません（%.0f 秒）。入り直します", elapsed))
@@ -425,10 +437,11 @@ final class ExilimModel: ObservableObject {
             battery = await client.getParam(.battery)
             capacity = await client.getParam(.snapCapacity)
         }
+        settingsSupported = await client.paramStyle != .unsupported
     }
 
     func loadBattery() async {
-        guard busy == nil else { return }
+        guard busy == nil, settingsSupported else { return }
         await withLivePaused {
             battery = await client.getParam(.battery)
             capacity = await client.getParam(.snapCapacity)
@@ -446,6 +459,9 @@ final class ExilimModel: ObservableObject {
                 case .whiteBalance: whiteBalance = value
                 default: break
                 }
+            } else if await client.paramStyle == .unsupported {
+                settingsSupported = false
+                message = "このカメラは、アプリからの設定の変更に対応していませんでした"
             } else {
                 message = "カメラの設定を変えられませんでした"
             }
@@ -800,38 +816,15 @@ struct ExilimView: View {
     private var remote: some View {
         VStack(spacing: 10) {
             liveView
-            HStack(spacing: 8) {
-                keyMenu(symbol: "timer",
-                        value: model.selfTimer == 0 ? "切" : "\(model.selfTimer)秒",
-                        lit: model.selfTimer > 0, label: "セルフタイマー") {
-                    Picker("セルフタイマー", selection: Binding(get: { model.selfTimer },
-                                                          set: { model.set(.selfTimer, $0) })) {
-                        Text("切").tag(0)
-                        Text("5 秒").tag(5)
-                        Text("10 秒").tag(10)
-                    }
-                }
-                keyMenu(symbol: "plusminus.circle",
-                        value: model.ev.flatMap { Self.evLabels[safe: $0 - 1] } ?? "±0",
-                        lit: (model.ev ?? 7) != 7, label: "露出補正") {
-                    Picker("露出補正", selection: Binding(get: { model.ev ?? 7 }, set: { model.set(.ev, $0) })) {
-                        ForEach(Array(Self.evLabels.enumerated().reversed()), id: \.offset) { index, label in
-                            Text(label).tag(index + 1)
-                        }
-                    }
-                }
-                keyMenu(symbol: model.whiteBalance.flatMap { Self.whiteBalanceSymbols[safe: $0 - 1] } ?? "a.circle",
-                        value: model.whiteBalance.flatMap { Self.whiteBalanceLabels[safe: $0 - 1] } ?? "オート",
-                        lit: (model.whiteBalance ?? 1) != 1, label: "ホワイトバランス") {
-                    Picker("ホワイトバランス", selection: Binding(get: { model.whiteBalance ?? 1 },
-                                                           set: { model.set(.whiteBalance, $0) })) {
-                        ForEach(Array(Self.whiteBalanceLabels.enumerated()), id: \.offset) { index, label in
-                            Label(label, systemImage: Self.whiteBalanceSymbols[index]).tag(index + 1)
-                        }
-                    }
-                }
+            if model.settingsSupported {
+                settingKeys
+            } else {
+                Text("このカメラは、アプリからタイマー・露出・色合いを変えられません（カメラ側の設定で撮ります）")
+                    .font(.caption)
+                    .foregroundStyle(Rig.print)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
             }
-            .padding(.horizontal, 12)
             Spacer(minLength: 0)
             HStack {
                 lastShotButton
@@ -849,6 +842,42 @@ struct ExilimView: View {
             .padding(.bottom, 10)
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: model.flash)
+    }
+
+    /// タイマー・露出・ホワイトバランスの機能キー
+    private var settingKeys: some View {
+        HStack(spacing: 8) {
+            keyMenu(symbol: "timer",
+                    value: model.selfTimer == 0 ? "切" : "\(model.selfTimer)秒",
+                    lit: model.selfTimer > 0, label: "セルフタイマー") {
+                Picker("セルフタイマー", selection: Binding(get: { model.selfTimer },
+                                                      set: { model.set(.selfTimer, $0) })) {
+                    Text("切").tag(0)
+                    Text("5 秒").tag(5)
+                    Text("10 秒").tag(10)
+                }
+            }
+            keyMenu(symbol: "plusminus.circle",
+                    value: model.ev.flatMap { Self.evLabels[safe: $0 - 1] } ?? "±0",
+                    lit: (model.ev ?? 7) != 7, label: "露出補正") {
+                Picker("露出補正", selection: Binding(get: { model.ev ?? 7 }, set: { model.set(.ev, $0) })) {
+                    ForEach(Array(Self.evLabels.enumerated().reversed()), id: \.offset) { index, label in
+                        Text(label).tag(index + 1)
+                    }
+                }
+            }
+            keyMenu(symbol: model.whiteBalance.flatMap { Self.whiteBalanceSymbols[safe: $0 - 1] } ?? "a.circle",
+                    value: model.whiteBalance.flatMap { Self.whiteBalanceLabels[safe: $0 - 1] } ?? "オート",
+                    lit: (model.whiteBalance ?? 1) != 1, label: "ホワイトバランス") {
+                Picker("ホワイトバランス", selection: Binding(get: { model.whiteBalance ?? 1 },
+                                                       set: { model.set(.whiteBalance, $0) })) {
+                    ForEach(Array(Self.whiteBalanceLabels.enumerated()), id: \.offset) { index, label in
+                        Label(label, systemImage: Self.whiteBalanceSymbols[index]).tag(index + 1)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
     }
 
     private var liveView: some View {

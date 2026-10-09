@@ -64,6 +64,8 @@ actor ExilimClient {
 
     /// カメラのアドレス（ふつうは 192.168.100.2）
     private(set) var host = "192.168.100.2"
+    /// 最後の答えの HTTP の番号（0 は答えがなかった）
+    private(set) var lastStatus = 0
     /// 最後に失敗した理由（つなぐ途中の探しは通信ログに書かないので、ときどきこれを書く）
     private(set) var lastError: String?
     /// カメラに名乗る名前
@@ -265,17 +267,50 @@ actor ExilimClient {
         case selfTimer = 44
     }
 
+    /// 設定の命令の送り方。プラグインは POST（JSON）だが、EX-FR100（API 4.0.0）はライブビューを止めても 405 で断った。
+    /// 405 は「受け口はあるが、その送り方では受け付けない」なので、GET（?param_id=）も試し、通ったほうを使う。
+    /// どちらも断られたら、このカメラはアプリからの設定変更に対応していないとみなす
+    enum ParamStyle { case unknown, post, get, unsupported }
+    private(set) var paramStyle = ParamStyle.unknown
+
     func setParam(_ param: Param, _ value: Int) async -> Bool {
-        guard let json = await request("setParam", body: ["param_id": param.rawValue, "param_val": value]) else {
-            return false
-        }
+        let json = await paramRequest("setParam", ["param_id": param.rawValue, "param_val": value])
+        guard let json else { return false }
         return (int(json["resp"]) ?? 0) >= 0
     }
 
     /// 設定を読む（答えは {"9": 7} のように、番号が名前になっている）
     func getParam(_ param: Param) async -> Int? {
-        guard let json = await request("getParam", body: ["param_id": param.rawValue], timeout: 3) else { return nil }
+        guard let json = await paramRequest("getParam", ["param_id": param.rawValue]) else { return nil }
         return int(json[String(param.rawValue)]) ?? int(json["param_val"]) ?? int(json["value"])
+    }
+
+    private func paramRequest(_ command: String, _ values: [String: Int]) async -> [String: Any]? {
+        let query = values.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+        switch paramStyle {
+        case .unsupported:
+            return nil
+        case .post:
+            return await request(command, body: values, timeout: 3)
+        case .get:
+            return await request(command, query: query, timeout: 3)
+        case .unknown:
+            if let json = await request(command, body: values, timeout: 3) {
+                paramStyle = .post
+                return json
+            }
+            guard lastStatus == 405 || lastStatus == 404 else { return nil }
+            if let json = await request(command, query: query, timeout: 3) {
+                paramStyle = .get
+                return json
+            }
+            if lastStatus == 405 || lastStatus == 404 {
+                paramStyle = .unsupported
+                // カメラの設定の全体（プラグインが getParam の代わりに使う命令）を通信ログに残す
+                _ = await request("camSetting", body: [:], timeout: 3)
+            }
+            return nil
+        }
     }
 
     /// カメラの時計を iPhone に合わせる（TimeStamp は "2026:10:09 21:06:17"、TimeZone は世界標準時からの秒）
@@ -447,6 +482,7 @@ actor ExilimClient {
         do {
             let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            lastStatus = status
             if silent && status == 200 { await log("→ " + line) }
             if !quiet || status != 200 {
                 let reply = isBinary ? "\(data.count) バイト" : String(String(decoding: data, as: UTF8.self).prefix(300))
@@ -454,6 +490,7 @@ actor ExilimClient {
             }
             return status == 200 ? data : nil
         } catch {
+            lastStatus = 0
             lastError = (error as NSError).localizedDescription
             // カメラが使い終わった接続を閉じていたときは、1 回だけ送り直す
             if (error as? URLError)?.code == .networkConnectionLost, !retried {
