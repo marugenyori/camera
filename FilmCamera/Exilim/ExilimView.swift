@@ -42,6 +42,19 @@ final class ExilimModel: ObservableObject {
     @Published var deleteReceived = UserDefaults.standard.object(forKey: "exilimDeleteReceived") as? Bool ?? false {
         didSet { UserDefaults.standard.set(deleteReceived, forKey: "exilimDeleteReceived") }
     }
+    /// もう受け取った写真（パス・大きさ・日時で見分ける）。同じ写真を二度受け取って、共有アルバムに 2 枚入らないように
+    private var received = Set(UserDefaults.standard.stringArray(forKey: "exilimReceived") ?? []) {
+        didSet { UserDefaults.standard.set(Array(received.suffix(2000)), forKey: "exilimReceived") }
+    }
+
+    func isReceived(_ file: ExilimClient.RemoteFile) -> Bool {
+        received.contains(Self.key(file))
+    }
+
+    private static func key(_ file: ExilimClient.RemoteFile) -> String {
+        "\(file.path)|\(file.size)|\(file.modified)"
+    }
+
     /// いま撮った写真を、もう受け取ったか（消したあとに latest.jpg を頼むと前の写真が来るので、二度は受け取らない）
     @Published var lastShotReceived = false
     @Published var autoAdd = UserDefaults.standard.object(forKey: "exilimAutoAdd") as? Bool ?? true {
@@ -280,8 +293,12 @@ final class ExilimModel: ObservableObject {
         var failed = 0
         for file in targets {
             do {
-                let data = try await client.download(file.path)
-                add(data, thumbnail: thumbnails[file.path])
+                // もう受け取った写真は受け取り直さない（「消す」がオンなら、カメラから消すだけ）
+                if !isReceived(file) {
+                    let data = try await client.download(file.path)
+                    add(data, thumbnail: thumbnails[file.path])
+                    received.insert(Self.key(file))
+                }
                 selected.remove(file.path)
                 // 受け取って端末に置けたものだけ、カメラから消す
                 if deleteReceived, await client.delete(file.path) {
@@ -594,6 +611,12 @@ struct ExilimView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.title3)
                             .foregroundStyle(.white, .tint)
+                            .padding(5)
+                    } else if model.isReceived(file) {
+                        // もう受け取った写真
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.white, .green)
                             .padding(5)
                     }
                 }

@@ -374,7 +374,10 @@ actor ExilimClient {
             }
             return status == 200 ? data : nil
         } catch {
-            await log("× \(command) \((error as NSError).localizedDescription)")
+            // 受け取りが終わって heartBeat を止めたときの「キャンセル」は、ふつうのことなので書かない
+            if !(quiet && (error as? URLError)?.code == .cancelled) {
+                await log("× \(command) \((error as NSError).localizedDescription)")
+            }
             return nil
         }
     }
