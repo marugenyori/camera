@@ -34,6 +34,16 @@ final class ExilimModel: ObservableObject {
     /// 受け取って、まだ共有アルバムに送っていない枚数（閉じたら送る）
     @Published var pending = ExilimPending.count
     /// 撮ったらすぐ共有アルバムに入れる
+    /// リモート撮影で撮った写真は、受け取ったらカメラから消す（カードなしでも内蔵メモリーがいっぱいにならない）
+    @Published var deleteShots = UserDefaults.standard.object(forKey: "exilimDeleteShots") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(deleteShots, forKey: "exilimDeleteShots") }
+    }
+    /// 「カメラの写真」で受け取ったものを、カメラから消す
+    @Published var deleteReceived = UserDefaults.standard.object(forKey: "exilimDeleteReceived") as? Bool ?? false {
+        didSet { UserDefaults.standard.set(deleteReceived, forKey: "exilimDeleteReceived") }
+    }
+    /// いま撮った写真を、もう受け取ったか（消したあとに latest.jpg を頼むと前の写真が来るので、二度は受け取らない）
+    @Published var lastShotReceived = false
     @Published var autoAdd = UserDefaults.standard.object(forKey: "exilimAutoAdd") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoAdd, forKey: "exilimAutoAdd") }
     }
@@ -187,6 +197,7 @@ final class ExilimModel: ObservableObject {
         do {
             try await client.shutter()
             lastShot = await client.waitLatestThumbnail()
+            lastShotReceived = false
             if autoAdd { await addLatest() }
         } catch {
             message = error.localizedDescription
@@ -195,11 +206,20 @@ final class ExilimModel: ObservableObject {
 
     /// いま撮った写真を共有アルバムに入れる
     func addLatest() async {
+        guard !lastShotReceived else { return }
         busy = "写真を受け取っています"
         do {
             let data = try await client.latestImage(livePort: livePort)
             add(data, thumbnail: lastShot)
+            lastShotReceived = true
             message = "受け取りました（閉じると共有アルバムに送ります）"
+            // 受け取って端末に置けたものだけ、カメラから消す
+            if deleteShots, case .connected(let info) = phase {
+                busy = "カメラの内蔵メモリーをあけています"
+                if await client.deleteLatestShot(apiVersion: info.apiVersion, livePort: livePort) {
+                    message = "受け取って、カメラからは消しました（閉じると共有アルバムに送ります）"
+                }
+            }
         } catch {
             message = error.localizedDescription
         }
@@ -257,6 +277,11 @@ final class ExilimModel: ObservableObject {
                 let data = try await client.download(file.path)
                 add(data, thumbnail: thumbnails[file.path])
                 selected.remove(file.path)
+                // 受け取って端末に置けたものだけ、カメラから消す
+                if deleteReceived, await client.delete(file.path) {
+                    files.removeAll { $0.path == file.path }
+                    thumbnails[file.path] = nil
+                }
             } catch {
                 failed += 1
             }
@@ -444,9 +469,12 @@ struct ExilimView: View {
             }
             .aspectRatio(4 / 3, contentMode: .fit)
             .padding(.horizontal)
-            Toggle("撮った写真をすぐ受け取る（閉じると共有アルバムへ）", isOn: $model.autoAdd)
-                .font(.callout)
-                .padding(.horizontal, 24)
+            VStack(spacing: 10) {
+                Toggle("撮った写真をすぐ受け取る（閉じると共有アルバムへ）", isOn: $model.autoAdd)
+                Toggle("受け取ったらカメラから消す（カードなしでも撮り続けられる）", isOn: $model.deleteShots)
+            }
+            .font(.callout)
+            .padding(.horizontal, 24)
             Spacer(minLength: 0)
             HStack {
                 Group {
@@ -460,7 +488,7 @@ struct ExilimView: View {
                                 .frame(width: 56, height: 56)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
-                        .disabled(model.busy != nil || model.autoAdd)
+                        .disabled(model.busy != nil || model.lastShotReceived)
                         .accessibilityLabel("いま撮った写真を共有アルバムに入れる")
                     } else {
                         Color.clear
@@ -491,6 +519,10 @@ struct ExilimView: View {
     private var cameraFiles: some View {
         ZStack(alignment: .bottom) {
             ScrollView {
+                Toggle("受け取ったらカメラから消す", isOn: $model.deleteReceived)
+                    .font(.callout)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 6)
                 if model.files.isEmpty && model.busy == nil {
                     Text("カメラの中に写真がありません")
                         .font(.callout)

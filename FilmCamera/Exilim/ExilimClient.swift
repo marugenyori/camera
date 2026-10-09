@@ -46,7 +46,8 @@ actor ExilimClient {
             switch self {
             case .notConnected: return "カメラとつながっていません"
             case .modeChangeFailed: return "カメラのモードを切り替えられませんでした"
-            case .notReady: return "カメラが撮影できる状態ではありません"
+            case .notReady:
+                return "カメラが撮影できません（メモリーカードがないと、内蔵メモリーは数枚でいっぱいになります。「カメラの写真」で受け取って消すと、また撮れます）"
             case .downloadFailed: return "カメラから写真を受け取れませんでした"
             }
         }
@@ -216,8 +217,48 @@ actor ExilimClient {
             try await Task.sleep(for: .milliseconds(200))
         }
         await endLive()
-        defer { Task { _ = await self.startLive(port: livePort) } }
-        return try await download("latest.jpg")
+        let data = try? await download("latest.jpg")
+        _ = await startLive(port: livePort)
+        guard let data else { throw ExilimError.downloadFailed }
+        return data
+    }
+
+    // MARK: - カメラから消す（内蔵メモリーをあける）
+
+    /// カメラの中の写真を 1 枚消す（WEBSERVER のとき）
+    func delete(_ path: String) async -> Bool {
+        guard let json = await request("deleteImage", body: ["file": path], timeout: 8) else { return false }
+        return int(json["resp"]) == 0
+    }
+
+    /// いちばん新しい写真のパス（WEBSERVER のとき。カシオのプラグインの updateLatestFileName と同じ頼み方）
+    private func latestPath(apiVersion: String) async -> String? {
+        if Self.versionNumber(apiVersion) >= 100000 {
+            _ = await request("setTarget", body: ["target": 0])
+        }
+        guard let json = await request("getList", query: "pos=0&num=1&sort=1", timeout: 10),
+              let files = json["files"] as? [[String: Any]],
+              let name = files.first?["name"] as? String else { return nil }
+        return name
+    }
+
+    /// リモート撮影で撮った写真をカメラから消す（写真を見るモードに切り替えて消し、ライブビューに戻す）。
+    /// メモリーカードがなくても、内蔵メモリーがいっぱいにならずに撮り続けられる
+    func deleteLatestShot(apiVersion: String, livePort: UInt16) async -> Bool {
+        await endLive()
+        var deleted = false
+        if (try? await switchMode(to: .webServer)) != nil, let path = await latestPath(apiVersion: apiVersion) {
+            deleted = await delete(path)
+        }
+        if (try? await switchMode(to: .liveView)) != nil {
+            _ = await startLive(port: livePort)
+        }
+        return deleted
+    }
+
+    /// "1.2.3" → 10203（プラグインと同じ数え方）
+    static func versionNumber(_ text: String) -> Int {
+        text.split(separator: ".").reduce(0) { $0 * 100 + (Int($1) ?? 0) }
     }
 
     // MARK: - カメラの中の写真（WEBSERVER）
