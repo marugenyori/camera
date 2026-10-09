@@ -90,8 +90,6 @@ final class ExilimModel: ObservableObject {
     private var thumbnailTask: Task<Void, Never>?
     private var switching: Task<Void, Never>?
     private var idleCollect: Task<Void, Never>?
-    private var zooming: Task<Void, Never>?
-    private var zoomStarted = Date()
     private var clockSynced = false
 
     var model: String {
@@ -382,26 +380,6 @@ final class ExilimModel: ObservableObject {
             if await self.restartLive() { startHeartbeat() }
         } catch {
             message = error.localizedDescription
-        }
-    }
-
-    // MARK: - ズーム
-
-    /// ズームのボタンを押した・離した（direction：1 で寄る、-1 で引く）。
-    /// 押している間ズームし続け、さっと押しただけでも 0.2 秒は動かす（カシオのプラグインと同じ）
-    func zoom(_ direction: Int, pressing: Bool) {
-        let previous = zooming
-        if pressing { zoomStarted = Date() }
-        let started = zoomStarted
-        zooming = Task {
-            await previous?.value
-            if pressing {
-                await client.zoom(speed: 2 * direction)
-            } else {
-                let held = Date().timeIntervalSince(started)
-                if held < 0.2 { try? await Task.sleep(for: .milliseconds(Int((0.2 - held) * 1000))) }
-                await client.zoom(speed: 0)
-            }
         }
     }
 
@@ -821,13 +799,6 @@ struct ExilimView: View {
             FlashView(trigger: model.flash)
         }
         .aspectRatio(4 / 3, contentMode: .fit)
-        .overlay(alignment: .trailing) {
-            VStack(spacing: 14) {
-                zoomButton(1, "plus.magnifyingglass", "寄る")
-                zoomButton(-1, "minus.magnifyingglass", "引く")
-            }
-            .padding(10)
-        }
         .overlay(alignment: .topLeading) {
             if let since = model.recordingSince {
                 TimelineView(.periodic(from: since, by: 1)) { context in
@@ -895,25 +866,6 @@ struct ExilimView: View {
         .disabled(model.busy != nil || (model.shooting && model.captureMode == .photo))
         .opacity(model.busy != nil ? 0.5 : 1)
         .accessibilityLabel(model.captureMode == .movie ? (model.recordingSince != nil ? "動画を止める" : "動画を撮る") : "シャッター")
-    }
-
-    /// ズームのボタン：押している間ズームする
-    private func zoomButton(_ direction: Int, _ symbol: String, _ label: String) -> some View {
-        Image(systemName: symbol)
-            .font(.title3.weight(.semibold))
-            .frame(width: 44, height: 44)
-            .background(Circle().fill(.black.opacity(0.45)))
-            .foregroundStyle(.white)
-            .contentShape(Circle())
-            .onLongPressGesture(minimumDuration: 600, perform: {}, onPressingChanged: { pressing in
-                model.zoom(direction, pressing: pressing)
-            })
-            .accessibilityLabel(label)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction {
-                model.zoom(direction, pressing: true)
-                model.zoom(direction, pressing: false)
-            }
     }
 
     private func settingMenu<Content: View>(_ symbol: String, _ title: String,

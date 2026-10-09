@@ -234,12 +234,7 @@ actor ExilimClient {
         try await shutter()
     }
 
-    // MARK: - ズーム・動画・設定
-
-    /// ズーム（speed：+ で寄る、- で引く、0 で止める。プラグインは ±2 を送り、1 回押しなら 0.2 秒後に 0 を送る）
-    func zoom(speed: Int) async {
-        _ = await request("zoom", body: ["speed": speed], timeout: 2)
-    }
+    // MARK: - 動画・設定
 
     /// 動画を撮り始める（プラグインと同じく、先に camMode 1＝動画 を送る）
     func startMovie() async -> Bool {
