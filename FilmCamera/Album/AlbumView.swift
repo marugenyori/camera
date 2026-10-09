@@ -44,6 +44,7 @@ struct AlbumView: View {
     @State private var toast: String?
     /// 写真を地図で見る
     @State private var showingMap = false
+    @State private var showingExilim = false
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 3)]
 
@@ -157,6 +158,9 @@ struct AlbumView: View {
             }
             .fullScreenCover(item: $viewing) { start in
                 AlbumViewer(store: store, photos: start.photos, index: start.index)
+            }
+            .fullScreenCover(isPresented: $showingExilim) {
+                ExilimView()
             }
         }
     }
@@ -781,6 +785,12 @@ struct AlbumView: View {
                     Label("写真をまとめて選ぶ", systemImage: "checkmark.circle")
                 }
                 .disabled(store.photos.isEmpty)
+                Button {
+                    showingExilim = true
+                } label: {
+                    Label("EXILIM（EX-FR100）とつなぐ", systemImage: "camera.on.rectangle")
+                }
+                .disabled(store.selected == nil)
                 Button {
                     nameField = ""
                     showingNewAlbum = true

@@ -374,6 +374,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSCameraUsageDescription = "フィルム風・フラッシュ風などの見え方で撮影するためにカメラを使います。";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "撮った場所を共有アルバムの地図に表示するために、位置情報を使います。";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "カシオ EXILIM（EX-FR100 など）と Wi-Fi で直接つないで、リモート撮影や写真の取り込みをするために使います。";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "動画の音声を録音するためにマイクを使います。";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "撮った写真を写真アプリに保存するために使います。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -413,6 +414,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSCameraUsageDescription = "フィルム風・フラッシュ風などの見え方で撮影するためにカメラを使います。";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "撮った場所を共有アルバムの地図に表示するために、位置情報を使います。";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "カシオ EXILIM（EX-FR100 など）と Wi-Fi で直接つないで、リモート撮影や写真の取り込みをするために使います。";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "動画の音声を録音するためにマイクを使います。";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "撮った写真を写真アプリに保存するために使います。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
