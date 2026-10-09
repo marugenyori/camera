@@ -185,9 +185,17 @@ actor ExilimClient {
     }
 
     /// シャッターを切る（撮れる状態のときだけ）
+    /// カシオのプラグインと同じく、先に camMode（0＝静止画）を送ってから、撮れる状態になるのを待って切る
     func shutter() async throws {
-        guard let status = await status(), status.captureEnable else { throw ExilimError.notReady }
-        _ = await request("shutter", body: ["action": 1])
+        _ = await request("camMode", body: ["mode": 0])
+        for _ in 0..<15 {
+            if let status = await status(), status.captureEnable {
+                _ = await request("shutter", body: ["action": 1])
+                return
+            }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        throw ExilimError.notReady
     }
 
     /// いま撮った写真ができるまで待って、小さい画像を受け取る
