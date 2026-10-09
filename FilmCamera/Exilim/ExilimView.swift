@@ -97,6 +97,9 @@ final class ExilimModel: ObservableObject {
             return
         }
         let joinError = await joining.value
+        let started = waitingSince ?? Date()
+        ExilimLog.shared.add(String(format: "Wi-Fi：%@（%.1f 秒）", joinError ?? "カメラの Wi-Fi に入りました",
+                                    Date().timeIntervalSince(started)))
         phase = .searching
         // Wi-Fi が切り替わってカメラが答えるまで、0.3 秒おきに聞く（最大 45 秒）。
         // いつもの 192.168.100.2 だけを聞き、近くのアドレスまで探すのはときどき
@@ -106,6 +109,8 @@ final class ExilimModel: ObservableObject {
             if Task.isCancelled { return }
             round += 1
             if let info = await client.find(quick: round % 15 != 0, timeout: 0.6, silent: true) {
+                ExilimLog.shared.add(String(format: "カメラが答えました（つなぎ始めから %.1f 秒）",
+                                            Date().timeIntervalSince(started)))
                 connected(info)
                 return
             }
