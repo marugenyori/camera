@@ -90,12 +90,13 @@ final class ExilimModel: ObservableObject {
         // カメラの Wi-Fi に入るのと、もう入っているかの確認を、同時に始める
         // （Wi-Fi の名前を登録していなければ、EX-FR100 の名前の頭 FR100- と初期のパスワードで探す）
         phase = .joining
-        async let joining = ExilimWiFi.join()
+        // async let だと、先につながったときにも Wi-Fi の切り替えが終わるまで待ってしまうので Task にする
+        let joining = Task { await ExilimWiFi.join() }
         if let info = await client.find(quick: true, timeout: 0.8, silent: true) {
             connected(info)
             return
         }
-        let joinError = await joining
+        let joinError = await joining.value
         phase = .searching
         // Wi-Fi が切り替わってカメラが答えるまで、0.3 秒おきに聞く（最大 45 秒）。
         // いつもの 192.168.100.2 だけを聞き、近くのアドレスまで探すのはときどき
