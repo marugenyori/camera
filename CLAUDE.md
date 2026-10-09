@@ -69,6 +69,7 @@
     - 写真：`getList?dir=/&pos=0&num=0&sort=0`（files: name, type 0=フォルダ 1=写真 2=動画, size, mtime。フォルダはたどる）、`getThumbnail?file=`、`getImage?file=`（受け取り中も heartBeat）
     - リモート撮影：`startLive`（rate, port）で iPhone の UDP ポートにライブビューが届く（頭 12 バイト：2〜3 が JPEG の大きさ、4〜7 が通し番号、8〜11 がコマの番号。`ExilimLiveView` で組み立てる）。`camStatus` の captureEnable を見てから `shutter`（action: 1）。撮った写真は `latest.jpg`（latest-image を待ち、`endLive` してから受け取る）
     - Info.plist：`NSLocalNetworkUsageDescription`（ビルド設定）と ATS の `NSAllowsLocalNetworking`
+    - 通信ログ（`ExilimLog`、画面右上のボタン）：送った命令と答え・UDP の受信状況を記録する。実機で動かないときは、持ち主に「全部コピー」して送ってもらう（パスワードは入らない）
     - ワンタップ接続（`ExilimWiFi.swift`）：カメラの Wi-Fi の名前とパスワードを最初の 1 回だけ入れてもらい（名前は UserDefaults、パスワードはキーチェーン）、`NEHotspotConfiguration`（joinOnce）でアプリが自分で入る。閉じたら `removeConfiguration` でいつもの Wi-Fi に戻る。**entitlements に Hotspot Configuration を足したので、Apple Developer の App ID（本体）で「Hotspot」を有効にする必要がある**
     - カメラの Wi-Fi はインターネットに出られないので、受け取った写真は `ExilimPending`（Application Support/ExilimPending）に置き、閉じていつもの回線に戻ってから `AlbumStore.upload`（成功・失敗を返す版の add）で送る。送れなかった分は起動時（`RootView`）にまた送る
   - コメントの通知：非公開 DB と共有 DB に `CKDatabaseSubscription`（ID は `album-private-alert` / `album-shared-alert`）を**目に見える通知＋ mutable-content** で登録する（音の出ないプッシュだけだと、アプリを閉じていると届かないことが多かったため。旧 ID `album-private` / `album-shared` は消す）。届いた通知は**通知拡張 `FilmCameraNotify/`**（ターゲット ID 末尾 `026`、Bundle ID は `$(APP_BUNDLE_ID).notify`）が iCloud から変更を読み、「〇〇さんがコメントしました：本文」に書き換える。友だちの動きでなければ文を空にして出さない

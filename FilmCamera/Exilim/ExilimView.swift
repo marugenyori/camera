@@ -97,6 +97,7 @@ final class ExilimModel: ObservableObject {
     func show(_ tab: Tab) {
         self.tab = tab
         let previous = switching
+        previous?.cancel()
         switching = Task {
             await previous?.value
             stopLive()
@@ -157,6 +158,8 @@ final class ExilimModel: ObservableObject {
         defer { busy = nil }
         do {
             try await client.switchMode(to: .liveView)
+        } catch is CancellationError {
+            return
         } catch {
             message = error.localizedDescription
             return
@@ -215,6 +218,8 @@ final class ExilimModel: ObservableObject {
             selected = selected.filter { path in files.contains { $0.path == path } }
             startHeartbeat()
             loadThumbnails()
+        } catch is CancellationError {
+            return
         } catch {
             message = error.localizedDescription
         }
@@ -276,6 +281,7 @@ final class ExilimModel: ObservableObject {
 
 struct ExilimView: View {
     @StateObject private var model = ExilimModel()
+    @State private var showingLog = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -311,8 +317,17 @@ struct ExilimView: View {
                         }
                     }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showingLog = true
+                    } label: {
+                        Image(systemName: "doc.text.magnifyingglass")
+                    }
+                    .accessibilityLabel("通信ログ")
+                }
             }
             .overlay(alignment: .bottom) { toast }
+            .sheet(isPresented: $showingLog) { ExilimLogView() }
         }
         .preferredColorScheme(.dark)
         .task { await model.connect() }
@@ -604,5 +619,45 @@ private struct ExilimWiFiSetup: View {
             }
         }
         .scrollContentBackground(.hidden)
+    }
+}
+
+/// カメラとのやりとりの記録。うまくいかないとき、ここをコピーして送ってもらうと原因が分かる（パスワードは入っていない）
+private struct ExilimLogView: View {
+    @ObservedObject private var log = ExilimLog.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(log.lines.enumerated()), id: \.offset) { index, line in
+                            Text(line)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .id(index)
+                        }
+                    }
+                    .padding()
+                }
+                .onAppear { proxy.scrollTo(log.lines.count - 1, anchor: .bottom) }
+            }
+            .navigationTitle("通信ログ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button(copied ? "コピーしました" : "全部コピー") {
+                        UIPasteboard.general.string = log.lines.joined(separator: "\n")
+                        copied = true
+                    }
+                }
+            }
+        }
     }
 }

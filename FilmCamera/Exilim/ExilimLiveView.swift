@@ -17,6 +17,13 @@ final class ExilimLiveView: @unchecked Sendable {
     /// 新しいコマができたとき（メインスレッドで呼ぶ）
     var onFrame: (@MainActor (UIImage) -> Void)?
     private(set) var port: UInt16 = 0
+    private var packets = 0
+    private var decoded = 0
+    private var broken = 0
+
+    private func log(_ text: String) {
+        Task { @MainActor in ExilimLog.shared.add(text) }
+    }
 
     private struct Frame {
         let size: Int
@@ -44,8 +51,14 @@ final class ExilimLiveView: @unchecked Sendable {
                 connection.start(queue: self.queue)
                 self.receive(on: connection)
             }
+            listener.stateUpdateHandler = { [weak self] state in
+                self?.log("UDP ポート \(candidate)：\(state)")
+            }
             listener.start(queue: queue)
             self.listener = listener
+            packets = 0
+            decoded = 0
+            broken = 0
             self.port = candidate
             return candidate
         }
@@ -71,6 +84,10 @@ final class ExilimLiveView: @unchecked Sendable {
     }
 
     private func store(_ packet: Data) {
+        packets += 1
+        if packets == 1 || packets % 300 == 0 {
+            log("UDP 受信 \(packets) パケット目（\(packet.count) バイト）")
+        }
         let bytes = [UInt8](packet)
         let size = Int(bytes[2]) << 8 | Int(bytes[3])
         let number = UInt32(bytes[4]) << 24 | UInt32(bytes[5]) << 16 | UInt32(bytes[6]) << 8 | UInt32(bytes[7])
@@ -102,8 +119,13 @@ final class ExilimLiveView: @unchecked Sendable {
             frames = frames.filter { $0.key > id && Date().timeIntervalSince($0.value.created) < 2 }
             lastShown = id
             if let image = UIImage(data: frame.data) {
+                decoded += 1
+                if decoded == 1 || decoded % 100 == 0 { log("ライブビュー \(decoded) コマ目を表示") }
                 let handler = onFrame
                 Task { @MainActor in handler?(image) }
+            } else {
+                broken += 1
+                if broken == 1 || broken % 50 == 0 { log("ライブビューの画像を読めませんでした（\(broken) 回目、\(frame.size) バイト）") }
             }
         } else {
             frames[id] = frame

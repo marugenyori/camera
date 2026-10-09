@@ -88,34 +88,62 @@ actor ExilimClient {
     // MARK: - モード
 
     func appMode() async -> Mode? {
-        guard let json = await request("getAppMode") else { return nil }
+        guard let json = await request("getAppMode", timeout: 2) else { return nil }
         return (json["app_mode"] as? String).flatMap(Mode.init(rawValue:))
     }
 
     /// モードを切り替えて、つなぎ直す（返り値：connect の答え。live / web / free）
     @discardableResult
+    /// カシオのプラグインと同じ手順：
+    /// - ライブビューにするとき：WEBSERVER なら changeAppMode、WEBSERVER・REQUEST なら続けて setAppMode（LIVEVIEW）。
+    ///   LIVEVIEW になったら connect して、答えが live ならつながった（free ならもう一度 setAppMode から）
+    /// - 写真を見るとき：changeAppMode（WEBSERVER）して、WEBSERVER になるまで待ってから connect（答えは web）
+    /// 待つのは最大で約 15 秒（止まったままにしない）
     func switchMode(to target: Mode) async throws -> String {
-        var current = await appMode()
-        if current == .request {
-            // 「リクエスト待ち」なら、まずライブビューにしてもらう
-            _ = await request("setAppMode", body: ["app_mode": Mode.liveView.rawValue])
-            try? await Task.sleep(for: .milliseconds(150))
-            current = await appMode()
-        }
-        if current != target {
-            _ = await request("changeAppMode", body: ["app_mode": target.rawValue])
-            var tries = 0
-            while await appMode() != target {
-                tries += 1
-                if tries > 100 { throw ExilimError.modeChangeFailed }
-                try await Task.sleep(for: .milliseconds(100))
+        let deadline = Date().addingTimeInterval(15)
+        var askedChange = false
+        var missing = 0
+        while Date() < deadline {
+            try Task.checkCancellation()
+            guard let current = await appMode() else {
+                missing += 1
+                if missing >= 3 { throw ExilimError.notConnected }
+                continue
+            }
+            if current == target {
+                guard let json = await request("connect", body: ["name": clientName, "port": 8081]),
+                      int(json["resp"]) == 0, let mode = json["mode"] as? String else {
+                    throw ExilimError.notConnected
+                }
+                let expected = target == .liveView ? "live" : "web"
+                if mode == expected { return mode }
+                // 思ったモードでつながらなかった：もう一度切り替えから
+                if target == .liveView {
+                    _ = await request("setAppMode", body: ["app_mode": Mode.liveView.rawValue])
+                }
+                try await Task.sleep(for: .milliseconds(200))
+                continue
+            }
+            if target == .liveView {
+                if current == .webServer, !askedChange {
+                    _ = await request("changeAppMode", body: ["app_mode": Mode.liveView.rawValue])
+                    askedChange = true
+                }
+                _ = await request("setAppMode", body: ["app_mode": Mode.liveView.rawValue])
+                try await Task.sleep(for: .milliseconds(150))
+            } else {
+                if current == .request {
+                    _ = await request("setAppMode", body: ["app_mode": Mode.liveView.rawValue])
+                    try await Task.sleep(for: .milliseconds(150))
+                }
+                if !askedChange {
+                    _ = await request("changeAppMode", body: ["app_mode": target.rawValue])
+                    askedChange = true
+                }
+                try await Task.sleep(for: .milliseconds(200))
             }
         }
-        guard let json = await request("connect", body: ["name": clientName, "port": 8081]),
-              int(json["resp"]) == 0, let mode = json["mode"] as? String else {
-            throw ExilimError.notConnected
-        }
-        return mode
+        throw ExilimError.modeChangeFailed
     }
 
     /// 1 秒ごとに送る「まだいるよ」
@@ -262,9 +290,28 @@ actor ExilimClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
-        guard let (data, response) = try? await session.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return data
+        // 通信ログ（1 秒ごとの heartBeat は、うまくいかなかったときだけ書く）
+        let quiet = command == "heartBeat"
+        let isBinary = command == "getThumbnail" || command == "getImage"
+        let sent = (body.flatMap { try? JSONSerialization.data(withJSONObject: $0) }).flatMap { String(data: $0, encoding: .utf8) }
+        let line = "\(body == nil ? "GET" : "POST") \(command)\(query.map { "?" + $0 } ?? "") \(sent ?? "")"
+        if !quiet { await log("→ " + line) }
+        do {
+            let (data, response) = try await session.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if !quiet || status != 200 {
+                let reply = isBinary ? "\(data.count) バイト" : String(String(decoding: data, as: UTF8.self).prefix(300))
+                await log("← \(command) \(status) \(reply)")
+            }
+            return status == 200 ? data : nil
+        } catch {
+            await log("× \(command) \((error as NSError).localizedDescription)")
+            return nil
+        }
+    }
+
+    private func log(_ text: String) async {
+        await MainActor.run { ExilimLog.shared.add(text) }
     }
 
     /// パスの「/」はそのままにして、ほかの記号だけ % で包む
@@ -287,4 +334,24 @@ actor ExilimClient {
         if let number = value as? NSNumber { return number.stringValue }
         return nil
     }
+}
+
+/// カメラとのやりとりの記録（画面の「通信ログ」で見られる。うまくいかないときに、どこで止まったかを調べるため）
+@MainActor
+final class ExilimLog: ObservableObject {
+    static let shared = ExilimLog()
+    @Published private(set) var lines: [String] = []
+
+    private let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter
+    }()
+
+    func add(_ text: String) {
+        lines.append(formatter.string(from: Date()) + " " + text)
+        if lines.count > 400 { lines.removeFirst(lines.count - 400) }
+    }
+
+    func clear() { lines.removeAll() }
 }
