@@ -76,9 +76,10 @@ enum ExilimWiFi {
         await NEHotspotNetwork.fetchCurrent()?.ssid
     }
 
-    /// いまカメラの Wi-Fi に本当に入っているか（apply の「成功」は入り始めただけのことがある）
-    static func isOnCameraWiFi() async -> Bool {
-        guard let current = await currentSSID() else { return false }
+    /// いまカメラの Wi-Fi に本当に入っているか（apply の「成功」は入り始めただけのことがある）。
+    /// iOS が今の Wi-Fi を教えてくれないときは nil（分からないので、入り直したりしない）
+    static func isOnCameraWiFi() async -> Bool? {
+        guard let current = await currentSSID() else { return nil }
         if let ssid { return current == ssid }
         return current.hasPrefix(defaultPrefix)
     }

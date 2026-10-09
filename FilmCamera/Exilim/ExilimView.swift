@@ -117,7 +117,7 @@ final class ExilimModel: ObservableObject {
             if joinError == nil, Date().timeIntervalSince(lastWiFiCheck) >= 2 {
                 lastWiFiCheck = Date()
                 let elapsed = Date().timeIntervalSince(started)
-                if await !ExilimWiFi.isOnCameraWiFi(), elapsed >= 10 {
+                if await ExilimWiFi.isOnCameraWiFi() == false, elapsed >= 10 {
                     if !rejoined {
                         rejoined = true
                         ExilimLog.shared.add(String(format: "Wi-Fi：まだカメラの Wi-Fi に入れていません（%.0f 秒）。入り直します", elapsed))
