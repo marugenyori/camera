@@ -337,6 +337,39 @@ actor ExilimClient {
         return data
     }
 
+    /// 動画など大きいものを、メモリに載せずにファイルとして受け取る（受け取っている間も heartBeat を送る）。
+    /// 返すのは一時フォルダの中のファイル（拡張子はカメラの名前と同じ。呼んだ側で使い終わったら消す）
+    func downloadFile(_ path: String) async throws -> URL {
+        let beating = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                await self.heartBeat()
+            }
+        }
+        defer { beating.cancel() }
+        guard let url = URL(string: "http://\(host)/camlink/getImage?file=\(Self.escape(path))") else {
+            throw ExilimError.downloadFailed
+        }
+        await log("→ GET getImage?file=\(path)（ファイルで受け取る）")
+        do {
+            let (temporary, response) = try await session.download(for: URLRequest(url: url, timeoutInterval: 60))
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let size = (try? FileManager.default.attributesOfItem(atPath: temporary.path)[.size] as? Int) ?? 0
+            await log("← getImage \(status) \(size) バイト")
+            guard status == 200, size > 0 else { throw ExilimError.downloadFailed }
+            let ext = (path as NSString).pathExtension.isEmpty ? "mov" : (path as NSString).pathExtension
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString).appendingPathExtension(ext.lowercased())
+            try FileManager.default.moveItem(at: temporary, to: destination)
+            return destination
+        } catch let error as ExilimError {
+            throw error
+        } catch {
+            await log("× getImage \((error as NSError).localizedDescription)")
+            throw ExilimError.downloadFailed
+        }
+    }
+
     // MARK: - 通信
 
     /// 命令を送り、JSON の答えを受け取る（body があれば POST、なければ GET）

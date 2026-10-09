@@ -1,3 +1,4 @@
+import Photos
 import SwiftUI
 
 /// EXILIM（EX-FR100 など）と Wi-Fi で直接つなぐ画面。
@@ -276,10 +277,6 @@ final class ExilimModel: ObservableObject {
     }
 
     func toggle(_ file: ExilimClient.RemoteFile) {
-        guard !file.isVideo else {
-            message = "動画は共有アルバムに入れられません"
-            return
-        }
         if selected.contains(file.path) { selected.remove(file.path) } else { selected.insert(file.path) }
     }
 
@@ -291,12 +288,23 @@ final class ExilimModel: ObservableObject {
         busy = "写真を受け取っています"
         progress = (0, targets.count)
         var failed = 0
+        var photos = 0
+        var videos = 0
         for file in targets {
             do {
                 // もう受け取った写真は受け取り直さない（「消す」がオンなら、カメラから消すだけ）
                 if !isReceived(file) {
-                    let data = try await client.download(file.path)
-                    add(data, thumbnail: thumbnails[file.path])
+                    if file.isVideo {
+                        // 動画は写真アプリに保存する（共有アルバムは写真だけ）
+                        let url = try await client.downloadFile(file.path)
+                        defer { try? FileManager.default.removeItem(at: url) }
+                        try await Self.saveVideoToLibrary(url)
+                        videos += 1
+                    } else {
+                        let data = try await client.download(file.path)
+                        add(data, thumbnail: thumbnails[file.path])
+                        photos += 1
+                    }
                     received.insert(Self.key(file))
                 }
                 selected.remove(file.path)
@@ -312,9 +320,22 @@ final class ExilimModel: ObservableObject {
         }
         progress = nil
         busy = nil
-        message = failed == 0 ? "\(targets.count) 枚を受け取りました（閉じると共有アルバムに送ります）"
-                              : "\(targets.count - failed) 枚を受け取りました（\(failed) 枚は受け取れませんでした）"
+        var parts: [String] = []
+        if photos > 0 { parts.append("写真 \(photos) 枚は閉じると共有アルバムに送ります") }
+        if videos > 0 { parts.append("動画 \(videos) 本は写真アプリに保存しました") }
+        if failed > 0 { parts.append("\(failed) 件は受け取れませんでした") }
+        message = parts.isEmpty ? "受け取りました" : parts.joined(separator: "。")
         loadThumbnails()
+    }
+
+    /// 動画を写真アプリに保存する（写真アプリへの追加の許可は、はじめてのときにたずねられる）
+    private static func saveVideoToLibrary(_ url: URL) async throws {
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard status == .authorized || status == .limited else { throw ExilimClient.ExilimError.downloadFailed }
+        try await PHPhotoLibrary.shared().performChanges {
+            let request = PHAssetCreationRequest.forAsset()
+            request.addResource(with: .video, fileURL: url, options: nil)
+        }
     }
 
     /// カメラの Wi-Fi ではインターネットに出られないので、いったん端末に置く（閉じたら送る）
@@ -568,7 +589,7 @@ struct ExilimView: View {
                         if let progress = model.progress {
                             Text("受け取っています \(progress.done) / \(progress.total)")
                         } else {
-                            Text("選んだ \(model.selected.count) 枚を受け取る")
+                            Text("選んだ \(model.selected.count) 件を受け取る")
                         }
                     }
                     .font(.headline)
@@ -623,7 +644,6 @@ struct ExilimView: View {
                 .overlay {
                     if isSelected { Rectangle().strokeBorder(.tint, lineWidth: 3) }
                 }
-                .opacity(file.isVideo ? 0.5 : 1)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(file.fileName)
