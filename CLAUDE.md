@@ -69,7 +69,13 @@
     - 写真：`getList?dir=/&pos=0&num=0&sort=0`（files: name, type 0=フォルダ 1=写真 2=動画, size, mtime。フォルダはたどる）、`getThumbnail?file=`、`getImage?file=`（受け取り中も heartBeat）
     - リモート撮影：`startLive`（rate, port）で iPhone の UDP ポートにライブビューが届く（頭 12 バイト：2〜3 が JPEG の大きさ、4〜7 が通し番号、8〜11 がコマの番号。`ExilimLiveView` で組み立てる）。`camMode`（mode: 0＝静止画、1＝動画）を送ってから、`camStatus` の captureEnable を見て `shutter`（action: 1）。撮った写真は `latest.jpg`（latest-image を待ち、`endLive` してから受け取る）
     - 動画（type 2、.MOV）は `downloadFile`（URLSession.download でファイルに受け取る）で受け取り、写真アプリに保存する（共有アルバムは写真だけ。動画を入れるにはスキーマの追加が必要）
-    - 消す：`deleteImage`（file、WEBSERVER のとき）。EX-FR100 はカードなしだと内蔵メモリーに数枚しか撮れない（取扱説明書 27 ページ）ので、リモート撮影で撮った写真は受け取ったらカメラから消す（`deleteLatestShot`：WEBSERVER にして `getList?pos=0&num=1&sort=1` でいちばん新しい写真の名前を聞き、消してライブビューに戻す。API が 10.0.0 以上なら先に `setTarget`）。端末に置けたものだけ消す
+    - 消す：`deleteImage`（file、WEBSERVER のとき）。EX-FR100 はカードなしだと内蔵メモリーに数枚しか撮れない（取扱説明書 27 ページ）ので、リモート撮影で撮った写真は受け取ったらカメラから消す（`collect`：WEBSERVER にして `getList?pos=0&num=N&sort=1` で新しい順に名前を聞き、受け取って消してライブビューに戻す。API が 10.0.0 以上なら先に `setTarget`）。端末に置けたものだけ消す
+    - シャッターのラグ対策（「ラグがありすぎる」と言われた）：前は 1 枚ごとに「サムネイル待ち 1.5 秒 → 本体 2.2 秒 → モードを切り替えて消す 0.8 秒」で約 6 秒止まっていた。いまは `shutterOnly` で切ったらすぐ戻り、切った瞬間のライブビューを「いま撮った写真」に出す。受け取りと消すのは `collect`（撮るのが 3 秒止まったとき・3 枚たまったとき・内蔵メモリーがいっぱいで撮れないとき・サムネイルをタップ・タブ切り替え・閉じるとき）でまとめてする
+    - ライブビューは 320×240（プロトコルで決まっていて大きくできない）。rate はプラグインの上限 30 にした（初期値は 10）。表示は `.interpolation(.high)`
+    - ズーム：`zoom`（speed: +2 で寄る、-2 で引く、0 で止める）。押している間だけ動かし、さっと押しても 0.2 秒は動かす（プラグインと同じ。FR200 は非対応）
+    - 動画：`camMode`（1）→ `startRecMovie`（{}）、止めるのは `endRecMovie`（cause: 0）。動画はカメラに残し、「カメラの写真」で受け取る
+    - 設定：`setParam`（param_id, param_val）/ `getParam`（param_id → 答えは {"9": 7} のように番号が名前）。9 露出補正 1〜13（7 が ±0）、14 ホワイトバランス 1〜7（オート・太陽光・曇天・日陰・昼白色・昼光色・電球）、16 電池 0〜5、21 左右反転、23 あと何枚、44 セルフタイマー 0/5/10 秒
+    - 時計合わせ：`setDateTime`（TimeStamp "2026:10:09 21:06:17"、TimeZone は世界標準時からの秒）。つないだら 1 回送る（カメラの時計が 52 秒ずれていた）
     - カメラからの呼びかけの受け口（`ExilimCallbackServer`、TCP 8081〜）を connect の前に開き、connect の port で伝える（プラグインと同じ）。受け口がないと、getAppMode の state が LIVE_CONNECTING のまま captureEnable が 0 だった（実機のログ）。アプリのモードには FREE もある
     - 閉じるときは `endLive` だけ送り、`disconnect` は送らない（送るとカメラが待ち受けをやめ、次に開いても答えなかった）
     - Info.plist：`NSLocalNetworkUsageDescription`（ビルド設定）と ATS の `NSAllowsLocalNetworking`
