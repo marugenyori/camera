@@ -64,6 +64,8 @@ actor ExilimClient {
 
     /// カメラのアドレス（ふつうは 192.168.100.2）
     private(set) var host = "192.168.100.2"
+    /// 最後に失敗した理由（つなぐ途中の探しは通信ログに書かないので、ときどきこれを書く）
+    private(set) var lastError: String?
     /// カメラに名乗る名前
     private let clientName = "FilmCamera iPhone"
     /// ライブビューのコマ数の上限（カシオのプラグインと同じ）
@@ -413,6 +415,7 @@ actor ExilimClient {
             }
             return status == 200 ? data : nil
         } catch {
+            lastError = (error as NSError).localizedDescription
             // カメラが使い終わった接続を閉じていたときは、1 回だけ送り直す
             if (error as? URLError)?.code == .networkConnectionLost, !retried {
                 return await requestData(command, body: body, query: query, host: host, timeout: timeout,

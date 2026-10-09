@@ -105,6 +105,7 @@ final class ExilimModel: ObservableObject {
         // いつもの 192.168.100.2 だけを聞き、近くのアドレスまで探すのはときどき
         let deadline = Date().addingTimeInterval(joinError == nil ? 45 : 4)
         var round = 0
+        var lastReport = Date()
         while Date() < deadline {
             if Task.isCancelled { return }
             round += 1
@@ -113,6 +114,12 @@ final class ExilimModel: ObservableObject {
                                             Date().timeIntervalSince(started)))
                 connected(info)
                 return
+            }
+            // 3 秒おきに、なぜ答えないかを通信ログに書く（届いていないのか、カメラが受け付けていないのか）
+            if Date().timeIntervalSince(lastReport) >= 3, let reason = await client.lastError {
+                lastReport = Date()
+                ExilimLog.shared.add(String(format: "まだ答えません（%.0f 秒、理由：%@）",
+                                            Date().timeIntervalSince(started), reason))
             }
             try? await Task.sleep(for: .milliseconds(300))
         }
