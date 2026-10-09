@@ -58,8 +58,26 @@ final class ExilimModel: ObservableObject {
         "\(file.path)|\(file.size)|\(file.modified)"
     }
 
-    /// いま撮った写真を、もう受け取ったか（消したあとに latest.jpg を頼むと前の写真が来るので、二度は受け取らない）
-    @Published var lastShotReceived = false
+    /// 撮って、まだ受け取っていない枚数（何枚かたまるか、撮るのが止まったら、まとめて受け取る）
+    @Published var unsaved = 0
+    /// シャッターを切っている最中（ほかの操作は止めない）
+    @Published var shooting = false
+    /// シャッターを切った合図（画面を一瞬白くする）
+    @Published var flash = 0
+    enum CaptureMode: String, CaseIterable, Identifiable {
+        case photo = "写真"
+        case movie = "動画"
+        var id: String { rawValue }
+    }
+    @Published var captureMode: CaptureMode = .photo
+    /// 動画を撮り始めた時刻（撮っていなければ nil）
+    @Published var recordingSince: Date?
+    /// カメラの設定（読めなかったものは nil）
+    @Published var selfTimer = 0
+    @Published var ev: Int?
+    @Published var whiteBalance: Int?
+    @Published var battery: Int?
+    @Published var capacity: Int?
     @Published var autoAdd = UserDefaults.standard.object(forKey: "exilimAutoAdd") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoAdd, forKey: "exilimAutoAdd") }
     }
@@ -71,6 +89,10 @@ final class ExilimModel: ObservableObject {
     private var heartbeat: Task<Void, Never>?
     private var thumbnailTask: Task<Void, Never>?
     private var switching: Task<Void, Never>?
+    private var idleCollect: Task<Void, Never>?
+    private var zooming: Task<Void, Never>?
+    private var zoomStarted = Date()
+    private var clockSynced = false
 
     var model: String {
         if case .connected(let info) = phase { return info.model }
@@ -169,6 +191,9 @@ final class ExilimModel: ObservableObject {
         switching = Task {
             await previous?.value
             // heartBeat はライブビューのときだけ（写真を見るモードでは受け付けられない。受け取り中は別に送る）
+            // 撮ってまだ受け取っていない写真があれば、先に受け取る（一覧に「受け取り済み」と出るように）
+            if tab == .files { await collect() }
+            idleCollect?.cancel()
             heartbeat?.cancel()
             stopLive()
             thumbnailTask?.cancel()
@@ -181,6 +206,10 @@ final class ExilimModel: ObservableObject {
 
     /// 閉じる：カメラとの接続を切り、いつもの Wi-Fi に戻って、受け取った写真を共有アルバムに送る
     func close() async {
+        idleCollect?.cancel()
+        if recordingSince != nil { await toggleMovie() }
+        // 撮ってまだ受け取っていない写真を受け取ってから閉じる
+        if tab == .remote { await collect(resume: false) }
         switching?.cancel()
         thumbnailTask?.cancel()
         stopLive()
@@ -235,17 +264,30 @@ final class ExilimModel: ObservableObject {
             message = error.localizedDescription
             return
         }
+        // カメラの時計を iPhone に合わせる（写真の撮影日時がずれないように。つないだら 1 回だけ）
+        if !clockSynced {
+            clockSynced = true
+            await client.syncClock()
+        }
+        guard await restartLive() else { return }
+        startHeartbeat()
+        Task { await loadSettings() }
+    }
+
+    /// ライブビューを（もう一度）始める
+    @discardableResult
+    private func restartLive() async -> Bool {
         live.onFrame = { [weak self] image in self?.liveImage = image }
         guard let port = live.start() else {
             message = "ライブビューを受け取る準備ができませんでした"
-            return
+            return false
         }
         livePort = port
         guard await client.startLive(port: port) else {
             message = "ライブビューを始められませんでした"
-            return
+            return false
         }
-        startHeartbeat()
+        return true
     }
 
     private func stopLive() {
@@ -254,38 +296,163 @@ final class ExilimModel: ObservableObject {
         liveImage = nil
     }
 
+    /// シャッター：切ったらすぐ次が撮れるようにする。
+    /// 前は、撮るたびに「小さい画像を待つ → 本体を受け取る → カメラから消す」を終えるまで約 6 秒止まっていた。
+    /// いまは切った瞬間のライブビューを「いま撮った写真」として出し、受け取りと消すのは、
+    /// 撮るのが止まったとき（3 秒）か 3 枚たまったときにまとめてする
     func shoot() async {
-        guard busy == nil else { return }
-        busy = "撮影しています"
-        defer { busy = nil }
+        guard !shooting, busy == nil, recordingSince == nil else { return }
+        shooting = true
+        defer { shooting = false }
+        idleCollect?.cancel()
+        let frame = liveImage
         do {
-            try await client.shutter()
-            lastShot = await client.waitLatestThumbnail()
-            lastShotReceived = false
-            if autoAdd { await addLatest() }
+            do {
+                try await client.shutterOnly()
+            } catch ExilimClient.ExilimError.notReady where unsaved > 0 {
+                // 内蔵メモリーがいっぱい：たまっている写真を受け取って消してから、もう一度
+                await collect()
+                try await client.shutterOnly()
+            }
+            flash += 1
+            if let frame { lastShot = frame }
+            unsaved += 1
+            scheduleCollect()
         } catch {
             message = error.localizedDescription
         }
     }
 
-    /// いま撮った写真を共有アルバムに入れる
-    func addLatest() async {
-        guard !lastShotReceived else { return }
+    /// 撮るのが止まったら、まとめて受け取る（セルフタイマーのときは、写真ができるまで待ってから）
+    private func scheduleCollect() {
+        idleCollect?.cancel()
+        guard autoAdd else { return }
+        let delay = Double(selfTimer) + (unsaved >= 3 ? 1.5 : 3)
+        idleCollect = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await self?.collect()
+        }
+    }
+
+    /// 撮ってまだ受け取っていない写真を、まとめて受け取る（写真を見るモードに切り替えて、新しいほうから）。
+    /// 「受け取ったらカメラから消す」がオンなら、受け取ったものはカメラから消す
+    func collect(resume: Bool = true) async {
+        guard unsaved > 0, busy == nil, case .connected(let info) = phase else { return }
         busy = "写真を受け取っています"
+        defer { busy = nil }
+        let count = unsaved
+        // 最後の 1 枚ができあがるまで待つ
+        await client.waitLatestImage(limit: Double(selfTimer) + 6)
+        // 写真を見るモードでは heartBeat を受け付けないので止める
+        heartbeat?.cancel()
+        await client.endLive()
+        var got = 0
+        var deleted = 0
         do {
-            let data = try await client.latestImage(livePort: livePort)
-            add(data, thumbnail: lastShot)
-            lastShotReceived = true
-            message = "受け取りました（閉じると共有アルバムに送ります）"
-            // 受け取って端末に置けたものだけ、カメラから消す
-            if deleteShots, case .connected(let info) = phase {
-                busy = "カメラの内蔵メモリーをあけています"
-                if await client.deleteLatestShot(apiVersion: info.apiVersion, livePort: livePort) {
-                    message = "受け取って、カメラからは消しました（閉じると共有アルバムに送ります）"
+            try await client.switchMode(to: .webServer)
+            let photos = await client.latestPhotos(count, apiVersion: info.apiVersion)
+            for file in photos.reversed() {
+                if !isReceived(file) {
+                    let data = try await client.download(file.path)
+                    add(data, thumbnail: nil)
+                    received.insert(Self.key(file))
+                    got += 1
+                    if file.path == photos.first?.path,
+                       let image = UIImage(data: data)?.preparingThumbnail(of: CGSize(width: 240, height: 240)) {
+                        lastShot = image
+                    }
                 }
+                if deleteShots, await client.delete(file.path) { deleted += 1 }
+            }
+            unsaved = 0
+            if got == 0 && deleted == 0 {
+                message = "新しい写真が見つかりませんでした"
+            } else {
+                message = deleted > 0
+                    ? "\(got) 枚受け取って、カメラからは消しました（閉じると共有アルバムに送ります）"
+                    : "\(got) 枚受け取りました（閉じると共有アルバムに送ります）"
             }
         } catch {
             message = error.localizedDescription
+        }
+        guard resume, tab == .remote else { return }
+        do {
+            try await client.switchMode(to: .liveView)
+            if await self.restartLive() { startHeartbeat() }
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    // MARK: - ズーム
+
+    /// ズームのボタンを押した・離した（direction：1 で寄る、-1 で引く）。
+    /// 押している間ズームし続け、さっと押しただけでも 0.2 秒は動かす（カシオのプラグインと同じ）
+    func zoom(_ direction: Int, pressing: Bool) {
+        let previous = zooming
+        if pressing { zoomStarted = Date() }
+        let started = zoomStarted
+        zooming = Task {
+            await previous?.value
+            if pressing {
+                await client.zoom(speed: 2 * direction)
+            } else {
+                let held = Date().timeIntervalSince(started)
+                if held < 0.2 { try? await Task.sleep(for: .milliseconds(Int((0.2 - held) * 1000))) }
+                await client.zoom(speed: 0)
+            }
+        }
+    }
+
+    // MARK: - 動画
+
+    /// 動画を撮り始める・止める（動画はカメラに残る。「カメラの写真」タブで受け取れる）
+    func toggleMovie() async {
+        if recordingSince != nil {
+            if await client.stopMovie() {
+                message = "動画はカメラに保存しました（「カメラの写真」で受け取れます）"
+            } else {
+                message = "動画を止められませんでした"
+            }
+            recordingSince = nil
+            return
+        }
+        guard busy == nil else { return }
+        idleCollect?.cancel()
+        if await client.startMovie() {
+            recordingSince = Date()
+        } else {
+            message = "動画を撮り始められませんでした（内蔵メモリーだけだと、動画はほとんど入りません）"
+        }
+    }
+
+    // MARK: - カメラの設定
+
+    func loadSettings() async {
+        selfTimer = await client.getParam(.selfTimer) ?? selfTimer
+        ev = await client.getParam(.ev)
+        whiteBalance = await client.getParam(.whiteBalance)
+        await loadBattery()
+    }
+
+    func loadBattery() async {
+        battery = await client.getParam(.battery)
+        capacity = await client.getParam(.snapCapacity)
+    }
+
+    func set(_ param: ExilimClient.Param, _ value: Int) {
+        Task {
+            if await client.setParam(param, value) {
+                switch param {
+                case .selfTimer: selfTimer = value
+                case .ev: ev = value
+                case .whiteBalance: whiteBalance = value
+                default: break
+                }
+            } else {
+                message = "カメラの設定を変えられませんでした"
+            }
         }
     }
 
@@ -552,72 +719,216 @@ struct ExilimView: View {
         .padding(.top, 8)
     }
 
+    private static let evLabels = ["-2.0", "-1.7", "-1.3", "-1.0", "-0.7", "-0.3", "±0",
+                                   "+0.3", "+0.7", "+1.0", "+1.3", "+1.7", "+2.0"]
+    private static let whiteBalanceLabels = ["オート", "太陽光", "曇天", "日陰", "昼白色蛍光灯", "昼光色蛍光灯", "電球"]
+    private static let batteryLabels = ["わずか", "30%", "50%", "60%", "99%", "満タン"]
+
     private var remote: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06))
-                if let image = model.liveImage {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                } else {
-                    VStack(spacing: 8) {
-                        Image(systemName: "video.slash")
-                            .font(.title)
-                        Text("ライブビューを待っています")
-                            .font(.caption)
+        VStack(spacing: 12) {
+            liveView
+            HStack(spacing: 8) {
+                settingMenu("timer", model.selfTimer == 0 ? "タイマー切" : "\(model.selfTimer) 秒") {
+                    ForEach([0, 5, 10], id: \.self) { value in
+                        Button(value == 0 ? "切" : "\(value) 秒") { model.set(.selfTimer, value) }
                     }
-                    .foregroundStyle(.secondary)
+                }
+                settingMenu("plusminus", model.ev.map { Self.evLabels[safe: $0 - 1] ?? "±0" } ?? "露出") {
+                    ForEach(Array(Self.evLabels.enumerated()), id: \.offset) { index, label in
+                        Button(label) { model.set(.ev, index + 1) }
+                    }
+                }
+                settingMenu("sun.max", model.whiteBalance.map { Self.whiteBalanceLabels[safe: $0 - 1] ?? "オート" } ?? "色") {
+                    ForEach(Array(Self.whiteBalanceLabels.enumerated()), id: \.offset) { index, label in
+                        Button(label) { model.set(.whiteBalance, index + 1) }
+                    }
                 }
             }
-            .aspectRatio(4 / 3, contentMode: .fit)
             .padding(.horizontal)
-            VStack(spacing: 10) {
-                Toggle("撮った写真をすぐ受け取る（閉じると共有アルバムへ）", isOn: $model.autoAdd)
+            VStack(spacing: 8) {
+                Toggle("撮った写真を受け取る（撮るのが止まったら、まとめて）", isOn: $model.autoAdd)
                 Toggle("受け取ったらカメラから消す（カードなしでも撮り続けられる）", isOn: $model.deleteShots)
             }
-            .font(.callout)
+            .font(.footnote)
             .padding(.horizontal, 24)
             Spacer(minLength: 0)
+            Picker("撮るもの", selection: $model.captureMode) {
+                ForEach(ExilimModel.CaptureMode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 160)
+            .disabled(model.recordingSince != nil)
             HStack {
-                Group {
-                    if let shot = model.lastShot {
-                        Button {
-                            Task { await model.addLatest() }
-                        } label: {
+                Button {
+                    Task { await model.collect() }
+                } label: {
+                    Group {
+                        if let shot = model.lastShot {
                             Image(uiImage: shot)
                                 .resizable()
                                 .scaledToFill()
-                                .frame(width: 56, height: 56)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        } else {
+                            Color.white.opacity(0.08)
                         }
-                        .disabled(model.busy != nil || model.lastShotReceived)
-                        .accessibilityLabel("いま撮った写真を共有アルバムに入れる")
-                    } else {
-                        Color.clear
+                    }
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(alignment: .topTrailing) {
+                        if model.unsaved > 0 {
+                            Text("\(model.unsaved)")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(.tint))
+                                .foregroundStyle(.black)
+                                .offset(x: 6, y: -6)
+                        }
                     }
                 }
-                .frame(width: 56, height: 56)
+                .disabled(model.busy != nil || model.unsaved == 0)
+                .accessibilityLabel("撮った写真をいま受け取る")
                 Spacer()
-                Button {
-                    Task { await model.shoot() }
-                } label: {
-                    ZStack {
-                        Circle().strokeBorder(.white, lineWidth: 4).frame(width: 78, height: 78)
-                        Circle().fill(.white).frame(width: 64, height: 64)
-                    }
-                }
-                .disabled(model.busy != nil)
-                .opacity(model.busy != nil ? 0.5 : 1)
-                .accessibilityLabel("シャッター")
+                shutterButton
                 Spacer()
                 Color.clear.frame(width: 56, height: 56)
             }
             .padding(.horizontal, 32)
-            .padding(.bottom, 24)
+            .padding(.bottom, 20)
         }
-        .sensoryFeedback(.impact(weight: .medium), trigger: model.lastShot)
+        .sensoryFeedback(.impact(weight: .medium), trigger: model.flash)
+    }
+
+    private var liveView: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06))
+            if let image = model.liveImage {
+                // カメラが送ってくるライブビューは 320×240（カメラ側で決まっている）。拡大するときになめらかにする
+                Image(uiImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .antialiased(true)
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "video.slash")
+                        .font(.title)
+                    Text(model.busy == "写真を受け取っています" ? "写真を受け取っています" : "ライブビューを待っています")
+                        .font(.caption)
+                }
+                .foregroundStyle(.secondary)
+            }
+            FlashView(trigger: model.flash)
+        }
+        .aspectRatio(4 / 3, contentMode: .fit)
+        .overlay(alignment: .trailing) {
+            VStack(spacing: 14) {
+                zoomButton(1, "plus.magnifyingglass", "寄る")
+                zoomButton(-1, "minus.magnifyingglass", "引く")
+            }
+            .padding(10)
+        }
+        .overlay(alignment: .topLeading) {
+            if let since = model.recordingSince {
+                TimelineView(.periodic(from: since, by: 1)) { context in
+                    let seconds = Int(context.date.timeIntervalSince(since))
+                    Label(String(format: "%d:%02d", seconds / 60, seconds % 60), systemImage: "record.circle")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(.red))
+                }
+                .padding(10)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 8) {
+                if let capacity = model.capacity {
+                    Text("あと \(capacity) 枚")
+                }
+                if let battery = model.battery {
+                    Label(Self.batteryLabels[safe: battery] ?? "", systemImage: battery <= 1 ? "battery.25" : "battery.75")
+                }
+            }
+            .font(.caption2)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(.black.opacity(0.45)))
+            .padding(10)
+            .opacity(model.capacity == nil && model.battery == nil ? 0 : 1)
+        }
+        .padding(.horizontal)
+        .task(id: model.tab) {
+            // 電池とあと何枚かは、ときどき読み直す
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                if model.busy == nil && model.recordingSince == nil { await model.loadBattery() }
+            }
+        }
+    }
+
+    private var shutterButton: some View {
+        Button {
+            Task {
+                if model.captureMode == .movie {
+                    await model.toggleMovie()
+                } else {
+                    await model.shoot()
+                }
+            }
+        } label: {
+            ZStack {
+                Circle().strokeBorder(.white, lineWidth: 4).frame(width: 78, height: 78)
+                if model.captureMode == .movie {
+                    if model.recordingSince != nil {
+                        RoundedRectangle(cornerRadius: 6).fill(.red).frame(width: 30, height: 30)
+                    } else {
+                        Circle().fill(.red).frame(width: 64, height: 64)
+                    }
+                } else {
+                    Circle().fill(.white).frame(width: 64, height: 64)
+                        .scaleEffect(model.shooting ? 0.85 : 1)
+                }
+            }
+            .animation(.easeOut(duration: 0.12), value: model.shooting)
+        }
+        .disabled(model.busy != nil || (model.shooting && model.captureMode == .photo))
+        .opacity(model.busy != nil ? 0.5 : 1)
+        .accessibilityLabel(model.captureMode == .movie ? (model.recordingSince != nil ? "動画を止める" : "動画を撮る") : "シャッター")
+    }
+
+    /// ズームのボタン：押している間ズームする
+    private func zoomButton(_ direction: Int, _ symbol: String, _ label: String) -> some View {
+        Image(systemName: symbol)
+            .font(.title3.weight(.semibold))
+            .frame(width: 44, height: 44)
+            .background(Circle().fill(.black.opacity(0.45)))
+            .foregroundStyle(.white)
+            .contentShape(Circle())
+            .onLongPressGesture(minimumDuration: 600, perform: {}, onPressingChanged: { pressing in
+                model.zoom(direction, pressing: pressing)
+            })
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                model.zoom(direction, pressing: true)
+                model.zoom(direction, pressing: false)
+            }
+    }
+
+    private func settingMenu<Content: View>(_ symbol: String, _ title: String,
+                                            @ViewBuilder content: () -> Content) -> some View {
+        Menu {
+            content()
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(.caption)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(Color.white.opacity(0.1)))
+        }
+        .disabled(model.busy != nil || model.recordingSince != nil)
     }
 
     private var cameraFiles: some View {
@@ -724,6 +1035,29 @@ struct ExilimView: View {
                     if model.message == message { model.message = nil }
                 }
         }
+    }
+}
+
+/// シャッターを切ったとき、ライブビューを一瞬白くする
+private struct FlashView: View {
+    let trigger: Int
+    @State private var opacity = 0.0
+
+    var body: some View {
+        Color.white
+            .opacity(opacity)
+            .allowsHitTesting(false)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .onChange(of: trigger) {
+                opacity = 0.8
+                withAnimation(.easeOut(duration: 0.35)) { opacity = 0 }
+            }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 

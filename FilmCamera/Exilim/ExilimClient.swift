@@ -68,8 +68,8 @@ actor ExilimClient {
     private(set) var lastError: String?
     /// カメラに名乗る名前
     private let clientName = "FilmCamera iPhone"
-    /// ライブビューのコマ数の上限（カシオのプラグインと同じ）
-    static let previewRate = 10
+    /// ライブビューのコマ数の上限。プラグインの初期値は 10、上限は 30（大きさは 320×240 のまま。カメラ側で決まっている）
+    static let previewRate = 30
 
     private let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -224,28 +224,81 @@ actor ExilimClient {
         throw ExilimError.notReady
     }
 
-    /// いま撮った写真ができるまで待って、小さい画像を受け取る
-    func waitLatestThumbnail() async -> UIImage? {
-        for _ in 0..<50 {
-            if let status = await status(), status.latestThumb {
-                return await thumbnail(of: "latest.jpg")
-            }
-            try? await Task.sleep(for: .milliseconds(200))
+    /// シャッターだけ切って、すぐ戻る（写真ができるのは待たない。受け取りは latestImage で別に）
+    func shutterOnly() async throws {
+        _ = await request("camMode", body: ["mode": 0])
+        if let status = await status(), status.captureEnable {
+            _ = await request("shutter", body: ["action": 1])
+            return
         }
-        return nil
+        try await shutter()
     }
 
-    /// いま撮った写真の本体を受け取る（ライブビューを一度止めて受け取り、また始める）
-    func latestImage(livePort: UInt16) async throws -> Data {
-        for _ in 0..<75 {
-            if let status = await status(), status.latestImage { break }
-            try await Task.sleep(for: .milliseconds(200))
+    // MARK: - ズーム・動画・設定
+
+    /// ズーム（speed：+ で寄る、- で引く、0 で止める。プラグインは ±2 を送り、1 回押しなら 0.2 秒後に 0 を送る）
+    func zoom(speed: Int) async {
+        _ = await request("zoom", body: ["speed": speed], timeout: 2)
+    }
+
+    /// 動画を撮り始める（プラグインと同じく、先に camMode 1＝動画 を送る）
+    func startMovie() async -> Bool {
+        _ = await request("camMode", body: ["mode": 1])
+        guard let json = await request("startRecMovie", body: [:]) else { return false }
+        return (int(json["resp"]) ?? 0) == 0
+    }
+
+    func stopMovie() async -> Bool {
+        guard let json = await request("endRecMovie", body: ["cause": 0]) else { return false }
+        _ = await request("camMode", body: ["mode": 0])
+        return (int(json["resp"]) ?? 0) == 0
+    }
+
+    /// カメラの設定の番号（プラグインの CameraParameter と同じ）
+    enum Param: Int {
+        /// 露出補正：1〜13（7 が ±0。-2.0, -1.7, -1.3, -1.0, -0.7, -0.3, 0, +0.3 … +2.0）
+        case ev = 9
+        /// ホワイトバランス：1 オート、2 太陽光、3 曇天、4 日陰、5 昼白色蛍光灯、6 昼光色蛍光灯、7 電球
+        case whiteBalance = 14
+        /// 電池：0〜5（0%, 30%, 50%, 60%, 99%, 100% のめやす）
+        case battery = 16
+        /// 左右反転：0 しない、1 する
+        case mirror = 21
+        /// あと何枚撮れるか
+        case snapCapacity = 23
+        /// セルフタイマー：0、5、10（秒）
+        case selfTimer = 44
+    }
+
+    func setParam(_ param: Param, _ value: Int) async -> Bool {
+        guard let json = await request("setParam", body: ["param_id": param.rawValue, "param_val": value]) else {
+            return false
         }
-        await endLive()
-        let data = try? await download("latest.jpg")
-        _ = await startLive(port: livePort)
-        guard let data else { throw ExilimError.downloadFailed }
-        return data
+        return (int(json["resp"]) ?? 0) >= 0
+    }
+
+    /// 設定を読む（答えは {"9": 7} のように、番号が名前になっている）
+    func getParam(_ param: Param) async -> Int? {
+        guard let json = await request("getParam", body: ["param_id": param.rawValue], timeout: 3) else { return nil }
+        return int(json[String(param.rawValue)]) ?? int(json["param_val"]) ?? int(json["value"])
+    }
+
+    /// カメラの時計を iPhone に合わせる（TimeStamp は "2026:10:09 21:06:17"、TimeZone は世界標準時からの秒）
+    func syncClock() async {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        _ = await request("setDateTime", body: ["TimeStamp": formatter.string(from: Date()),
+                                                "TimeZone": TimeZone.current.secondsFromGMT()])
+    }
+
+    /// いま撮った写真ができあがるまで待つ（最大 limit 秒）
+    func waitLatestImage(limit: TimeInterval = 6) async {
+        let deadline = Date().addingTimeInterval(limit)
+        while Date() < deadline {
+            if let status = await status(), status.latestImage { return }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
     }
 
     // MARK: - カメラから消す（内蔵メモリーをあける）
@@ -256,29 +309,20 @@ actor ExilimClient {
         return int(json["resp"]) == 0
     }
 
-    /// いちばん新しい写真のパス（WEBSERVER のとき。カシオのプラグインの updateLatestFileName と同じ頼み方）
-    private func latestPath(apiVersion: String) async -> String? {
+    /// 新しいほうから count 件の写真（WEBSERVER のとき。カシオのプラグインの updateLatestFileName と同じ頼み方）。
+    /// 動画は入れない（リモート撮影で撮った写真だけを受け取って消すため）
+    func latestPhotos(_ count: Int, apiVersion: String) async -> [RemoteFile] {
         if Self.versionNumber(apiVersion) >= 100000 {
             _ = await request("setTarget", body: ["target": 0])
         }
-        guard let json = await request("getList", query: "pos=0&num=1&sort=1", timeout: 10),
-              let files = json["files"] as? [[String: Any]],
-              let name = files.first?["name"] as? String else { return nil }
-        return name
-    }
-
-    /// リモート撮影で撮った写真をカメラから消す（写真を見るモードに切り替えて消し、ライブビューに戻す）。
-    /// メモリーカードがなくても、内蔵メモリーがいっぱいにならずに撮り続けられる
-    func deleteLatestShot(apiVersion: String, livePort: UInt16) async -> Bool {
-        await endLive()
-        var deleted = false
-        if (try? await switchMode(to: .webServer)) != nil, let path = await latestPath(apiVersion: apiVersion) {
-            deleted = await delete(path)
+        guard count > 0,
+              let json = await request("getList", query: "pos=0&num=\(count)&sort=1", timeout: 10),
+              let entries = json["files"] as? [[String: Any]] else { return [] }
+        return entries.compactMap { entry -> RemoteFile? in
+            guard int(entry["type"]) == 1, let name = entry["name"] as? String else { return nil }
+            return RemoteFile(path: name, isVideo: false, size: Int64(int(entry["size"]) ?? 0),
+                              modified: string(entry["mtime"]) ?? "")
         }
-        if (try? await switchMode(to: .liveView)) != nil {
-            _ = await startLive(port: livePort)
-        }
-        return deleted
     }
 
     /// "1.2.3" → 10203（プラグインと同じ数え方）
