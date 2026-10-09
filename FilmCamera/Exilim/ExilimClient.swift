@@ -143,9 +143,16 @@ actor ExilimClient {
                 _ = await request("setAppMode", body: ["app_mode": Mode.liveView.rawValue])
                 try await Task.sleep(for: .milliseconds(150))
             } else {
-                if current == .request || current == .free {
-                    _ = await request("setAppMode", body: ["app_mode": Mode.liveView.rawValue])
+                // 写真を見るモードへは、ライブビューでつなぎきってから切り替える
+                // （REQUEST・FREE のまま changeAppMode を送ると 403 で断られた。プラグインもライブビューから切り替えている）
+                if current == .request || current == .free || current == .imagePush {
+                    _ = try await switchMode(to: .liveView)
+                    await endLive()
                     try await Task.sleep(for: .milliseconds(150))
+                    continue
+                }
+                if current == .liveView, !askedChange {
+                    await endLive()
                 }
                 if !askedChange {
                     _ = await request("changeAppMode", body: ["app_mode": target.rawValue])
@@ -206,6 +213,9 @@ actor ExilimClient {
             }
             try await Task.sleep(for: .milliseconds(200))
         }
+        // 撮れない理由を調べるため、カメラの状態と写真の枚数を通信ログに残す
+        _ = await request("getAppMode", timeout: 2)
+        _ = await request("getTotal", timeout: 2)
         throw ExilimError.notReady
     }
 

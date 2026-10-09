@@ -81,10 +81,11 @@ final class ExilimModel: ObservableObject {
             return
         }
         phase = .searching
-        // Wi-Fi が切り替わってカメラが答えるまで、少し待ちながら何度か探す
-        for _ in 0..<8 {
+        // カメラの Wi-Fi に切り替わるまで 20 秒ほどかかることがある。1 秒おきに、最大 40 秒待つ
+        // （いつもの 192.168.100.2 だけを聞き、近くのアドレスまで探すのはときどき）
+        for attempt in 0..<40 {
             if Task.isCancelled { return }
-            if let info = await client.find() {
+            if let info = await client.find(quick: attempt % 10 != 9) {
                 connected(info)
                 return
             }
