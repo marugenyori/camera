@@ -772,6 +772,13 @@ struct AlbumView: View {
                     Image(systemName: showingMap ? "square.grid.2x2" : "map")
                 }
                 .accessibilityLabel(showingMap ? "一覧で見る" : "地図で見る")
+                Button {
+                    showingExilim = true
+                } label: {
+                    Image(systemName: "camera.on.rectangle")
+                }
+                .accessibilityLabel("EXILIM とつなぐ")
+                .disabled(store.selected == nil)
                 PhotosPicker(selection: $importItems, maxSelectionCount: 30, matching: .images) {
                     Image(systemName: "plus")
                 }

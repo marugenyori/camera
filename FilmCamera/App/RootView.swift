@@ -42,6 +42,12 @@ struct RootView: View {
             showingCamera = true
         }
         .onOpenURL { album.open($0) }
+        // EXILIM から受け取って、まだ共有アルバムに送れていない写真があれば送る
+        .task {
+            guard ExilimPending.count > 0 else { return }
+            try? await Task.sleep(for: .seconds(5))
+            await ExilimPending.flush()
+        }
         .onAppear {
             // ウィジェットからアプリが起動したとき（画面ができる前に受け取っている）
             if album.openCamera || album.requestedMode != nil {

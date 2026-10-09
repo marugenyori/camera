@@ -73,11 +73,11 @@ actor ExilimClient {
 
     // MARK: - さがす
 
-    /// カメラを探す（いつもの 192.168.100.2 から、近くのアドレスも順に試す）
-    func find() async -> Info? {
-        let candidates = [2, 1, 3, 4, 5, 10, 100, 254].map { "192.168.100.\($0)" }
+    /// カメラを探す（いつもの 192.168.100.2 から、近くのアドレスも順に試す。quick なら 192.168.100.2 だけ）
+    func find(quick: Bool = false) async -> Info? {
+        let candidates = (quick ? [2] : [2, 1, 3, 4, 5, 10, 100, 254]).map { "192.168.100.\($0)" }
         for candidate in candidates {
-            guard let json = await request("getApiVersion", host: candidate, timeout: 1.5),
+            guard let json = await request("getApiVersion", host: candidate, timeout: quick ? 1 : 1.5),
                   let model = json["MDL"] as? String else { continue }
             host = candidate
             return Info(model: model, apiVersion: string(json["resp"]) ?? "")

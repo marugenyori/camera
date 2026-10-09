@@ -742,11 +742,18 @@ final class AlbumStore: ObservableObject {
     /// 写真をアルバムに入れる（target を省くと、選んでいるアルバム）
     func add(data: Data, type: String, thumbnail: UIImage?, mode: String, location: CLLocation? = nil,
              to target: AlbumRef? = nil) {
-        Task {
+        Task { await upload(data: data, type: type, thumbnail: thumbnail, mode: mode, location: location, to: target) }
+    }
+
+    /// 写真をアルバムに入れて、うまくいったかを返す（失敗したら呼んだ側で取っておいて、あとでやり直せる）
+    @discardableResult
+    func upload(data: Data, type: String, thumbnail: UIImage?, mode: String, location: CLLocation? = nil,
+                to target: AlbumRef? = nil) async -> Bool {
+        do {
             if albums.isEmpty { await refresh() }
             guard let album = target ?? selected else {
                 status = status ?? "共有アルバムを準備できませんでした"
-                return
+                return false
             }
             uploading += 1
             defer { uploading -= 1 }
@@ -789,8 +796,10 @@ final class AlbumStore: ObservableObject {
                 counts[album.id, default: 0] += 1
                 if let thumbnail { covers[album.id] = thumbnail }
                 status = nil
+                return true
             } catch {
                 status = "共有アルバムに追加できませんでした：" + Self.describe(error)
+                return false
             }
         }
     }

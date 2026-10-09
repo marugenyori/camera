@@ -6,6 +6,9 @@ import SwiftUI
 @MainActor
 final class ExilimModel: ObservableObject {
     enum Phase: Equatable {
+        /// カメラの Wi-Fi の名前とパスワードを入れてもらう（最初の 1 回だけ）
+        case setup
+        case joining
         case searching
         case notFound
         case connected(ExilimClient.Info)
@@ -28,6 +31,8 @@ final class ExilimModel: ObservableObject {
     @Published var message: String?
     @Published var lastShot: UIImage?
     @Published var progress: (done: Int, total: Int)?
+    /// 受け取って、まだ共有アルバムに送っていない枚数（閉じたら送る）
+    @Published var pending = ExilimPending.count
     /// 撮ったらすぐ共有アルバムに入れる
     @Published var autoAdd = UserDefaults.standard.object(forKey: "exilimAutoAdd") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoAdd, forKey: "exilimAutoAdd") }
@@ -47,15 +52,45 @@ final class ExilimModel: ObservableObject {
 
     // MARK: - つなぐ
 
+    /// ワンタップでつなぐ：もうカメラの Wi-Fi にいればそのまま。いなければアプリが自分でカメラの Wi-Fi に入って探す
     func connect() async {
-        phase = .searching
         message = nil
-        guard let info = await client.find() else {
+        phase = .searching
+        if let info = await client.find(quick: true) {
+            connected(info)
+            return
+        }
+        guard ExilimWiFi.ssid != nil else {
+            phase = .setup
+            return
+        }
+        phase = .joining
+        if let error = await ExilimWiFi.join() {
+            message = error
             phase = .notFound
             return
         }
+        phase = .searching
+        // Wi-Fi が切り替わってカメラが答えるまで、少し待ちながら何度か探す
+        for _ in 0..<8 {
+            if let info = await client.find() {
+                connected(info)
+                return
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        phase = .notFound
+    }
+
+    private func connected(_ info: ExilimClient.Info) {
         phase = .connected(info)
         show(tab)
+    }
+
+    /// 最初の 1 回：カメラの Wi-Fi の名前とパスワードを覚えて、つなぐ
+    func saveWiFi(ssid: String, password: String) async {
+        ExilimWiFi.save(ssid: ssid.trimmingCharacters(in: .whitespaces), password: password)
+        await connect()
     }
 
     /// タブを切り替える（カメラのモードも切り替わる。前の切り替えが終わってから）
@@ -73,12 +108,23 @@ final class ExilimModel: ObservableObject {
         }
     }
 
+    /// 閉じる：カメラとの接続を切り、いつもの Wi-Fi に戻って、受け取った写真を共有アルバムに送る
     func close() async {
         switching?.cancel()
         thumbnailTask?.cancel()
         stopLive()
         heartbeat?.cancel()
         await client.disconnect()
+        ExilimWiFi.leave()
+        guard ExilimPending.count > 0 else { return }
+        Task { @MainActor in
+            // 回線が戻るまで少し待ちながら、何度か送る（送れなかった分は次に開いたときにまた送る）
+            for _ in 0..<4 {
+                try? await Task.sleep(for: .seconds(4))
+                await ExilimPending.flush()
+                if ExilimPending.count == 0 { break }
+            }
+        }
     }
 
     /// 1 秒ごとに「まだいるよ」を送る。5 回続けて返事がなければ切れたとみなす
@@ -153,7 +199,7 @@ final class ExilimModel: ObservableObject {
         do {
             let data = try await client.latestImage(livePort: livePort)
             add(data, thumbnail: lastShot)
-            message = "共有アルバムに入れました"
+            message = "受け取りました（閉じると共有アルバムに送ります）"
         } catch {
             message = error.localizedDescription
         }
@@ -216,15 +262,15 @@ final class ExilimModel: ObservableObject {
         }
         progress = nil
         busy = nil
-        message = failed == 0 ? "\(targets.count) 枚を共有アルバムに入れました"
-                              : "\(targets.count - failed) 枚を入れました（\(failed) 枚は受け取れませんでした）"
+        message = failed == 0 ? "\(targets.count) 枚を受け取りました（閉じると共有アルバムに送ります）"
+                              : "\(targets.count - failed) 枚を受け取りました（\(failed) 枚は受け取れませんでした）"
         loadThumbnails()
     }
 
+    /// カメラの Wi-Fi ではインターネットに出られないので、いったん端末に置く（閉じたら送る）
     private func add(_ data: Data, thumbnail: UIImage?) {
-        let small = thumbnail ?? UIImage(data: data)?.preparingThumbnail(of: CGSize(width: 800, height: 800))
-        AlbumStore.shared.add(data: data, type: "public.jpeg", thumbnail: small, mode: model,
-                              location: LocationProvider.location(inImage: data))
+        ExilimPending.keep(data, mode: model)
+        pending = ExilimPending.count
     }
 }
 
@@ -237,12 +283,16 @@ struct ExilimView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 switch model.phase {
-                case .searching:
+                case .searching, .joining:
                     VStack(spacing: 14) {
                         ProgressView().controlSize(.large)
-                        Text("カメラをさがしています")
+                        Text(model.phase == .joining ? "カメラの Wi-Fi につないでいます" : "カメラをさがしています")
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                    }
+                case .setup:
+                    ExilimWiFiSetup { ssid, password in
+                        Task { await model.saveWiFi(ssid: ssid, password: password) }
                     }
                 case .notFound:
                     guide
@@ -282,9 +332,9 @@ struct ExilimView: View {
                     .font(.title3.weight(.bold))
                     .frame(maxWidth: .infinity)
                 VStack(alignment: .leading, spacing: 12) {
-                    step(1, "カメラ（EX-FR100 など）の電源を入れ、スマートフォンとつなぐ待ち受けの状態にします（取扱説明書の「スマートフォンと接続する」）。")
-                    step(2, "iPhone の「設定」→「Wi-Fi」で、カメラの名前の Wi-Fi を選びます。パスワードは、カメラに付いていた紙か取扱説明書に書いてあります。")
-                    step(3, "「インターネット未接続」と出ても、そのままで大丈夫です。このアプリに戻って、下の「もう一度さがす」を押します。")
+                    step(1, "カメラ（EX-FR100 など）の電源が入っていて、スマートフォンとつなぐ待ち受けの状態か確かめてください（取扱説明書の「スマートフォンと接続する」）。")
+                    step(2, "カメラの Wi-Fi の名前とパスワードが合っているか確かめてください（下の「Wi-Fi の設定を変える」）。")
+                    step(3, "下の「もう一度さがす」を押します。")
                 }
                 .padding(16)
                 .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.08)))
@@ -300,6 +350,10 @@ struct ExilimView: View {
                         .padding(.vertical, 12)
                 }
                 .buttonStyle(.borderedProminent)
+                Button("Wi-Fi の設定を変える") {
+                    model.phase = .setup
+                }
+                .frame(maxWidth: .infinity)
             }
             .padding(20)
         }
@@ -344,6 +398,11 @@ struct ExilimView: View {
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
+            if model.pending > 0 {
+                Label("受け取った \(model.pending) 枚は、閉じると共有アルバムに送ります", systemImage: "tray.and.arrow.up")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             switch model.tab {
             case .remote: remote
             case .files: cameraFiles
@@ -373,7 +432,7 @@ struct ExilimView: View {
             }
             .aspectRatio(4 / 3, contentMode: .fit)
             .padding(.horizontal)
-            Toggle("撮ったらすぐ共有アルバムに入れる", isOn: $model.autoAdd)
+            Toggle("撮った写真をすぐ受け取る（閉じると共有アルバムへ）", isOn: $model.autoAdd)
                 .font(.callout)
                 .padding(.horizontal, 24)
             Spacer(minLength: 0)
@@ -442,7 +501,7 @@ struct ExilimView: View {
                         if let progress = model.progress {
                             Text("受け取っています \(progress.done) / \(progress.total)")
                         } else {
-                            Text("選んだ \(model.selected.count) 枚を共有アルバムに入れる")
+                            Text("選んだ \(model.selected.count) 枚を受け取る")
                         }
                     }
                     .font(.headline)
@@ -512,5 +571,38 @@ struct ExilimView: View {
                     if model.message == message { model.message = nil }
                 }
         }
+    }
+}
+
+/// 最初の 1 回だけ：カメラの Wi-Fi の名前とパスワードを入れてもらう
+private struct ExilimWiFiSetup: View {
+    var onSave: (String, String) -> Void
+    @State private var ssid = ExilimWiFi.ssid ?? ""
+    @State private var password = ExilimWiFi.password ?? ""
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Wi-Fi の名前（例：EX-FR100_xxxx）", text: $ssid)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField("パスワード", text: $password)
+            } header: {
+                Text("カメラの Wi-Fi")
+            } footer: {
+                Text("カメラに付いていた紙か取扱説明書に書いてあります。最初の 1 回だけ入れれば、次からはボタンひとつでつながります（パスワードはこの iPhone のキーチェーンに保存）。")
+            }
+            Section {
+                Button {
+                    onSave(ssid, password)
+                } label: {
+                    Text("保存してつなぐ")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(ssid.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .scrollContentBackground(.hidden)
     }
 }
