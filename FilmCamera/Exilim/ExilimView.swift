@@ -60,10 +60,7 @@ final class ExilimModel: ObservableObject {
             connected(info)
             return
         }
-        guard ExilimWiFi.ssid != nil else {
-            phase = .setup
-            return
-        }
+        // Wi-Fi の名前を登録していなければ、EX-FR100 の名前の頭（FR100-）と初期のパスワードで探す
         phase = .joining
         if let error = await ExilimWiFi.join() {
             message = error
@@ -347,9 +344,9 @@ struct ExilimView: View {
                     .font(.title3.weight(.bold))
                     .frame(maxWidth: .infinity)
                 VStack(alignment: .leading, spacing: 12) {
-                    step(1, "カメラ（EX-FR100 など）の電源が入っていて、スマートフォンとつなぐ待ち受けの状態か確かめてください（取扱説明書の「スマートフォンと接続する」）。")
-                    step(2, "カメラの Wi-Fi の名前とパスワードが合っているか確かめてください（下の「Wi-Fi の設定を変える」）。")
-                    step(3, "下の「もう一度さがす」を押します。")
+                    step(1, "カメラ部の電源ボタンを約 2 秒押して、いったん電源を切ります。")
+                    step(2, "ムービーボタンを押したまま、電源ボタンを約 1 秒押します。カメラの無線 LAN のランプが青く点滅したら、待ち受けの状態です（コントローラーからは「無線モード」→「スマートフォンで撮影」→「開始」でも同じ）。")
+                    step(3, "下の「もう一度さがす」を押します。パスワードを 00000000 から変えている場合や、FR100 以外のカメラは「Wi-Fi の設定を変える」で名前とパスワードを入れてください。")
                 }
                 .padding(16)
                 .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.08)))

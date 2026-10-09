@@ -40,12 +40,21 @@ enum ExilimWiFi {
     }
 
     /// カメラの Wi-Fi につなぐ（はじめての Wi-Fi のときは iOS が「接続」をたずねる）
+    /// EX-FR100 の Wi-Fi の名前は「FR100-」＋英数字 6 桁、パスワードの初期値は 00000000（取扱説明書 68 ページ）。
+    /// 名前を登録していなければ、この頭の文字と初期のパスワードで探してつなぐ
+    static let defaultPrefix = "FR100-"
+    static let defaultPassword = "00000000"
+
     static func join() async -> String? {
-        guard let ssid else { return "カメラの Wi-Fi の名前が登録されていません" }
-        let pass = password ?? ""
-        let configuration = pass.isEmpty
-            ? NEHotspotConfiguration(ssid: ssid)
-            : NEHotspotConfiguration(ssid: ssid, passphrase: pass, isWEP: false)
+        let configuration: NEHotspotConfiguration
+        if let ssid {
+            let pass = password ?? ""
+            configuration = pass.isEmpty
+                ? NEHotspotConfiguration(ssid: ssid)
+                : NEHotspotConfiguration(ssid: ssid, passphrase: pass, isWEP: false)
+        } else {
+            configuration = NEHotspotConfiguration(ssidPrefix: defaultPrefix, passphrase: defaultPassword, isWEP: false)
+        }
         configuration.joinOnce = true
         do {
             try await NEHotspotConfigurationManager.shared.apply(configuration)
@@ -64,8 +73,13 @@ enum ExilimWiFi {
 
     /// カメラの Wi-Fi から離れて、いつもの Wi-Fi に戻る
     static func leave() {
-        guard let ssid else { return }
-        NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
+        if let ssid { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid) }
+        // 名前の頭で探してつないだときの設定も消す
+        NEHotspotConfigurationManager.shared.getConfiguredSSIDs { list in
+            for name in list where name.hasPrefix(defaultPrefix) {
+                NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: name)
+            }
+        }
     }
 }
 
