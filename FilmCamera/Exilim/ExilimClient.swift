@@ -172,9 +172,10 @@ actor ExilimClient {
         await request("heartBeat", body: ["rate": Self.previewRate], timeout: 2) != nil
     }
 
+    /// 画面を閉じるとき：ライブビューを止めるだけにする。
+    /// disconnect を送ると、カメラが待ち受けをやめて次に開いたときに答えなくなった（実機のログ）ので送らない
     func disconnect() async {
         _ = await request("endLive", body: [:], timeout: 1)
-        _ = await request("disconnect", body: ["cause": 0], timeout: 1)
     }
 
     // MARK: - リモート撮影（LIVEVIEW）

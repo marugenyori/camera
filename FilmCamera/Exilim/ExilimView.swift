@@ -376,10 +376,19 @@ struct ExilimView: View {
                             .foregroundStyle(.secondary)
                         if let since = model.waitingSince {
                             TimelineView(.periodic(from: since, by: 1)) { context in
-                                Text("\(Int(context.date.timeIntervalSince(since))) 秒（カメラの Wi-Fi が立ち上がるまで 10〜20 秒かかります）")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                                    .multilineTextAlignment(.center)
+                                let seconds = Int(context.date.timeIntervalSince(since))
+                                VStack(spacing: 10) {
+                                    Text("\(seconds) 秒（カメラの Wi-Fi が立ち上がるまで 10〜20 秒かかります）")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                    if seconds >= 15 {
+                                        Text("カメラの青いランプが消えていたら、もう一度待ち受けにしてください（電源を切ってから、ムービーボタンを押したまま電源ボタンを約 1 秒）")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 24)
+                                    }
+                                }
+                                .multilineTextAlignment(.center)
                             }
                         }
                     }
