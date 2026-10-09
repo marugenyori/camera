@@ -34,6 +34,15 @@ actor ExilimClient {
         case webServer = "WEBSERVER"
         case imagePush = "IMAGEPUSH"
         case request = "REQUEST"
+        /// 何もしていない（つないだばかり）
+        case free = "FREE"
+    }
+
+    /// カメラからの呼びかけを受ける iPhone 側のポート（connect のときに伝える）
+    private var callbackPort: UInt16 = 8081
+
+    func setCallbackPort(_ port: UInt16) {
+        callbackPort = port
     }
 
     enum ExilimError: LocalizedError {
@@ -78,6 +87,7 @@ actor ExilimClient {
     func find(quick: Bool = false) async -> Info? {
         let candidates = (quick ? [2] : [2, 1, 3, 4, 5, 10, 100, 254]).map { "192.168.100.\($0)" }
         for candidate in candidates {
+            if Task.isCancelled { return nil }
             guard let json = await request("getApiVersion", host: candidate, timeout: quick ? 1 : 1.5),
                   let model = json["MDL"] as? String else { continue }
             host = candidate
@@ -112,7 +122,7 @@ actor ExilimClient {
                 continue
             }
             if current == target {
-                guard let json = await request("connect", body: ["name": clientName, "port": 8081]),
+                guard let json = await request("connect", body: ["name": clientName, "port": Int(callbackPort)]),
                       int(json["resp"]) == 0, let mode = json["mode"] as? String else {
                     throw ExilimError.notConnected
                 }
@@ -133,7 +143,7 @@ actor ExilimClient {
                 _ = await request("setAppMode", body: ["app_mode": Mode.liveView.rawValue])
                 try await Task.sleep(for: .milliseconds(150))
             } else {
-                if current == .request {
+                if current == .request || current == .free {
                     _ = await request("setAppMode", body: ["app_mode": Mode.liveView.rawValue])
                     try await Task.sleep(for: .milliseconds(150))
                 }

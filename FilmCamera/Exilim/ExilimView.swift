@@ -50,6 +50,7 @@ final class ExilimModel: ObservableObject {
 
     let client = ExilimClient()
     private let live = ExilimLiveView()
+    private let callback = ExilimCallbackServer()
     private var livePort: UInt16 = 0
     private var heartbeat: Task<Void, Never>?
     private var thumbnailTask: Task<Void, Never>?
@@ -66,6 +67,8 @@ final class ExilimModel: ObservableObject {
     func connect() async {
         message = nil
         phase = .searching
+        // カメラからの呼びかけの受け口を、つなぐ前に開いておく（カシオのプラグインと同じ）
+        if let port = callback.start() { await client.setCallbackPort(port) }
         if let info = await client.find(quick: true) {
             connected(info)
             return
@@ -80,6 +83,7 @@ final class ExilimModel: ObservableObject {
         phase = .searching
         // Wi-Fi が切り替わってカメラが答えるまで、少し待ちながら何度か探す
         for _ in 0..<8 {
+            if Task.isCancelled { return }
             if let info = await client.find() {
                 connected(info)
                 return
@@ -123,6 +127,7 @@ final class ExilimModel: ObservableObject {
         stopLive()
         heartbeat?.cancel()
         await client.disconnect()
+        callback.stop()
         ExilimWiFi.leave()
         guard ExilimPending.count > 0 else { return }
         Task { @MainActor in

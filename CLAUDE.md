@@ -69,6 +69,7 @@
     - 写真：`getList?dir=/&pos=0&num=0&sort=0`（files: name, type 0=フォルダ 1=写真 2=動画, size, mtime。フォルダはたどる）、`getThumbnail?file=`、`getImage?file=`（受け取り中も heartBeat）
     - リモート撮影：`startLive`（rate, port）で iPhone の UDP ポートにライブビューが届く（頭 12 バイト：2〜3 が JPEG の大きさ、4〜7 が通し番号、8〜11 がコマの番号。`ExilimLiveView` で組み立てる）。`camMode`（mode: 0＝静止画、1＝動画）を送ってから、`camStatus` の captureEnable を見て `shutter`（action: 1）。撮った写真は `latest.jpg`（latest-image を待ち、`endLive` してから受け取る）
     - 消す：`deleteImage`（file、WEBSERVER のとき）。EX-FR100 はカードなしだと内蔵メモリーに数枚しか撮れない（取扱説明書 27 ページ）ので、リモート撮影で撮った写真は受け取ったらカメラから消す（`deleteLatestShot`：WEBSERVER にして `getList?pos=0&num=1&sort=1` でいちばん新しい写真の名前を聞き、消してライブビューに戻す。API が 10.0.0 以上なら先に `setTarget`）。端末に置けたものだけ消す
+    - カメラからの呼びかけの受け口（`ExilimCallbackServer`、TCP 8081〜）を connect の前に開き、connect の port で伝える（プラグインと同じ）。受け口がないと、getAppMode の state が LIVE_CONNECTING のまま captureEnable が 0 だった（実機のログ）。アプリのモードには FREE もある
     - Info.plist：`NSLocalNetworkUsageDescription`（ビルド設定）と ATS の `NSAllowsLocalNetworking`
     - 通信ログ（`ExilimLog`、画面右上のボタン）：送った命令と答え・UDP の受信状況を記録する。実機で動かないときは、持ち主に「全部コピー」して送ってもらう（パスワードは入らない）
     - EX-FR100 の Wi-Fi は名前「FR100-」＋英数字 6 桁、パスワードの初期値 00000000（取扱説明書 68 ページ）。カメラ部だけで待ち受けにするには、電源を切ってから【ムービー】を押したまま【電源】を約 1 秒（無線 LAN のランプが青く点滅）。名前を登録していなければ `NEHotspotConfiguration(ssidPrefix:)` でこの頭の文字と初期パスワードでつなぐ
