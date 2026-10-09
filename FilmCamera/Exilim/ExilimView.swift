@@ -407,21 +407,39 @@ final class ExilimModel: ObservableObject {
 
     // MARK: - カメラの設定
 
+    /// 設定の読み書きは、ライブビューを止めてからでないとカメラが 405 で断る（実機のログ）。
+    /// カシオのプラグインも endLive → getParam・setParam → startLive の順にしている
+    private func withLivePaused<T>(_ body: () async -> T) async -> T {
+        await client.endLive()
+        let result = await body()
+        if tab == .remote, livePort != 0 { _ = await client.startLive(port: livePort) }
+        return result
+    }
+
     func loadSettings() async {
-        selfTimer = await client.getParam(.selfTimer) ?? selfTimer
-        ev = await client.getParam(.ev)
-        whiteBalance = await client.getParam(.whiteBalance)
-        await loadBattery()
+        guard busy == nil else { return }
+        await withLivePaused {
+            selfTimer = await client.getParam(.selfTimer) ?? selfTimer
+            ev = await client.getParam(.ev)
+            whiteBalance = await client.getParam(.whiteBalance)
+            battery = await client.getParam(.battery)
+            capacity = await client.getParam(.snapCapacity)
+        }
     }
 
     func loadBattery() async {
-        battery = await client.getParam(.battery)
-        capacity = await client.getParam(.snapCapacity)
+        guard busy == nil else { return }
+        await withLivePaused {
+            battery = await client.getParam(.battery)
+            capacity = await client.getParam(.snapCapacity)
+        }
     }
 
     func set(_ param: ExilimClient.Param, _ value: Int) {
         Task {
-            if await client.setParam(param, value) {
+            guard busy == nil else { return }
+            let ok = await withLivePaused { await client.setParam(param, value) }
+            if ok {
                 switch param {
                 case .selfTimer: selfTimer = value
                 case .ev: ev = value
@@ -832,7 +850,7 @@ struct ExilimView: View {
         .task(id: model.tab) {
             // 電池とあと何枚かは、ときどき読み直す
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: .seconds(60))
                 if model.busy == nil && model.recordingSince == nil { await model.loadBattery() }
             }
         }
