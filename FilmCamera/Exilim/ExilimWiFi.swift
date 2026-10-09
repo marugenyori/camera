@@ -71,6 +71,18 @@ enum ExilimWiFi {
         }
     }
 
+    /// いま iPhone が入っている Wi-Fi の名前（アプリが NEHotspotConfiguration で入れた Wi-Fi なら読める）
+    static func currentSSID() async -> String? {
+        await NEHotspotNetwork.fetchCurrent()?.ssid
+    }
+
+    /// いまカメラの Wi-Fi に本当に入っているか（apply の「成功」は入り始めただけのことがある）
+    static func isOnCameraWiFi() async -> Bool {
+        guard let current = await currentSSID() else { return false }
+        if let ssid { return current == ssid }
+        return current.hasPrefix(defaultPrefix)
+    }
+
     /// カメラの Wi-Fi から離れて、いつもの Wi-Fi に戻る
     static func leave() {
         if let ssid { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid) }

@@ -106,9 +106,32 @@ final class ExilimModel: ObservableObject {
         let deadline = Date().addingTimeInterval(joinError == nil ? 45 : 4)
         var round = 0
         var lastReport = Date()
+        var lastWiFiCheck = Date()
+        var rejoined = false
         while Date() < deadline {
             if Task.isCancelled { return }
             round += 1
+            // 2 秒おきに、本当にカメラの Wi-Fi に入れたかを確かめる。
+            // 10 秒たっても入れていなければ 1 回だけ入り直し、それでもだめならすぐ知らせる
+            // （カメラが前の接続を覚えていて、新しい接続を断ることがある：iOS の「接続できません」）
+            if joinError == nil, Date().timeIntervalSince(lastWiFiCheck) >= 2 {
+                lastWiFiCheck = Date()
+                let elapsed = Date().timeIntervalSince(started)
+                if await !ExilimWiFi.isOnCameraWiFi(), elapsed >= 10 {
+                    if !rejoined {
+                        rejoined = true
+                        ExilimLog.shared.add(String(format: "Wi-Fi：まだカメラの Wi-Fi に入れていません（%.0f 秒）。入り直します", elapsed))
+                        ExilimWiFi.leave()
+                        try? await Task.sleep(for: .seconds(1))
+                        _ = await ExilimWiFi.join()
+                    } else if elapsed >= 22 {
+                        ExilimLog.shared.add(String(format: "Wi-Fi：カメラの Wi-Fi に入れませんでした（%.0f 秒）", elapsed))
+                        message = "カメラが Wi-Fi への接続を断りました。カメラを待ち受けにし直してから、もう一度さがしてください"
+                        phase = .notFound
+                        return
+                    }
+                }
+            }
             if let info = await client.find(quick: round % 15 != 0, timeout: 0.6, silent: true) {
                 ExilimLog.shared.add(String(format: "カメラが答えました（つなぎ始めから %.1f 秒）",
                                             Date().timeIntervalSince(started)))
