@@ -76,6 +76,7 @@
     - 動画：`camMode`（1）→ `startRecMovie`（{}）、止めるのは `endRecMovie`（cause: 0）。動画はカメラに残し、「カメラの写真」で受け取る
     - 設定：**ライブビュー中に送ると 405 で断られる**（実機）ので `endLive` → 読み書き → `startLive`（プラグインと同じ）。`setParam`（param_id, param_val）/ `getParam`（param_id → 答えは {"9": 7} のように番号が名前）。9 露出補正 1〜13（7 が ±0）、14 ホワイトバランス 1〜7（オート・太陽光・曇天・日陰・昼白色・昼光色・電球）、16 電池 0〜5、21 左右反転、23 あと何枚、44 セルフタイマー 0/5/10 秒
     - 時計合わせ：`setDateTime`（TimeStamp "2026:10:09 21:06:17"、TimeZone は世界標準時からの秒）。つないだら 1 回送る（カメラの時計が 52 秒ずれていた）
+    - 見た目（「UI をよくして」と言われた）：撮影画面と同じ teenage engineering 風（アルミ色の筐体 `Rig`、黒い表示窓に機種名・電池・あと何枚・送る枚数、黒い窓にオレンジの札のタブ、ライブビューを大きく、ランプつきの機能キーでタイマー・露出・ホワイトバランス、黒縁の丸いシャッター、写真／動画のスライドスイッチ）。受け取り方・消し方のスイッチは右上の歯車（`ExilimSettingsSheet`）
     - カメラからの呼びかけの受け口（`ExilimCallbackServer`、TCP 8081〜）を connect の前に開き、connect の port で伝える（プラグインと同じ）。受け口がないと、getAppMode の state が LIVE_CONNECTING のまま captureEnable が 0 だった（実機のログ）。アプリのモードには FREE もある
     - 閉じるときは `endLive` だけ送り、`disconnect` は送らない（送るとカメラが待ち受けをやめ、次に開いても答えなかった）
     - Info.plist：`NSLocalNetworkUsageDescription`（ビルド設定）と ATS の `NSAllowsLocalNetworking`

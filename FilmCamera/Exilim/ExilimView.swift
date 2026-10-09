@@ -551,40 +551,21 @@ final class ExilimModel: ObservableObject {
     }
 }
 
+/// EXILIM とつなぐ画面。撮影画面と同じ teenage engineering 風の見た目：
+/// アルミ色の筐体に黒い表示窓、ライブビューを大きくはめ込み、下に機能キーと大きな丸いシャッター、オレンジの差し色
 struct ExilimView: View {
     @StateObject private var model = ExilimModel()
     @State private var showingLog = false
+    @State private var showingSettings = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                Rig.body.ignoresSafeArea()
                 switch model.phase {
                 case .searching, .joining:
-                    VStack(spacing: 14) {
-                        ProgressView().controlSize(.large)
-                        Text(model.phase == .joining ? "カメラの Wi-Fi につないでいます" : "カメラをさがしています")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        if let since = model.waitingSince {
-                            TimelineView(.periodic(from: since, by: 1)) { context in
-                                let seconds = Int(context.date.timeIntervalSince(since))
-                                VStack(spacing: 10) {
-                                    Text("\(seconds) 秒（カメラの Wi-Fi が立ち上がるまで 10〜20 秒かかります）")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
-                                    if seconds >= 15 {
-                                        Text("カメラの青いランプが消えていたら、もう一度待ち受けにしてください（電源を切ってから、ムービーボタンを押したまま電源ボタンを約 1 秒）")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .padding(.horizontal, 24)
-                                    }
-                                }
-                                .multilineTextAlignment(.center)
-                            }
-                        }
-                    }
+                    searching
                 case .setup:
                     ExilimWiFiSetup { ssid, password in
                         Task { await model.saveWiFi(ssid: ssid, password: password) }
@@ -595,8 +576,9 @@ struct ExilimView: View {
                     connected(info)
                 }
             }
-            .navigationTitle("EXILIM とつなぐ")
+            .navigationTitle("EXILIM")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Rig.body, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") {
@@ -605,8 +587,17 @@ struct ExilimView: View {
                             dismiss()
                         }
                     }
+                    .foregroundStyle(Rig.ink)
                 }
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if case .connected = model.phase {
+                        Button {
+                            showingSettings = true
+                        } label: {
+                            Image(systemName: "gearshape")
+                        }
+                        .accessibilityLabel("設定")
+                    }
                     Button {
                         showingLog = true
                     } label: {
@@ -615,11 +606,61 @@ struct ExilimView: View {
                     .accessibilityLabel("通信ログ")
                 }
             }
+            .tint(Rig.ink)
             .overlay(alignment: .bottom) { toast }
             .sheet(isPresented: $showingLog) { ExilimLogView() }
+            .sheet(isPresented: $showingSettings) {
+                ExilimSettingsSheet(model: model) {
+                    showingSettings = false
+                    model.phase = .setup
+                }
+                .presentationDetents([.medium, .large])
+            }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .task { await model.connect() }
+    }
+
+    // MARK: さがしている
+
+    private var searching: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                Circle().fill(Rig.display).frame(width: 96, height: 96)
+                Image(systemName: model.phase == .joining ? "wifi" : "camera.aperture")
+                    .font(.largeTitle)
+                    .foregroundStyle(.white)
+                    .symbolEffect(.pulse)
+            }
+            Text(model.phase == .joining ? "カメラの Wi-Fi につないでいます" : "カメラをさがしています")
+                .font(.headline)
+                .foregroundStyle(Rig.ink)
+            if let since = model.waitingSince {
+                TimelineView(.periodic(from: since, by: 1)) { context in
+                    let seconds = Int(context.date.timeIntervalSince(since))
+                    VStack(spacing: 12) {
+                        Text(String(format: "%02d 秒", seconds))
+                            .font(.title3.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Rig.display))
+                        Text("カメラの Wi-Fi が立ち上がるまで 10〜20 秒かかります")
+                            .font(.caption)
+                            .foregroundStyle(Rig.print)
+                        if seconds >= 15 {
+                            Text("カメラの青いランプが消えていたら、もう一度待ち受けにしてください（電源を切ってから、ムービーボタンを押したまま電源ボタンを約 1 秒）")
+                                .font(.caption)
+                                .foregroundStyle(Rig.ink)
+                                .padding(12)
+                                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Rig.key))
+                                .padding(.horizontal, 24)
+                        }
+                    }
+                    .multilineTextAlignment(.center)
+                }
+            }
+        }
     }
 
     // MARK: つなぎ方
@@ -627,36 +668,45 @@ struct ExilimView: View {
     private var guide: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Image(systemName: "camera.on.rectangle")
-                    .font(.largeTitle)
-                    .foregroundStyle(.tint)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 12)
-                Text("カメラが見つかりませんでした")
-                    .font(.title3.weight(.bold))
-                    .frame(maxWidth: .infinity)
+                VStack(spacing: 10) {
+                    ZStack {
+                        Circle().fill(Rig.display).frame(width: 72, height: 72)
+                        Image(systemName: "camera.on.rectangle")
+                            .font(.title)
+                            .foregroundStyle(.tint)
+                    }
+                    Text("カメラが見つかりませんでした")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(Rig.ink)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 12)
                 VStack(alignment: .leading, spacing: 12) {
                     step(1, "カメラ部の電源ボタンを約 2 秒押して、いったん電源を切ります。")
                     step(2, "ムービーボタンを押したまま、電源ボタンを約 1 秒押します。カメラの無線 LAN のランプが青く点滅したら、待ち受けの状態です（コントローラーからは「無線モード」→「スマートフォンで撮影」→「開始」でも同じ）。")
                     step(3, "下の「もう一度さがす」を押します。パスワードを 00000000 から変えている場合や、FR100 以外のカメラは「Wi-Fi の設定を変える」で名前とパスワードを入れてください。")
                 }
                 .padding(16)
-                .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.08)))
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Rig.key))
                 Text("はじめて使うときは「ローカルネットワーク上のデバイスの検索」の許可をたずねられます。「許可」を選んでください。EXILIM Connect などほかのアプリがカメラとつながっていると、つなげないことがあります。")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Rig.print)
                 Button {
                     Task { await model.connect() }
                 } label: {
                     Label("もう一度さがす", systemImage: "arrow.clockwise")
                         .font(.headline)
+                        .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 14)
+                        .background(Capsule().fill(Rig.display))
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.plain)
                 Button("Wi-Fi の設定を変える") {
                     model.phase = .setup
                 }
+                .font(.callout)
+                .foregroundStyle(Rig.ink)
                 .frame(maxWidth: .infinity)
             }
             .padding(20)
@@ -669,9 +719,10 @@ struct ExilimView: View {
                 .font(.caption.weight(.bold))
                 .frame(width: 22, height: 22)
                 .background(Circle().fill(.tint))
-                .foregroundStyle(.black)
+                .foregroundStyle(.white)
             Text(text)
                 .font(.callout)
+                .foregroundStyle(Rig.ink)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -679,124 +730,130 @@ struct ExilimView: View {
     // MARK: つながった
 
     private func connected(_ info: ExilimClient.Info) -> some View {
-        VStack(spacing: 12) {
-            HStack {
-                Circle().fill(.green).frame(width: 8, height: 8)
-                Text(info.model)
-                    .font(.headline)
-                Text("とつながっています")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if let busy = model.busy {
-                    ProgressView().controlSize(.small)
-                    Text(busy)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .padding(.horizontal)
-            Picker("表示", selection: Binding(get: { model.tab }, set: { model.show($0) })) {
-                ForEach(ExilimModel.Tab.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            if model.pending > 0 {
-                Label("受け取った \(model.pending) 枚は、閉じると共有アルバムに送ります", systemImage: "tray.and.arrow.up")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        VStack(spacing: 10) {
+            displayWindow(info)
+            TabSwitch(tab: model.tab) { model.show($0) }
             switch model.tab {
             case .remote: remote
             case .files: cameraFiles
             }
         }
-        .padding(.top, 8)
+        .padding(.top, 6)
+    }
+
+    /// 上の黒い表示窓：機種名・いまの動き・電池・あと何枚
+    private func displayWindow(_ info: ExilimClient.Info) -> some View {
+        HStack(spacing: 10) {
+            Circle().fill(.green).frame(width: 7, height: 7)
+            Text(info.model)
+                .foregroundStyle(.white)
+            Spacer(minLength: 4)
+            if let busy = model.busy {
+                ProgressView().controlSize(.mini).tint(.white)
+                Text(busy)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            } else {
+                if model.pending > 0 {
+                    Label("\(model.pending)", systemImage: "tray.and.arrow.up")
+                        .foregroundStyle(.tint)
+                        .accessibilityLabel("閉じると共有アルバムに送る写真 \(model.pending) 枚")
+                }
+                if let capacity = model.capacity {
+                    Text("残 \(capacity)")
+                        .foregroundStyle(.white.opacity(0.7))
+                        .accessibilityLabel("あと \(capacity) 枚撮れます")
+                }
+                if let battery = model.battery {
+                    Image(systemName: Self.batterySymbol(battery))
+                        .foregroundStyle(battery <= 1 ? Color.red : Color.white.opacity(0.8))
+                        .accessibilityLabel("電池 \(Self.batteryLabels[safe: battery] ?? "")")
+                }
+            }
+        }
+        .font(.caption.weight(.semibold).monospaced())
+        .padding(.horizontal, 14)
+        .frame(height: 34)
+        .background(Capsule().fill(Rig.display))
+        .padding(.horizontal, 12)
     }
 
     private static let evLabels = ["-2.0", "-1.7", "-1.3", "-1.0", "-0.7", "-0.3", "±0",
                                    "+0.3", "+0.7", "+1.0", "+1.3", "+1.7", "+2.0"]
     private static let whiteBalanceLabels = ["オート", "太陽光", "曇天", "日陰", "昼白色蛍光灯", "昼光色蛍光灯", "電球"]
-    private static let batteryLabels = ["わずか", "30%", "50%", "60%", "99%", "満タン"]
+    private static let whiteBalanceSymbols = ["a.circle", "sun.max", "cloud", "building", "lightbulb.led",
+                                              "lightbulb.led.wide", "lightbulb"]
+    static let batteryLabels = ["わずか", "30%", "50%", "60%", "99%", "満タン"]
+
+    private static func batterySymbol(_ level: Int) -> String {
+        switch level {
+        case ...1: return "battery.25"
+        case 2...3: return "battery.50"
+        case 4: return "battery.75"
+        default: return "battery.100"
+        }
+    }
+
+    // MARK: リモート撮影
 
     private var remote: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             liveView
             HStack(spacing: 8) {
-                settingMenu("timer", model.selfTimer == 0 ? "タイマー切" : "\(model.selfTimer) 秒") {
-                    ForEach([0, 5, 10], id: \.self) { value in
-                        Button(value == 0 ? "切" : "\(value) 秒") { model.set(.selfTimer, value) }
+                keyMenu(symbol: "timer",
+                        value: model.selfTimer == 0 ? "切" : "\(model.selfTimer)秒",
+                        lit: model.selfTimer > 0, label: "セルフタイマー") {
+                    Picker("セルフタイマー", selection: Binding(get: { model.selfTimer },
+                                                          set: { model.set(.selfTimer, $0) })) {
+                        Text("切").tag(0)
+                        Text("5 秒").tag(5)
+                        Text("10 秒").tag(10)
                     }
                 }
-                settingMenu("plusminus", model.ev.map { Self.evLabels[safe: $0 - 1] ?? "±0" } ?? "露出") {
-                    ForEach(Array(Self.evLabels.enumerated()), id: \.offset) { index, label in
-                        Button(label) { model.set(.ev, index + 1) }
+                keyMenu(symbol: "plusminus.circle",
+                        value: model.ev.flatMap { Self.evLabels[safe: $0 - 1] } ?? "±0",
+                        lit: (model.ev ?? 7) != 7, label: "露出補正") {
+                    Picker("露出補正", selection: Binding(get: { model.ev ?? 7 }, set: { model.set(.ev, $0) })) {
+                        ForEach(Array(Self.evLabels.enumerated().reversed()), id: \.offset) { index, label in
+                            Text(label).tag(index + 1)
+                        }
                     }
                 }
-                settingMenu("sun.max", model.whiteBalance.map { Self.whiteBalanceLabels[safe: $0 - 1] ?? "オート" } ?? "色") {
-                    ForEach(Array(Self.whiteBalanceLabels.enumerated()), id: \.offset) { index, label in
-                        Button(label) { model.set(.whiteBalance, index + 1) }
+                keyMenu(symbol: model.whiteBalance.flatMap { Self.whiteBalanceSymbols[safe: $0 - 1] } ?? "a.circle",
+                        value: model.whiteBalance.flatMap { Self.whiteBalanceLabels[safe: $0 - 1] } ?? "オート",
+                        lit: (model.whiteBalance ?? 1) != 1, label: "ホワイトバランス") {
+                    Picker("ホワイトバランス", selection: Binding(get: { model.whiteBalance ?? 1 },
+                                                           set: { model.set(.whiteBalance, $0) })) {
+                        ForEach(Array(Self.whiteBalanceLabels.enumerated()), id: \.offset) { index, label in
+                            Label(label, systemImage: Self.whiteBalanceSymbols[index]).tag(index + 1)
+                        }
                     }
                 }
             }
-            .padding(.horizontal)
-            VStack(spacing: 8) {
-                Toggle("撮った写真を受け取る（撮るのが止まったら、まとめて）", isOn: $model.autoAdd)
-                Toggle("受け取ったらカメラから消す（カードなしでも撮り続けられる）", isOn: $model.deleteShots)
-            }
-            .font(.footnote)
-            .padding(.horizontal, 24)
+            .padding(.horizontal, 12)
             Spacer(minLength: 0)
-            Picker("撮るもの", selection: $model.captureMode) {
-                ForEach(ExilimModel.CaptureMode.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 160)
-            .disabled(model.recordingSince != nil)
             HStack {
-                Button {
-                    Task { await model.collect() }
-                } label: {
-                    Group {
-                        if let shot = model.lastShot {
-                            Image(uiImage: shot)
-                                .resizable()
-                                .scaledToFill()
-                        } else {
-                            Color.white.opacity(0.08)
-                        }
-                    }
-                    .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(alignment: .topTrailing) {
-                        if model.unsaved > 0 {
-                            Text("\(model.unsaved)")
-                                .font(.caption2.weight(.bold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(.tint))
-                                .foregroundStyle(.black)
-                                .offset(x: 6, y: -6)
-                        }
-                    }
-                }
-                .disabled(model.busy != nil || model.unsaved == 0)
-                .accessibilityLabel("撮った写真をいま受け取る")
+                lastShotButton
+                    .frame(width: 104, alignment: .leading)
                 Spacer()
                 shutterButton
                 Spacer()
-                Color.clear.frame(width: 56, height: 56)
+                ExilimKindSwitch(mode: model.captureMode) { mode in
+                    withAnimation(.snappy(duration: 0.25)) { model.captureMode = mode }
+                }
+                .disabled(model.recordingSince != nil || model.busy != nil)
+                .frame(width: 104, alignment: .trailing)
             }
-            .padding(.horizontal, 32)
-            .padding(.bottom, 20)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: model.flash)
     }
 
     private var liveView: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06))
+            Rig.display
             if let image = model.liveImage {
                 // カメラが送ってくるライブビューは 320×240（カメラ側で決まっている）。拡大するときになめらかにする
                 Image(uiImage: image)
@@ -804,56 +861,103 @@ struct ExilimView: View {
                     .interpolation(.high)
                     .antialiased(true)
                     .scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "video.slash")
-                        .font(.title)
-                    Text(model.busy == "写真を受け取っています" ? "写真を受け取っています" : "ライブビューを待っています")
+                        .font(.title2)
+                    Text("ライブビューを待っています")
                         .font(.caption)
                 }
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.5))
             }
             FlashView(trigger: model.flash)
         }
         .aspectRatio(4 / 3, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(alignment: .topLeading) {
             if let since = model.recordingSince {
-                TimelineView(.periodic(from: since, by: 1)) { context in
+                TimelineView(.periodic(from: since, by: 0.5)) { context in
                     let seconds = Int(context.date.timeIntervalSince(since))
-                    Label(String(format: "%d:%02d", seconds / 60, seconds % 60), systemImage: "record.circle")
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(.red))
+                    HStack(spacing: 6) {
+                        Circle().fill(Color.red).frame(width: 7, height: 7)
+                        Text(String(format: "REC %02d:%02d", seconds / 60, seconds % 60))
+                    }
+                    .font(.caption2.weight(.semibold).monospaced())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(.black.opacity(0.6)))
                 }
                 .padding(10)
             }
         }
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: 8) {
-                if let capacity = model.capacity {
-                    Text("あと \(capacity) 枚")
-                }
-                if let battery = model.battery {
-                    Label(Self.batteryLabels[safe: battery] ?? "", systemImage: battery <= 1 ? "battery.25" : "battery.75")
-                }
+            if model.selfTimer > 0 && model.recordingSince == nil {
+                Label("\(model.selfTimer)", systemImage: "timer")
+                    .font(.caption2.weight(.semibold).monospaced())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(.black.opacity(0.6)))
+                    .padding(10)
             }
-            .font(.caption2)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(.black.opacity(0.45)))
-            .padding(10)
-            .opacity(model.capacity == nil && model.battery == nil ? 0 : 1)
         }
-        .padding(.horizontal)
+        .overlay(alignment: .bottom) {
+            if model.busy == "写真を受け取っています" {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small).tint(.white)
+                    Text("写真を受け取っています")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(.black.opacity(0.65)))
+                .padding(.bottom, 12)
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 12)
         .task(id: model.tab) {
             // 電池とあと何枚かは、ときどき読み直す
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
-                if model.busy == nil && model.recordingSince == nil { await model.loadBattery() }
+                if model.recordingSince == nil { await model.loadBattery() }
             }
         }
+    }
+
+    /// いま撮った写真。数字はまだ受け取っていない枚数（押すとすぐ受け取る）
+    private var lastShotButton: some View {
+        Button {
+            Task { await model.collect() }
+        } label: {
+            Group {
+                if let shot = model.lastShot {
+                    Image(uiImage: shot)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Rig.display
+                }
+            }
+            .frame(width: 48, height: 48)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Rig.ink.opacity(0.25), lineWidth: 1))
+            .overlay(alignment: .topTrailing) {
+                if model.unsaved > 0 {
+                    Text("\(model.unsaved)")
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 20, minHeight: 20)
+                        .background(Circle().fill(.tint))
+                        .offset(x: 7, y: -7)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(model.busy != nil || model.unsaved == 0)
+        .accessibilityLabel(model.unsaved > 0 ? "まだ受け取っていない \(model.unsaved) 枚をいま受け取る" : "いま撮った写真")
     }
 
     private var shutterButton: some View {
@@ -866,78 +970,97 @@ struct ExilimView: View {
                 }
             }
         } label: {
-            ZStack {
-                Circle().strokeBorder(.white, lineWidth: 4).frame(width: 78, height: 78)
-                if model.captureMode == .movie {
-                    if model.recordingSince != nil {
-                        RoundedRectangle(cornerRadius: 6).fill(.red).frame(width: 30, height: 30)
-                    } else {
-                        Circle().fill(.red).frame(width: 64, height: 64)
-                    }
-                } else {
-                    Circle().fill(.white).frame(width: 64, height: 64)
-                        .scaleEffect(model.shooting ? 0.85 : 1)
-                }
-            }
-            .animation(.easeOut(duration: 0.12), value: model.shooting)
+            EmptyView()
         }
+        .buttonStyle(ExilimShutterStyle(isMovie: model.captureMode == .movie,
+                                        isRecording: model.recordingSince != nil,
+                                        isBusy: model.shooting))
         .disabled(model.busy != nil || (model.shooting && model.captureMode == .photo))
-        .opacity(model.busy != nil ? 0.5 : 1)
-        .accessibilityLabel(model.captureMode == .movie ? (model.recordingSince != nil ? "動画を止める" : "動画を撮る") : "シャッター")
+        .accessibilityLabel(model.captureMode == .movie
+                            ? (model.recordingSince != nil ? "動画を止める" : "動画を撮る")
+                            : "シャッター")
     }
 
-    private func settingMenu<Content: View>(_ symbol: String, _ title: String,
-                                            @ViewBuilder content: () -> Content) -> some View {
+    /// 機能キー：アイコンと今の値。押すと選べる（値が初期値でなければランプが光る）
+    private func keyMenu<Content: View>(symbol: String, value: String, lit: Bool, label: String,
+                                        @ViewBuilder content: () -> Content) -> some View {
         Menu {
             content()
         } label: {
-            Label(title, systemImage: symbol)
-                .font(.caption)
-                .lineLimit(1)
+            ZStack(alignment: .topTrailing) {
+                VStack(spacing: 3) {
+                    Image(systemName: symbol)
+                        .font(.body.weight(.semibold))
+                    Text(value)
+                        .font(.caption2.weight(.bold).monospaced())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+                .foregroundStyle(Rig.ink)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(Color.white.opacity(0.1)))
+                .frame(height: 52)
+                Circle()
+                    .fill(lit ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Rig.print.opacity(0.3)))
+                    .frame(width: 5, height: 5)
+                    .padding(6)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Rig.key)
+                    .shadow(color: .black.opacity(0.22), radius: 0, x: 0, y: 2)
+            )
         }
         .disabled(model.busy != nil || model.recordingSince != nil)
+        .opacity(model.busy != nil || model.recordingSince != nil ? 0.5 : 1)
+        .accessibilityLabel(label)
+        .accessibilityValue(value)
     }
+
+    // MARK: カメラの写真
 
     private var cameraFiles: some View {
         ZStack(alignment: .bottom) {
             ScrollView {
-                Toggle("受け取ったらカメラから消す", isOn: $model.deleteReceived)
-                    .font(.callout)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 6)
                 if model.files.isEmpty && model.busy == nil {
-                    Text("カメラの中に写真がありません")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 60)
+                    VStack(spacing: 10) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.largeTitle)
+                        Text("カメラの中に写真がありません")
+                            .font(.callout)
+                    }
+                    .foregroundStyle(Rig.print)
+                    .padding(.top, 80)
                 }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 3)], spacing: 3) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 4)], spacing: 4) {
                     ForEach(model.files) { file in
                         fileCell(file)
                     }
                 }
-                .padding(.horizontal, 3)
+                .padding(.horizontal, 12)
                 .padding(.bottom, 100)
             }
             if !model.selected.isEmpty || model.progress != nil {
                 Button {
                     Task { await model.addSelected() }
                 } label: {
-                    Group {
+                    HStack(spacing: 10) {
                         if let progress = model.progress {
+                            ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                                .tint(.white)
+                                .frame(width: 60)
                             Text("受け取っています \(progress.done) / \(progress.total)")
                         } else {
+                            Image(systemName: "square.and.arrow.down")
                             Text("選んだ \(model.selected.count) 件を受け取る")
                         }
                     }
                     .font(.headline)
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 16)
+                    .background(Capsule().fill(Rig.display))
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.plain)
                 .disabled(model.progress != nil)
                 .padding(.horizontal, 20)
                 .padding(.bottom, 16)
@@ -950,22 +1073,23 @@ struct ExilimView: View {
         return Button {
             model.toggle(file)
         } label: {
-            Color.white.opacity(0.08)
+            Rig.display
                 .aspectRatio(1, contentMode: .fit)
                 .overlay {
                     if let image = model.thumbnails[file.path] {
                         Image(uiImage: image).resizable().scaledToFill()
                     } else {
-                        ProgressView().controlSize(.small)
+                        ProgressView().controlSize(.small).tint(.white)
                     }
                 }
-                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(alignment: .bottomLeading) {
                     if file.isVideo {
                         Image(systemName: "video.fill")
                             .font(.caption)
-                            .padding(5)
+                            .padding(6)
                             .foregroundStyle(.white)
+                            .shadow(radius: 2)
                     }
                 }
                 .overlay(alignment: .topTrailing) {
@@ -983,11 +1107,16 @@ struct ExilimView: View {
                     }
                 }
                 .overlay {
-                    if isSelected { Rectangle().strokeBorder(.tint, lineWidth: 3) }
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(.tint, lineWidth: 3)
+                    }
                 }
+                .scaleEffect(isSelected ? 0.94 : 1)
+                .animation(.snappy(duration: 0.15), value: isSelected)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(file.fileName)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     @ViewBuilder
@@ -995,15 +1124,194 @@ struct ExilimView: View {
         if let message = model.message {
             Text(message)
                 .font(.callout)
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(Capsule().fill(Color.white.opacity(0.15)))
-                .padding(.bottom, 110)
+                .background(Capsule().fill(Rig.display.opacity(0.92)))
+                .padding(.horizontal, 20)
+                .padding(.bottom, 130)
                 .transition(.opacity)
                 .task(id: message) {
                     try? await Task.sleep(for: .seconds(3))
                     if model.message == message { model.message = nil }
                 }
+        }
+    }
+}
+
+// MARK: - 見た目の部品（撮影画面 ContentView の筐体と同じ色）
+
+private enum Rig {
+    static let body = Color(red: 0xDD / 255, green: 0xDC / 255, blue: 0xD7 / 255)
+    static let key = Color(red: 0xF5 / 255, green: 0xF4 / 255, blue: 0xF0 / 255)
+    static let ink = Color(red: 0x1C / 255, green: 0x1C / 255, blue: 0x1C / 255)
+    /// 筐体に印刷された小さな文字
+    static let print = Color(red: 0x76 / 255, green: 0x75 / 255, blue: 0x6F / 255)
+    static let display = Color(red: 0x12 / 255, green: 0x12 / 255, blue: 0x12 / 255)
+}
+
+/// リモート撮影／カメラの写真の切り替え（黒い窓にオレンジの札）
+private struct TabSwitch: View {
+    let tab: ExilimModel.Tab
+    let onChange: (ExilimModel.Tab) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(ExilimModel.Tab.allCases) { item in
+                let selected = item == tab
+                Button {
+                    onChange(item)
+                } label: {
+                    Label(item.rawValue, systemImage: item == .remote ? "camera.viewfinder" : "photo.stack")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(selected ? Color.white : Color.white.opacity(0.5))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
+                        .background {
+                            if selected { Capsule().fill(.tint) }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(Capsule().fill(Rig.display))
+        .padding(.horizontal, 12)
+        .animation(.snappy(duration: 0.2), value: tab)
+    }
+}
+
+/// 写真／動画のスライドスイッチ（撮影画面と同じ形）
+private struct ExilimKindSwitch: View {
+    let mode: ExilimModel.CaptureMode
+    let onChange: (ExilimModel.CaptureMode) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            segment("camera.fill", .photo)
+            segment("video.fill", .movie)
+        }
+        .padding(3)
+        .background(Capsule().fill(Rig.display))
+    }
+
+    private func segment(_ systemImage: String, _ value: ExilimModel.CaptureMode) -> some View {
+        let selected = mode == value
+        return Button {
+            onChange(value)
+        } label: {
+            Image(systemName: systemImage)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(selected ? Color.white : Color.white.opacity(0.45))
+                .frame(width: 46, height: 38)
+                .background {
+                    if selected {
+                        Capsule().fill(value == .movie ? AnyShapeStyle(Color.red) : AnyShapeStyle(TintShapeStyle()))
+                    }
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(value.rawValue)
+    }
+}
+
+/// シャッター：黒い縁の大きな丸いキー（動画は赤、撮影中は中に白い四角）
+private struct ExilimShutterStyle: ButtonStyle {
+    let isMovie: Bool
+    let isRecording: Bool
+    let isBusy: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        ShutterKey(pressed: configuration.isPressed, isMovie: isMovie, isRecording: isRecording, isBusy: isBusy)
+    }
+
+    private struct ShutterKey: View {
+        let pressed: Bool
+        let isMovie: Bool
+        let isRecording: Bool
+        let isBusy: Bool
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            ZStack {
+                Circle()
+                    .fill(Rig.ink)
+                    .frame(width: 88, height: 88)
+                Circle()
+                    .fill(isMovie ? AnyShapeStyle(Color.red) : AnyShapeStyle(Rig.key))
+                    .frame(width: 72, height: 72)
+                    .shadow(color: .black.opacity(pressed ? 0 : 0.35), radius: 0, x: 0, y: pressed ? 0 : 3)
+                    .offset(y: pressed ? 3 : 0)
+                Group {
+                    if isRecording {
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(.white)
+                            .frame(width: 24, height: 24)
+                    } else if isBusy {
+                        ProgressView().tint(isMovie ? .white : Rig.ink)
+                    } else if !isMovie {
+                        Circle()
+                            .fill(.tint)
+                            .frame(width: 10, height: 10)
+                    }
+                }
+                .offset(y: pressed ? 3 : 0)
+            }
+            .opacity(isEnabled || isBusy ? 1 : 0.45)
+            .animation(.snappy(duration: 0.1), value: pressed)
+            .animation(.snappy(duration: 0.25), value: isRecording)
+            .animation(.snappy(duration: 0.25), value: isMovie)
+        }
+    }
+}
+
+/// 設定（右上の歯車）：受け取り方・消し方と、カメラの状態
+private struct ExilimSettingsSheet: View {
+    @ObservedObject var model: ExilimModel
+    var onChangeWiFi: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Toggle("撮った写真を受け取る", isOn: $model.autoAdd)
+                    Toggle("受け取ったらカメラから消す", isOn: $model.deleteShots)
+                } header: {
+                    Text("リモート撮影")
+                } footer: {
+                    Text("撮るのが止まったときにまとめて受け取ります。消すと、メモリーカードがなくても内蔵メモリーがいっぱいにならずに撮り続けられます。受け取った写真は、閉じると共有アルバムに送ります。")
+                }
+                Section {
+                    Toggle("受け取ったらカメラから消す", isOn: $model.deleteReceived)
+                } header: {
+                    Text("カメラの写真")
+                }
+                if model.battery != nil || model.capacity != nil {
+                    Section("カメラ") {
+                        if let battery = model.battery {
+                            LabeledContent("電池", value: ExilimView.batteryLabels[safe: battery] ?? "—")
+                        }
+                        if let capacity = model.capacity {
+                            LabeledContent("あと撮れる枚数", value: "\(capacity) 枚")
+                        }
+                    }
+                }
+                Section {
+                    Button("Wi-Fi の設定を変える", action: onChangeWiFi)
+                }
+            }
+            .navigationTitle("設定")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") { dismiss() }
+                }
+            }
         }
     }
 }
@@ -1017,7 +1325,6 @@ private struct FlashView: View {
         Color.white
             .opacity(opacity)
             .allowsHitTesting(false)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
             .onChange(of: trigger) {
                 opacity = 0.8
                 withAnimation(.easeOut(duration: 0.35)) { opacity = 0 }
