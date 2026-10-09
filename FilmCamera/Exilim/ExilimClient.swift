@@ -84,11 +84,13 @@ actor ExilimClient {
     // MARK: - さがす
 
     /// カメラを探す（いつもの 192.168.100.2 から、近くのアドレスも順に試す。quick なら 192.168.100.2 だけ）
-    func find(quick: Bool = false) async -> Info? {
+    /// silent なら、見つからなかったときは通信ログに書かない（つなぐ途中は 0.3 秒おきに聞くので）
+    func find(quick: Bool = false, timeout: TimeInterval? = nil, silent: Bool = false) async -> Info? {
         let candidates = (quick ? [2] : [2, 1, 3, 4, 5, 10, 100, 254]).map { "192.168.100.\($0)" }
         for candidate in candidates {
             if Task.isCancelled { return nil }
-            guard let json = await request("getApiVersion", host: candidate, timeout: quick ? 1 : 1.5),
+            guard let json = await request("getApiVersion", host: candidate, timeout: timeout ?? (quick ? 1 : 1.5),
+                                           silent: silent),
                   let model = json["MDL"] as? String else { continue }
             host = candidate
             return Info(model: model, apiVersion: string(json["resp"]) ?? "")
@@ -374,15 +376,17 @@ actor ExilimClient {
 
     /// 命令を送り、JSON の答えを受け取る（body があれば POST、なければ GET）
     private func request(_ command: String, body: [String: Any]? = nil, query: String? = nil,
-                         host: String? = nil, timeout: TimeInterval = 5) async -> [String: Any]? {
-        guard let data = await requestData(command, body: body, query: query, host: host, timeout: timeout) else {
+                         host: String? = nil, timeout: TimeInterval = 5, silent: Bool = false) async -> [String: Any]? {
+        guard let data = await requestData(command, body: body, query: query, host: host, timeout: timeout,
+                                           silent: silent) else {
             return nil
         }
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
     private func requestData(_ command: String, body: [String: Any]? = nil, query: String? = nil,
-                             host: String? = nil, timeout: TimeInterval = 5) async -> Data? {
+                             host: String? = nil, timeout: TimeInterval = 5, silent: Bool = false,
+                             retried: Bool = false) async -> Data? {
         var text = "http://\(host ?? self.host)/camlink/\(command)"
         if let query { text += "?" + query }
         guard let url = URL(string: text) else { return nil }
@@ -397,18 +401,24 @@ actor ExilimClient {
         let isBinary = command == "getThumbnail" || command == "getImage"
         let sent = (body.flatMap { try? JSONSerialization.data(withJSONObject: $0) }).flatMap { String(data: $0, encoding: .utf8) }
         let line = "\(body == nil ? "GET" : "POST") \(command)\(query.map { "?" + $0 } ?? "") \(sent ?? "")"
-        if !quiet { await log("→ " + line) }
+        if !quiet && !silent { await log("→ " + line) }
         do {
             let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if silent && status == 200 { await log("→ " + line) }
             if !quiet || status != 200 {
                 let reply = isBinary ? "\(data.count) バイト" : String(String(decoding: data, as: UTF8.self).prefix(300))
                 await log("← \(command) \(status) \(reply)")
             }
             return status == 200 ? data : nil
         } catch {
-            // 受け取りが終わって heartBeat を止めたときの「キャンセル」は、ふつうのことなので書かない
-            if !(quiet && (error as? URLError)?.code == .cancelled) {
+            // カメラが使い終わった接続を閉じていたときは、1 回だけ送り直す
+            if (error as? URLError)?.code == .networkConnectionLost, !retried {
+                return await requestData(command, body: body, query: query, host: host, timeout: timeout,
+                                         silent: silent, retried: true)
+            }
+            // 受け取りが終わって heartBeat を止めたときの「キャンセル」、つなぐ途中の探しは、書かない
+            if !silent && !(quiet && (error as? URLError)?.code == .cancelled) {
                 await log("× \(command) \((error as NSError).localizedDescription)")
             }
             return nil

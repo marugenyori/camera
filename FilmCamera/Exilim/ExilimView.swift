@@ -22,6 +22,8 @@ final class ExilimModel: ObservableObject {
     }
 
     @Published var phase: Phase = .searching
+    /// つなぎ始めた時刻（何秒たったかを画面に出す）
+    @Published var waitingSince: Date?
     @Published var tab: Tab = .remote
     @Published var liveImage: UIImage?
     @Published var files: [ExilimClient.RemoteFile] = []
@@ -83,28 +85,32 @@ final class ExilimModel: ObservableObject {
         phase = .searching
         // カメラからの呼びかけの受け口を、つなぐ前に開いておく（カシオのプラグインと同じ）
         if let port = callback.start() { await client.setCallbackPort(port) }
-        if let info = await client.find(quick: true) {
+        waitingSince = Date()
+        defer { waitingSince = nil }
+        // カメラの Wi-Fi に入るのと、もう入っているかの確認を、同時に始める
+        // （Wi-Fi の名前を登録していなければ、EX-FR100 の名前の頭 FR100- と初期のパスワードで探す）
+        phase = .joining
+        async let joining = ExilimWiFi.join()
+        if let info = await client.find(quick: true, timeout: 0.8, silent: true) {
             connected(info)
             return
         }
-        // Wi-Fi の名前を登録していなければ、EX-FR100 の名前の頭（FR100-）と初期のパスワードで探す
-        phase = .joining
-        if let error = await ExilimWiFi.join() {
-            message = error
-            phase = .notFound
-            return
-        }
+        let joinError = await joining
         phase = .searching
-        // カメラの Wi-Fi に切り替わるまで 20 秒ほどかかることがある。1 秒おきに、最大 40 秒待つ
-        // （いつもの 192.168.100.2 だけを聞き、近くのアドレスまで探すのはときどき）
-        for attempt in 0..<40 {
+        // Wi-Fi が切り替わってカメラが答えるまで、0.3 秒おきに聞く（最大 45 秒）。
+        // いつもの 192.168.100.2 だけを聞き、近くのアドレスまで探すのはときどき
+        let deadline = Date().addingTimeInterval(joinError == nil ? 45 : 4)
+        var round = 0
+        while Date() < deadline {
             if Task.isCancelled { return }
-            if let info = await client.find(quick: attempt % 10 != 9) {
+            round += 1
+            if let info = await client.find(quick: round % 15 != 0, timeout: 0.6, silent: true) {
                 connected(info)
                 return
             }
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .milliseconds(300))
         }
+        message = joinError
         phase = .notFound
     }
 
@@ -126,6 +132,8 @@ final class ExilimModel: ObservableObject {
         previous?.cancel()
         switching = Task {
             await previous?.value
+            // heartBeat はライブビューのときだけ（写真を見るモードでは受け付けられない。受け取り中は別に送る）
+            heartbeat?.cancel()
             stopLive()
             thumbnailTask?.cancel()
             switch tab {
@@ -253,7 +261,6 @@ final class ExilimModel: ObservableObject {
         do {
             files = try await client.list()
             selected = selected.filter { path in files.contains { $0.path == path } }
-            startHeartbeat()
             loadThumbnails()
         } catch is CancellationError {
             return
@@ -361,6 +368,14 @@ struct ExilimView: View {
                         Text(model.phase == .joining ? "カメラの Wi-Fi につないでいます" : "カメラをさがしています")
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                        if let since = model.waitingSince {
+                            TimelineView(.periodic(from: since, by: 1)) { context in
+                                Text("\(Int(context.date.timeIntervalSince(since))) 秒（カメラの Wi-Fi が立ち上がるまで 10〜20 秒かかります）")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                    .multilineTextAlignment(.center)
+                            }
+                        }
                     }
                 case .setup:
                     ExilimWiFiSetup { ssid, password in
