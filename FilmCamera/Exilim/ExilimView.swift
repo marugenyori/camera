@@ -438,10 +438,15 @@ final class ExilimModel: ObservableObject {
             capacity = await client.getParam(.snapCapacity)
         }
         settingsSupported = await client.paramStyle != .unsupported
+        if battery == nil { battery = await client.findBattery() }
     }
 
     func loadBattery() async {
-        guard busy == nil, settingsSupported else { return }
+        guard busy == nil else { return }
+        guard settingsSupported else {
+            battery = await client.findBattery() ?? battery
+            return
+        }
         await withLivePaused {
             battery = await client.getParam(.battery)
             capacity = await client.getParam(.snapCapacity)
@@ -782,9 +787,13 @@ struct ExilimView: View {
                         .accessibilityLabel("あと \(capacity) 枚撮れます")
                 }
                 if let battery = model.battery {
-                    Image(systemName: Self.batterySymbol(battery))
-                        .foregroundStyle(battery <= 1 ? Color.red : Color.white.opacity(0.8))
-                        .accessibilityLabel("電池 \(Self.batteryLabels[safe: battery] ?? "")")
+                    HStack(spacing: 3) {
+                        Image(systemName: Self.batterySymbol(battery))
+                        Text(Self.batteryText(battery))
+                    }
+                    .foregroundStyle(battery <= 1 || (battery > 5 && battery < 20) ? Color.red : Color.white.opacity(0.8))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("電池 \(Self.batteryText(battery))")
                 }
             }
         }
@@ -802,7 +811,13 @@ struct ExilimView: View {
                                               "lightbulb.led.wide", "lightbulb"]
     static let batteryLabels = ["わずか", "30%", "50%", "60%", "99%", "満タン"]
 
-    private static func batterySymbol(_ level: Int) -> String {
+    /// 電池の表示：0〜5 はプラグインと同じ段階、それより大きい値は %
+    static func batteryText(_ level: Int) -> String {
+        level > 5 ? "\(min(level, 100))%" : (batteryLabels[safe: level] ?? "")
+    }
+
+    private static func batterySymbol(_ value: Int) -> String {
+        let level = value > 5 ? (value >= 90 ? 5 : value >= 60 ? 4 : value >= 35 ? 2 : 1) : value
         switch level {
         case ...1: return "battery.25"
         case 2...3: return "battery.50"
@@ -1323,7 +1338,7 @@ private struct ExilimSettingsSheet: View {
                 if model.battery != nil || model.capacity != nil {
                     Section("カメラ") {
                         if let battery = model.battery {
-                            LabeledContent("電池", value: ExilimView.batteryLabels[safe: battery] ?? "—")
+                            LabeledContent("電池", value: ExilimView.batteryText(battery))
                         }
                         if let capacity = model.capacity {
                             LabeledContent("あと撮れる枚数", value: "\(capacity) 枚")

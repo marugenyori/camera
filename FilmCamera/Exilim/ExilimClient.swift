@@ -313,6 +313,21 @@ actor ExilimClient {
         }
     }
 
+    /// 電池の残りを、getParam 以外の答えからも探す（EX-FR100 は getParam を断った）。
+    /// camStatus・camSetting・getConnectInfo の答えに "batt" を含む名前があれば、その値を返す（答えは通信ログにも残る）。
+    /// 返す値：0〜5 ならプラグインと同じ段階、それより大きければ % とみなす
+    func findBattery() async -> Int? {
+        let answers = [await request("camStatus", body: [:], timeout: 3),
+                       await request("camSetting", body: [:], timeout: 3),
+                       await request("getConnectInfo", query: "id=0", timeout: 3)]
+        for json in answers.compactMap({ $0 }) {
+            for (key, value) in json where key.lowercased().contains("batt") {
+                if let level = int(value) { return level }
+            }
+        }
+        return nil
+    }
+
     /// カメラの時計を iPhone に合わせる（TimeStamp は "2026:10:09 21:06:17"、TimeZone は世界標準時からの秒）
     func syncClock() async {
         let formatter = DateFormatter()
