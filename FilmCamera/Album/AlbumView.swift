@@ -244,10 +244,15 @@ struct AlbumView: View {
     private var infoPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
-                readout("PHOTOS", "\(store.photos.count)")
-                readout("MEMBERS", "\(max(store.members.count, 1))")
-                readout("LATEST", store.photos.first.map { $0.takenAt.formatted(.dateTime.month().day()) } ?? "—")
-                Spacer(minLength: 0)
+                // 右上の今日の一枚を大きく出すため、数字は 2 段に並べる
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        readout("PHOTOS", "\(store.photos.count)")
+                        readout("MEMBERS", "\(max(store.members.count, 1))")
+                    }
+                    readout("LATEST", store.photos.first.map { $0.takenAt.formatted(.dateTime.month().day()) } ?? "—")
+                }
+                Spacer(minLength: 8)
                 todayPick
             }
             if !store.members.isEmpty {
@@ -305,9 +310,9 @@ struct AlbumView: View {
                             Color.white.opacity(0.1)
                         }
                     }
-                    .frame(width: 64, height: 64)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Deck.orange, lineWidth: 1.5))
+                    .frame(width: 116, height: 116)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Deck.orange, lineWidth: 2))
                 }
             }
             .buttonStyle(.plain)
