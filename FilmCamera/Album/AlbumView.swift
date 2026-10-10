@@ -242,51 +242,51 @@ struct AlbumView: View {
     // MARK: - アルバムの情報（黒い表示窓）
 
     private var infoPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                // 右上の今日の一枚を大きく出すため、数字は 2 段に並べる
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline) {
-                        readout("PHOTOS", "\(store.photos.count)")
-                        readout("MEMBERS", "\(max(store.members.count, 1))")
-                    }
+        VStack(alignment: .leading, spacing: 10) {
+            // 右に今日の一枚を大きく出し、数字とメンバーは左に小さくまとめる
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    readout("PHOTOS", "\(store.photos.count)")
+                    readout("MEMBERS", "\(max(store.members.count, 1))")
                     readout("LATEST", store.photos.first.map { $0.takenAt.formatted(.dateTime.month().day()) } ?? "—")
+                    if !store.members.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 4) {
+                                ForEach(store.members.values.sorted(), id: \.self) { name in
+                                    HStack(spacing: 4) {
+                                        Text(String(name.prefix(1)))
+                                            .font(.caption2.weight(.heavy))
+                                            .foregroundStyle(Deck.display)
+                                            .frame(width: 16, height: 16)
+                                            .background(Circle().fill(Deck.orange))
+                                        Text(name)
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.white.opacity(0.9))
+                                            .lineLimit(1)
+                                    }
+                                    .padding(.leading, 2)
+                                    .padding(.trailing, 7)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(.white.opacity(0.1)))
+                                }
+                            }
+                        }
+                        .padding(.top, 2)
+                    }
                 }
-                Spacer(minLength: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 todayPick
             }
-            if !store.members.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(store.members.values.sorted(), id: \.self) { name in
-                            HStack(spacing: 5) {
-                                Text(String(name.prefix(1)))
-                                    .font(.caption2.weight(.heavy))
-                                    .foregroundStyle(Deck.display)
-                                    .frame(width: 18, height: 18)
-                                    .background(Circle().fill(Deck.orange))
-                                Text(name)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.white.opacity(0.9))
-                            }
-                            .padding(.leading, 3)
-                            .padding(.trailing, 9)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(.white.opacity(0.1)))
-                        }
-                    }
-                }
-            }
             if store.selected?.isOwner == true { shareRow }
-            Divider().overlay(.white.opacity(0.15))
             Toggle(isOn: $store.autoAdd) {
-                Label("撮った写真を自動でこのアルバムに入れる", systemImage: "bolt.horizontal.circle")
-                    .font(.footnote.weight(.semibold))
+                Label("撮った写真を自動で入れる", systemImage: "bolt.horizontal.circle")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.9))
             }
             .tint(Deck.orange)
+            .controlSize(.mini)
         }
-        .padding(16)
+        .padding(12)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Deck.display))
         .padding(.horizontal, 16)
     }
@@ -310,9 +310,9 @@ struct AlbumView: View {
                             Color.white.opacity(0.1)
                         }
                     }
-                    .frame(width: 116, height: 116)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Deck.orange, lineWidth: 2))
+                    .frame(width: 176, height: 176)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Deck.orange, lineWidth: 2))
                 }
             }
             .buttonStyle(.plain)
@@ -337,15 +337,16 @@ struct AlbumView: View {
     }
 
     private func readout(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(label)
                 .font(.caption2.weight(.bold).monospaced())
                 .foregroundStyle(Deck.orange)
+                .frame(width: 62, alignment: .leading)
             Text(value)
-                .font(.title3.weight(.semibold).monospacedDigit())
+                .font(.subheadline.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.white)
+                .lineLimit(1)
         }
-        .padding(.trailing, 18)
     }
 
     /// 招待の状態と、招待を作る・送るボタン
