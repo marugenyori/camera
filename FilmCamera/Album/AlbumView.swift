@@ -243,11 +243,12 @@ struct AlbumView: View {
 
     private var infoPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .top) {
                 readout("PHOTOS", "\(store.photos.count)")
                 readout("MEMBERS", "\(max(store.members.count, 1))")
                 readout("LATEST", store.photos.first.map { $0.takenAt.formatted(.dateTime.month().day()) } ?? "—")
-                Spacer()
+                Spacer(minLength: 0)
+                todayPick
             }
             if !store.members.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -283,6 +284,51 @@ struct AlbumView: View {
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Deck.display))
         .padding(.horizontal, 16)
+    }
+
+    /// 今日の一枚：アルバムの写真から日ごとにひとつ選んで右上に出す（押すと開く）
+    @ViewBuilder
+    private var todayPick: some View {
+        if let index = Self.todayIndex(photos: store.photos, album: store.selectedID) {
+            let photo = store.photos[index]
+            Button {
+                viewing = ViewerStart(photos: store.photos, index: index)
+            } label: {
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("TODAY")
+                        .font(.caption2.weight(.bold).monospaced())
+                        .foregroundStyle(Deck.orange)
+                    Group {
+                        if let image = photo.thumbnail {
+                            Image(uiImage: image).resizable().scaledToFill()
+                        } else {
+                            Color.white.opacity(0.1)
+                        }
+                    }
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Deck.orange, lineWidth: 1.5))
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("今日の一枚（\(photo.takenAt.formatted(.dateTime.year().month().day()))）")
+        }
+    }
+
+    /// 今日の一枚に選ぶ写真の位置。その日に一度選んだら、写真が増えても同じ写真のまま（日付が変わると選び直す）
+    private static func todayIndex(photos: [AlbumPhoto], album: String?) -> Int? {
+        guard !photos.isEmpty else { return nil }
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        let day = "\(parts.year ?? 0)-\(parts.month ?? 0)-\(parts.day ?? 0)"
+        let key = "todayPick-\(album ?? "-")"
+        let defaults = UserDefaults.standard
+        if let saved = defaults.dictionary(forKey: key) as? [String: String], saved["day"] == day,
+           let index = photos.firstIndex(where: { $0.id.recordName == saved["photo"] }) {
+            return index
+        }
+        let index = Int.random(in: photos.indices)
+        defaults.set(["day": day, "photo": photos[index].id.recordName], forKey: key)
+        return index
     }
 
     private func readout(_ label: String, _ value: String) -> some View {
