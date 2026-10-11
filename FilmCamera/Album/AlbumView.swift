@@ -242,50 +242,58 @@ struct AlbumView: View {
     // MARK: - アルバムの情報（黒い表示窓）
 
     private var infoPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // 右に今日の一枚を大きく出し、数字とメンバーは左に小さくまとめる
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    readout("PHOTOS", "\(store.photos.count)")
-                    readout("MEMBERS", "\(max(store.members.count, 1))")
-                    readout("LATEST", store.photos.first.map { $0.takenAt.formatted(.dateTime.month().day()) } ?? "—")
-                    if !store.members.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 4) {
-                                ForEach(store.members.values.sorted(), id: \.self) { name in
-                                    HStack(spacing: 4) {
-                                        Text(String(name.prefix(1)))
-                                            .font(.caption2.weight(.heavy))
-                                            .foregroundStyle(Deck.display)
-                                            .frame(width: 16, height: 16)
-                                            .background(Circle().fill(Deck.orange))
-                                        Text(name)
-                                            .font(.caption2.weight(.semibold))
-                                            .foregroundStyle(.white.opacity(0.9))
-                                            .lineLimit(1)
-                                    }
-                                    .padding(.leading, 2)
-                                    .padding(.trailing, 7)
-                                    .padding(.vertical, 2)
-                                    .background(Capsule().fill(.white.opacity(0.1)))
+        let hasPick = !store.photos.isEmpty
+        // 写真以外（数字・メンバー・招待・自動追加）は左に細くまとめ、残りの幅いっぱいに今日の一枚を出す
+        return HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                readout("PHOTOS", "\(store.photos.count)")
+                readout("MEMBERS", "\(max(store.members.count, 1))")
+                readout("LATEST", store.photos.first.map { $0.takenAt.formatted(.dateTime.month().day()) } ?? "—")
+                if !store.members.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(store.members.values.sorted(), id: \.self) { name in
+                                HStack(spacing: 4) {
+                                    Text(String(name.prefix(1)))
+                                        .font(.caption2.weight(.heavy))
+                                        .foregroundStyle(Deck.display)
+                                        .frame(width: 16, height: 16)
+                                        .background(Circle().fill(Deck.orange))
+                                    Text(name)
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.white.opacity(0.9))
+                                        .lineLimit(1)
                                 }
+                                .padding(.leading, 2)
+                                .padding(.trailing, 7)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(.white.opacity(0.1)))
                             }
                         }
-                        .padding(.top, 2)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                todayPick
+                Spacer(minLength: 0)
+                if store.selected?.isOwner == true { shareRow }
+                HStack(spacing: 4) {
+                    Image(systemName: "bolt.horizontal.circle")
+                    Text("自動で入れる")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Spacer(minLength: 2)
+                    Toggle("撮った写真を自動でこのアルバムに入れる", isOn: $store.autoAdd)
+                        .labelsHidden()
+                        .tint(Deck.orange)
+                        .scaleEffect(0.75)
+                        .frame(width: 40, height: 24)
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.9))
             }
-            if store.selected?.isOwner == true { shareRow }
-            Toggle(isOn: $store.autoAdd) {
-                Label("撮った写真を自動で入れる", systemImage: "bolt.horizontal.circle")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-            }
-            .tint(Deck.orange)
-            .controlSize(.mini)
+            .frame(maxWidth: hasPick ? 128 : .infinity, alignment: .leading)
+            .frame(maxHeight: .infinity, alignment: .top)
+            todayPick
         }
+        .fixedSize(horizontal: false, vertical: true)
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Deck.display))
         .padding(.horizontal, 16)
@@ -299,21 +307,21 @@ struct AlbumView: View {
             Button {
                 viewing = ViewerStart(photos: store.photos, index: index)
             } label: {
-                VStack(alignment: .trailing, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("TODAY")
                         .font(.caption2.weight(.bold).monospaced())
                         .foregroundStyle(Deck.orange)
-                    Group {
-                        if let image = photo.thumbnail {
-                            Image(uiImage: image).resizable().scaledToFill()
-                        } else {
-                            Color.white.opacity(0.1)
+                    Color.white.opacity(0.1)
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay {
+                            if let image = photo.thumbnail {
+                                Image(uiImage: image).resizable().scaledToFill()
+                            }
                         }
-                    }
-                    .frame(width: 176, height: 176)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Deck.orange, lineWidth: 2))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Deck.orange, lineWidth: 2))
                 }
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("今日の一枚（\(photo.takenAt.formatted(.dateTime.year().month().day()))）")
@@ -341,7 +349,7 @@ struct AlbumView: View {
             Text(label)
                 .font(.caption2.weight(.bold).monospaced())
                 .foregroundStyle(Deck.orange)
-                .frame(width: 62, alignment: .leading)
+                .frame(width: 58, alignment: .leading)
             Text(value)
                 .font(.subheadline.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.white)
@@ -351,13 +359,13 @@ struct AlbumView: View {
 
     /// 招待の状態と、招待を作る・送るボタン
     private var shareRow: some View {
-        HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(store.share == nil
-                 ? "まだ誰とも共有していません"
-                 : store.participantNames.isEmpty ? "招待の準備ができています。リンクを送ってください" : "共有中")
-                .font(.caption)
+                 ? "まだ共有していません"
+                 : store.participantNames.isEmpty ? "招待の準備ができました" : "共有中")
+                .font(.caption2)
                 .foregroundStyle(.white.opacity(0.6))
-            Spacer(minLength: 4)
+                .lineLimit(2)
             if let url = store.share?.url {
                 ShareLink(item: url,
                           subject: Text("フィルムカメラの共有アルバム"),
@@ -370,7 +378,7 @@ struct AlbumView: View {
                 Button {
                     Task { await store.makeShare() }
                 } label: {
-                    pill("友だちを招待", systemImage: "person.crop.circle.badge.plus")
+                    pill("招待する", systemImage: "person.crop.circle.badge.plus")
                 }
             }
         }
@@ -378,10 +386,12 @@ struct AlbumView: View {
 
     private func pill(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
-            .font(.footnote.weight(.bold))
+            .font(.caption.weight(.bold))
             .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(Capsule().fill(Deck.orange))
     }
 
