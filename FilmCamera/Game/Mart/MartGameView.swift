@@ -99,6 +99,7 @@ final class MartSession: ObservableObject, Identifiable {
         case guest(MartWalker)
         case snapshot(MartSnapshot)
         case claim
+        case upgrade(MartUpgrade)
     }
 
     init(role: MartGame.Role, name: String) {
@@ -127,6 +128,8 @@ final class MartSession: ObservableObject, Identifiable {
                 if role == .guest { self.game.apply(snapshot) }
             case .claim:
                 if role == .host { self.game.claimQuest() }
+            case .upgrade(let upgrade):
+                if role == .host { self.game.buyUpgrade(upgrade) }
             }
         }
         link.start()
@@ -134,6 +137,9 @@ final class MartSession: ObservableObject, Identifiable {
         if role == .guest {
             game.onClaim = { [weak link] in
                 if let data = try? JSONEncoder().encode(Message.claim) { link?.send(data) }
+            }
+            game.onUpgrade = { [weak link] upgrade in
+                if let data = try? JSONEncoder().encode(Message.upgrade(upgrade)) { link?.send(data) }
             }
         }
         status = role == .host ? "友だちを待っています" : "友だちのお店をさがしています"
@@ -210,6 +216,10 @@ struct MartPlayView: View {
                     .environment(\.colorScheme, .dark)
                 }
                 Spacer()
+                if game.atUpgrade {
+                    upgradePanel
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 if let banner = game.banner {
                     Text(banner)
                         .font(.system(size: 20, weight: .bold, design: .rounded))
@@ -234,6 +244,7 @@ struct MartPlayView: View {
         }
         .preferredColorScheme(.light)
         .animation(.spring(duration: 0.4, bounce: 0.5), value: game.banner)
+        .animation(.spring(duration: 0.35, bounce: 0.25), value: game.atUpgrade)
         .animation(.spring(duration: 0.4, bounce: 0.3), value: game.offlineEarned)
         .statusBarHidden()
         .task { await run() }
@@ -331,6 +342,70 @@ struct MartPlayView: View {
         .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
+    }
+
+    /// アップグレード（床の UPGRADE に立つと出る）
+    private var upgradePanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("⬆️ アップグレード")
+                    .font(.system(size: 17, weight: .black, design: .rounded))
+                Spacer()
+                Text("出ると閉じます")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(MartUpgrade.allCases) { upgrade in
+                let level = game.upgradeLevel(upgrade)
+                let maxed = level >= MartUpgrade.maxLevel
+                let cost = upgrade.cost(level)
+                HStack(spacing: 10) {
+                    Image(systemName: upgrade.symbol)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(Color(red: 0.45, green: 0.35, blue: 0.95)))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(upgrade.title)
+                            .font(.system(size: 14, weight: .heavy, design: .rounded))
+                        HStack(spacing: 3) {
+                            ForEach(0..<MartUpgrade.maxLevel, id: \.self) { index in
+                                Capsule()
+                                    .fill(index < level ? Color(red: 0.45, green: 0.35, blue: 0.95) : Color(white: 0.85))
+                                    .frame(width: 14, height: 5)
+                            }
+                            Text(upgrade.effect(level))
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 4)
+                        }
+                    }
+                    Spacer()
+                    Button {
+                        game.buyUpgrade(upgrade)
+                    } label: {
+                        Text(maxed ? "MAX" : MartYen.text(cost))
+                            .font(.system(size: 14, weight: .black, design: .rounded))
+                            .foregroundStyle(.white)
+                            .frame(minWidth: 86)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(maxed ? Color(white: 0.6)
+                                                       : game.money >= cost ? Color(red: 0.3, green: 0.75, blue: 0.35) : Color(white: 0.72)))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(maxed)
+                }
+            }
+        }
+        .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.28))
+        .padding(14)
+        .frame(maxWidth: 420)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.7), lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 24)
     }
 
     /// 留守のあいだにかせいだお金

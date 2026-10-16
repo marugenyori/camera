@@ -81,10 +81,12 @@ struct MartWalker: Codable {
     var moving = false
     var step: Double = 0
     var carry: [MartProduct] = []
+    /// 運んでいるかご（返しに行く）
+    var baskets = 0
 }
 
 struct MartCustomer: Identifiable, Codable {
-    enum Phase: String, Codable { case toShelf, shopping, toQueue, queued, leaving }
+    enum Phase: String, Codable { case toBasket, toShelf, shopping, toQueue, queued, leaving }
     var id = UUID()
     var walker: MartWalker
     var phase: Phase = .toShelf
@@ -97,6 +99,8 @@ struct MartCustomer: Identifiable, Codable {
     /// 待たされた時間（長すぎると怒って帰る）
     var waited: Double = 0
     var angry = false
+    /// かごを持っているか
+    var basket = false
 }
 
 struct MartHelper: Codable {
@@ -139,6 +143,55 @@ struct MartStep {
 }
 
 /// ゲストに送るお店の様子
+/// アップグレード（床の UPGRADE の場所で、お金を払ってレベルを上げる）
+enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
+    case capacity, speed, price, cashier, staff
+    var id: String { rawValue }
+    static let maxLevel = 5
+
+    var title: String {
+        switch self {
+        case .capacity: return "運べる数"
+        case .speed: return "歩く速さ"
+        case .price: return "売値アップ"
+        case .cashier: return "レジのスピード"
+        case .staff: return "係のスピード"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .capacity: return "shippingbox.fill"
+        case .speed: return "figure.run"
+        case .price: return "yensign.circle.fill"
+        case .cashier: return "barcode.viewfinder"
+        case .staff: return "person.2.fill"
+        }
+    }
+
+    func effect(_ level: Int) -> String {
+        switch self {
+        case .capacity: return "+\(level * 2) 個"
+        case .speed: return "+\(level * 12)%"
+        case .price: return "+\(level * 15)%"
+        case .cashier: return "+\(level * 20)%"
+        case .staff: return "+\(level * 20)%"
+        }
+    }
+
+    func cost(_ level: Int) -> Int {
+        let base: Double
+        switch self {
+        case .capacity: base = 1_500
+        case .speed: base = 1_200
+        case .price: base = 2_500
+        case .cashier: base = 1_800
+        case .staff: base = 2_200
+        }
+        return Int((base * pow(2.1, Double(level)) / 100).rounded()) * 100
+    }
+}
+
 /// クエスト（目標）。こなすと報酬
 struct MartQuest {
     enum Kind: Int, Codable { case shelve, serve, earn }
@@ -200,6 +253,9 @@ struct MartSnapshot: Codable {
     var stats: MartStats
     var questIndex: Int
     var questBase: Int
+    var standBaskets: Int
+    var returnedBaskets: Int
+    var upgrades: [MartUpgrade: Int]
 }
 
 @MainActor
@@ -215,6 +271,12 @@ final class MartGame: ObservableObject {
     nonisolated static let door = CGPoint(x: 21.7, y: 14.5)
     nonisolated static let outside = CGPoint(x: 25, y: 14.5)
     nonisolated static let shelfCapacity = 8
+    /// かご置き場（入口のそば）と、使い終わったかごがたまる場所（レジのそば）
+    nonisolated static let basketStand = CGPoint(x: 20.3, y: 12.4)
+    nonisolated static let basketReturn = CGPoint(x: 16.3, y: 6.7)
+    nonisolated static let basketStandMax = 12
+    /// アップグレードの場所（左下）
+    nonisolated static let upgradeZone = CGRect(x: 0.6, y: 14.0, width: 2.6, height: 1.6)
     /// お客さんが通る縦の通路（棚とレジのあいだ）
     nonisolated static let aisleX: CGFloat = 17.6
     /// 品出し係が通る縦の通路（倉庫の台と棚のあいだ）
@@ -280,6 +342,44 @@ final class MartGame: ObservableObject {
     private(set) var capacity = 4
     private(set) var speed: CGFloat = 4.3
     private(set) var maxCustomers = 3
+    /// かご置き場のかご・返ってきたかご
+    private(set) var standBaskets = 6
+    private(set) var returnedBaskets = 0
+    private var basketTimer: Double = 0
+    /// アップグレードのレベル
+    @Published private(set) var upgrades: [MartUpgrade: Int] = [:]
+    /// 自分の店員がアップグレードの場所にいる
+    @Published private(set) var atUpgrade = false
+    /// ゲストのとき、アップグレードをホストに頼む
+    var onUpgrade: ((MartUpgrade) -> Void)?
+
+    func upgradeLevel(_ upgrade: MartUpgrade) -> Int { upgrades[upgrade] ?? 0 }
+
+    func buyUpgrade(_ upgrade: MartUpgrade) {
+        let level = upgradeLevel(upgrade)
+        guard level < MartUpgrade.maxLevel else { return }
+        if role == .guest {
+            onUpgrade?(upgrade)
+            return
+        }
+        let cost = upgrade.cost(level)
+        guard money >= cost else {
+            GameAudio.shared.play(.invalid)
+            return
+        }
+        money -= cost
+        upgrades[upgrade] = level + 1
+        rebuildUnlocks()
+        banner = "⬆️ \(upgrade.title) Lv.\(level + 1)"
+        GameAudio.shared.play(.complete)
+        save()
+    }
+
+    /// 売値（アップグレードで上がる）
+    func sale(_ product: MartProduct, count: Int) -> Int {
+        Int(Double(product.price * count) * (1 + 0.15 * Double(upgradeLevel(.price))))
+    }
+
     /// 会計の進み具合（0〜1）
     private(set) var serving: Double = 0
     /// 指で動かす向き（画面から入れる。長さ 0〜1）
@@ -362,7 +462,8 @@ final class MartGame: ObservableObject {
     func snapshot() -> MartSnapshot {
         MartSnapshot(players: players, customers: customers, helpers: helpers.map(\.walker), stock: stock, cash: cash,
                      money: money, done: Array(done), paid: paid, serving: serving, stats: stats,
-                     questIndex: questIndex, questBase: questBase)
+                     questIndex: questIndex, questBase: questBase, standBaskets: standBaskets,
+                     returnedBaskets: returnedBaskets, upgrades: upgrades)
     }
 
     /// ホストから届いたお店の様子を当てはめる（ゲスト。自分の位置はそのまま）
@@ -387,6 +488,12 @@ final class MartGame: ObservableObject {
         stats = snapshot.stats
         questIndex = snapshot.questIndex
         questBase = snapshot.questBase
+        standBaskets = snapshot.standBaskets
+        returnedBaskets = snapshot.returnedBaskets
+        if upgrades != snapshot.upgrades {
+            upgrades = snapshot.upgrades
+            rebuildUnlocks()
+        }
         let newDone = Set(snapshot.done)
         if newDone != done {
             let added = newDone.subtracting(done)
@@ -403,9 +510,14 @@ final class MartGame: ObservableObject {
     func update(_ dt: Double) {
         soundTimer -= dt
         movePlayer(me, dt)
+        if players.indices.contains(me) {
+            let inside = Self.upgradeZone.insetBy(dx: -0.3, dy: -0.3).contains(players[me].pos)
+            if inside != atUpgrade { atUpgrade = inside }
+        }
         guard role != .guest else { return }
         for index in players.indices { handleSupplyAndShelves(index, dt) }
         handleRegister(dt)
+        handleBaskets(dt)
         handleCash(dt)
         handlePads(dt)
         spawnCustomers(dt)
@@ -491,8 +603,23 @@ final class MartGame: ObservableObject {
         pickTimers[index] -= dt
         dropTimers[index] -= dt
         let pos = players[index].pos
-        // 倉庫の台：そばにいる間、運べる数まで受け取る
-        for product in unlockedProducts where distance(pos, Self.supplySpot(product.rawValue)) < 1.15 {
+        // 使い終わったかご：手が空いていれば拾い、かご置き場で返す
+        if players[index].carry.isEmpty, returnedBaskets > 0, distance(pos, Self.basketReturn) < 1.2,
+           players[index].baskets < capacity + 2, pickTimers[index] <= 0 {
+            returnedBaskets -= 1
+            players[index].baskets += 1
+            pickTimers[index] = 0.1
+            tick()
+        }
+        if players[index].baskets > 0, distance(pos, Self.basketStand) < 1.3, standBaskets < Self.basketStandMax,
+           dropTimers[index] <= 0 {
+            players[index].baskets -= 1
+            standBaskets += 1
+            dropTimers[index] = 0.09
+            tick()
+        }
+        // 倉庫の台：そばにいる間、運べる数まで受け取る（かごを持っていないとき）
+        for product in unlockedProducts where distance(pos, Self.supplySpot(product.rawValue)) < 1.15 && players[index].baskets == 0 {
             if players[index].carry.count < capacity, pickTimers[index] <= 0 {
                 players[index].carry.append(product)
                 pickTimers[index] = 0.1
@@ -519,17 +646,35 @@ final class MartGame: ObservableObject {
             serving = 0
             return
         }
-        serving += dt / (hasCashier ? 0.8 : 0.55)
+        serving += dt / (hasCashier ? 0.8 : 0.55) * (1 + 0.2 * Double(upgradeLevel(.cashier)))
         guard serving >= 1 else { return }
         serving = 0
         let customer = customers[index]
-        cash += customer.got * customer.product.price
+        let amount = sale(customer.product, count: customer.got)
+        cash += amount
+        returnedBaskets = min(returnedBaskets + (customer.basket ? 1 : 0), 20)
         stats.served += 1
-        stats.earned += customer.got * customer.product.price
+        stats.earned += amount
         queue.removeFirst()
         customers[index].phase = .leaving
         customers[index].path = [CGPoint(x: Self.serveSpot.x, y: Self.door.y), Self.door, Self.outside]
         GameAudio.shared.play(.tap)
+    }
+
+    /// かごの数をお客さんの数に合わせて増やす。レジ係がいると、ひまなときに少しずつかごを戻してくれる
+    private func handleBaskets(_ dt: Double) {
+        let total = standBaskets + returnedBaskets + customers.filter(\.basket).count + players.reduce(0) { $0 + $1.baskets }
+        if total < maxCustomers + 3, standBaskets < Self.basketStandMax { standBaskets += 1 }
+        guard hasCashier, returnedBaskets > 0, standBaskets < Self.basketStandMax else {
+            basketTimer = 0
+            return
+        }
+        basketTimer += dt
+        if basketTimer > 6 {
+            basketTimer = 0
+            returnedBaskets -= 1
+            standBaskets += 1
+        }
     }
 
     private func handleCash(_ dt: Double) {
@@ -602,6 +747,8 @@ final class MartGame: ObservableObject {
             case .customers: maxCustomers += 2
             }
         }
+        capacity += 2 * upgradeLevel(.capacity)
+        speed *= 1 + 0.12 * CGFloat(upgradeLevel(.speed))
         if role != .guest {
             while helpers.count < stockers { helpers.append(MartHelper(walker: MartWalker(pos: CGPoint(x: 2.9, y: 13.5)))) }
         }
@@ -621,16 +768,36 @@ final class MartGame: ObservableObject {
         spawnTimer -= dt
         guard spawnTimer <= 0, customers.count < maxCustomers, let product = unlockedProducts.randomElement() else { return }
         spawnTimer = Double.random(in: 1.2...3.0)
-        let front = Self.shelfFront(product.rawValue)
         let want = Int.random(in: 1...min(4, 1 + level / 3))
         var customer = MartCustomer(walker: MartWalker(pos: Self.outside), product: product, want: want,
                                     shirt: Int.random(in: 0..<8))
-        customer.path = [Self.door, CGPoint(x: Self.aisleX, y: Self.door.y), CGPoint(x: Self.aisleX, y: front.y), front]
+        customer.path = [Self.door, CGPoint(x: Self.basketStand.x, y: Self.door.y), CGPoint(x: Self.basketStand.x, y: Self.basketStand.y + 0.8)]
+        customer.phase = .toBasket
         customers.append(customer)
     }
 
     private func updateCustomer(_ customer: inout MartCustomer, _ dt: Double) {
         switch customer.phase {
+        case .toBasket:
+            guard follow(&customer.walker, path: &customer.path, speed: 2.7, dt: dt) else { return }
+            customer.walker.heading = -.pi / 2
+            if standBaskets > 0 {
+                // かごを取って、棚へ
+                standBaskets -= 1
+                customer.basket = true
+                customer.waited = 0
+                customer.phase = .toShelf
+                let front = Self.shelfFront(customer.product.rawValue)
+                customer.path = [CGPoint(x: Self.aisleX, y: Self.door.y - 0.6), CGPoint(x: Self.aisleX, y: front.y), front]
+            } else {
+                // かごがない：しばらく待ち、待ちすぎたら怒って帰る
+                customer.waited += dt
+                if customer.waited > 20 {
+                    customer.angry = true
+                    customer.phase = .leaving
+                    customer.path = [Self.door, Self.outside]
+                }
+            }
         case .toShelf:
             if follow(&customer.walker, path: &customer.path, speed: 2.7, dt: dt) {
                 customer.phase = .shopping
@@ -651,6 +818,8 @@ final class MartGame: ObservableObject {
                     // 品切れのまま待たされて、怒って帰る（取った分は棚にもどす）
                     stock[k] = min(stock[k] + customer.got, Self.shelfCapacity)
                     customer.got = 0
+                    if customer.basket { returnedBaskets = min(returnedBaskets + 1, 20) }
+                    customer.basket = false
                     customer.angry = true
                     customer.phase = .leaving
                     let front = Self.shelfFront(k)
@@ -676,6 +845,8 @@ final class MartGame: ObservableObject {
                 queue.remove(at: at)
                 stock[customer.product.rawValue] = min(stock[customer.product.rawValue] + customer.got, Self.shelfCapacity)
                 customer.got = 0
+                if customer.basket { returnedBaskets = min(returnedBaskets + 1, 20) }
+                customer.basket = false
                 customer.angry = true
                 customer.phase = .leaving
                 customer.path = [CGPoint(x: Self.serveSpot.x - 0.6, y: customer.walker.pos.y), CGPoint(x: Self.serveSpot.x - 0.6, y: Self.door.y),
@@ -730,7 +901,7 @@ final class MartGame: ObservableObject {
             helper.path = [CGPoint(x: Self.helperX, y: helper.walker.pos.y), CGPoint(x: Self.helperX, y: supply.y)]
             helper.phase = .toSupply
         case .toSupply:
-            if follow(&helper.walker, path: &helper.path, speed: 3.1, dt: dt) { helper.phase = .loading }
+            if follow(&helper.walker, path: &helper.path, speed: 3.1 * (1 + 0.2 * CGFloat(upgradeLevel(.staff))), dt: dt) { helper.phase = .loading }
         case .loading:
             helper.timer -= dt
             if helper.timer <= 0 {
@@ -743,7 +914,7 @@ final class MartGame: ObservableObject {
                 helper.phase = .toShelf
             }
         case .toShelf:
-            if follow(&helper.walker, path: &helper.path, speed: 3.1, dt: dt) { helper.phase = .unloading }
+            if follow(&helper.walker, path: &helper.path, speed: 3.1 * (1 + 0.2 * CGFloat(upgradeLevel(.staff))), dt: dt) { helper.phase = .unloading }
         case .unloading:
             helper.timer -= dt
             let k = helper.target.rawValue
@@ -775,12 +946,16 @@ final class MartGame: ObservableObject {
         var savedAt: Date?
         /// 2 = 円（30 倍）にしたあと
         var unit: Int?
+        var upgrades: [MartUpgrade: Int]?
+        var standBaskets: Int?
+        var returnedBaskets: Int?
     }
 
     func save() {
         guard role != .guest else { return }
         let data = SaveData(money: money, done: Array(done), paid: paid, stock: stock, cash: cash, stats: stats,
-                            questIndex: questIndex, questBase: questBase, savedAt: Date(), unit: 2)
+                            questIndex: questIndex, questBase: questBase, savedAt: Date(), unit: 2,
+                            upgrades: upgrades, standBaskets: standBaskets, returnedBaskets: returnedBaskets)
         if let encoded = try? JSONEncoder().encode(data) {
             UserDefaults.standard.set(encoded, forKey: "martSave")
         }
@@ -798,6 +973,9 @@ final class MartGame: ObservableObject {
         done = Set(saved.done.filter { Self.steps.indices.contains($0) })
         stats = saved.stats ?? MartStats()
         stats.earned *= scale
+        upgrades = saved.upgrades ?? [:]
+        standBaskets = saved.standBaskets ?? 6
+        returnedBaskets = saved.returnedBaskets ?? 0
         questIndex = saved.questIndex ?? 0
         questBase = saved.questBase ?? 0
         if scale > 1, MartQuest.make(questIndex).kind == .earn { questBase *= scale }
@@ -826,6 +1004,9 @@ final class MartGame: ObservableObject {
         stats = MartStats()
         questIndex = 0
         questBase = 0
+        upgrades = [:]
+        standBaskets = 6
+        returnedBaskets = 0
         helpers = []
         customers = []
         queue = []
