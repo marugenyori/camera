@@ -169,6 +169,7 @@ struct MartPlayView: View {
     @State private var touchNow: CGPoint?
     @State private var muted = GameAudio.shared.isMuted
     @State private var confirmingReset = false
+    @State private var zoomStart: CGFloat?
 
     init(session: MartSession) {
         _session = ObservedObject(wrappedValue: session)
@@ -182,6 +183,7 @@ struct MartPlayView: View {
             Color.clear
                 .contentShape(Rectangle())
                 .gesture(stickGesture)
+                .simultaneousGesture(zoomGesture)
                 .ignoresSafeArea()
             joystick
             VStack(spacing: 8) {
@@ -258,6 +260,23 @@ struct MartPlayView: View {
                 touchStart = nil
                 touchNow = nil
                 game.stick = .zero
+            }
+    }
+
+    /// 2 本指で広げると寄る、つまむと引く（写真と同じ感覚）
+    private var zoomGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                if zoomStart == nil { zoomStart = session.scene.zoom }
+                if let start = zoomStart { session.scene.zoom = start / value.magnification }
+                // 2 本指の間は歩かない
+                touchStart = nil
+                touchNow = nil
+                game.stick = .zero
+            }
+            .onEnded { _ in
+                zoomStart = nil
+                session.scene.saveZoom()
             }
     }
 
