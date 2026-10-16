@@ -22,6 +22,16 @@ final class MartScene {
     private var customerNodes: [UUID: CharacterNode] = [:]
     private var helperNodes: [CharacterNode] = []
     private var basketHelperNodes: [CharacterNode] = []
+    private let giftNode = SCNNode()
+    private var lastGift: CGPoint?
+    private var lastCombo = 0
+    private let saleSign = SCNNode()
+    private let cat = SCNNode()
+    private let catPivot = SCNNode()
+    private var catPos = CGPoint(x: 8, y: 11)
+    private var catPath: [CGPoint] = []
+    private var catWait: Double = 2
+    private var catStep: Double = 0
     private var cashierNode: CharacterNode?
     private var cashBills: [SCNNode] = []
     private var padNodes: [Int: PadNode] = [:]
@@ -389,6 +399,7 @@ final class MartScene {
                                    MartGame.cashSpot.x, 0.02, MartGame.cashSpot.y))
         buildDecorations()
         buildBaskets()
+        buildFun()
         // 外のトラックと木
         buildTruck()
         for (x, z, r) in [(26.3, 1.0, 0.6), (23.4, -1.5, 0.8)]
@@ -699,6 +710,99 @@ final class MartScene {
         }
     }
 
+    /// プレゼント箱・タイムセールの看板・お店の猫
+    private func buildFun() {
+        // プレゼント箱（赤い箱に黄色いリボン）
+        let red = UIColor(red: 0.92, green: 0.25, blue: 0.3, alpha: 1)
+        let ribbon = UIColor(red: 1, green: 0.85, blue: 0.25, alpha: 1)
+        let box = Self.box(0.5, 0.42, 0.5, red, chamfer: 0.03)
+        box.addChildNode(Self.box(0.52, 0.44, 0.1, ribbon, chamfer: 0.01))
+        box.addChildNode(Self.box(0.1, 0.44, 0.52, ribbon, chamfer: 0.01))
+        box.addChildNode(Self.at(Self.box(0.54, 0.1, 0.54, red.darker(0.08), chamfer: 0.02), 0, 0.2, 0))
+        for x in [-0.1, 0.1] as [CGFloat] {
+            let bow = Self.sphere(0.08, ribbon)
+            bow.scale = SCNVector3(1.3, 0.8, 0.7)
+            box.addChildNode(Self.at(bow, x, 0.3, 0))
+        }
+        box.position = SCNVector3(0, 0.3, 0)
+        giftNode.addChildNode(box)
+        box.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 3)))
+        box.runAction(.repeatForever(.sequence([.moveBy(x: 0, y: 0.2, z: 0, duration: 0.5), .moveBy(x: 0, y: -0.2, z: 0, duration: 0.5)])))
+        let shine = Self.decal(Self.ringImage(ribbon), width: 1.2, length: 1.2)
+        shine.position = SCNVector3(0, 0.02, 0)
+        giftNode.addChildNode(shine)
+        giftNode.isHidden = true
+        world.addChildNode(giftNode)
+        // タイムセールの看板（入口の上）
+        let sign = Self.billboard(Self.label("⏰ SALE", size: 70, color: .white,
+                                             background: UIColor(red: 0.95, green: 0.25, blue: 0.3, alpha: 1)), width: 1.8)
+        saleSign.addChildNode(sign)
+        saleSign.position = SCNVector3(Float(MartGame.floor.maxX + 0.3), 3.2, Float(MartGame.door.y))
+        saleSign.isHidden = true
+        saleSign.runAction(.repeatForever(.sequence([.scale(to: 1.12, duration: 0.35), .scale(to: 1, duration: 0.35)])))
+        world.addChildNode(saleSign)
+        // お店の猫（茶トラ。+x が前）
+        let fur = UIColor(red: 0.98, green: 0.65, blue: 0.3, alpha: 1)
+        let light = UIColor(red: 1, green: 0.92, blue: 0.8, alpha: 1)
+        let body = Self.capsule(0.11, 0.42, fur)
+        body.eulerAngles.z = .pi / 2
+        catPivot.addChildNode(Self.at(body, 0, 0.2, 0))
+        catPivot.addChildNode(Self.at(Self.sphere(0.075, light), 0.05, 0.16, 0))
+        let head = Self.sphere(0.11, fur)
+        head.addChildNode(Self.at(Self.sphere(0.05, light), 0.08, -0.03, 0))
+        for z in [-0.06, 0.06] as [CGFloat] {
+            let ear = SCNNode(geometry: SCNCone(topRadius: 0, bottomRadius: 0.04, height: 0.08))
+            ear.geometry?.materials = [Self.material(fur)]
+            head.addChildNode(Self.at(ear, 0, 0.1, z))
+            head.addChildNode(Self.at(Self.sphere(0.014, UIColor(white: 0.1, alpha: 1)), 0.095, 0.02, z * 0.6))
+        }
+        catPivot.addChildNode(Self.at(head, 0.24, 0.32, 0))
+        let tail = Self.cylinder(0.025, 0.3, fur)
+        tail.eulerAngles.z = 0.6
+        catPivot.addChildNode(Self.at(tail, -0.28, 0.35, 0))
+        for (x, z) in [(0.12, -0.06), (0.12, 0.06), (-0.12, -0.06), (-0.12, 0.06)] as [(CGFloat, CGFloat)] {
+            catPivot.addChildNode(Self.at(Self.cylinder(0.03, 0.14, fur), x, 0.07, z))
+        }
+        cat.addChildNode(catPivot)
+        cat.position = SCNVector3(Float(catPos.x), 0, Float(catPos.y))
+        world.addChildNode(cat)
+    }
+
+    /// 猫：ときどき止まり、お店のどこかへ、売り場をよけてのんびり歩く
+    private func updateCat(_ game: MartGame, dt: Double) {
+        if catPath.isEmpty {
+            catWait -= dt
+            guard catWait <= 0 else { return }
+            catWait = Double.random(in: 2...6)
+            let floor = game.floorRect
+            let target = CGPoint(x: CGFloat.random(in: 3.5...16.5), y: CGFloat.random(in: 2...(floor.maxY - 1.5)))
+            catPath = game.route(from: catPos, to: target)
+            if Int.random(in: 0..<3) == 0 {
+                floatText(["🐾", "😺", "💤"].randomElement() ?? "🐾", at: SCNVector3(Float(catPos.x), 1.0, Float(catPos.y)))
+            }
+            return
+        }
+        let target = catPath[0]
+        let dx = target.x - catPos.x, dy = target.y - catPos.y
+        let d = hypot(dx, dy)
+        let stride = 1.1 * CGFloat(dt)
+        if d <= stride {
+            catPos = target
+            catPath.removeFirst()
+        } else {
+            catPos.x += dx / d * stride
+            catPos.y += dy / d * stride
+            let want = -Float(atan2(dy, dx))
+            var diff = want - cat.eulerAngles.y
+            while diff > .pi { diff -= 2 * .pi }
+            while diff < -.pi { diff += 2 * .pi }
+            cat.eulerAngles.y += diff * Float(min(1, dt * 8))
+        }
+        catStep += dt
+        catPivot.position.y = catPath.isEmpty ? 0 : abs(Float(sin(catStep * 14))) * 0.03
+        cat.position = SCNVector3(Float(catPos.x), 0, Float(catPos.y))
+    }
+
     /// かご置き場・使い終わったかごの山・アップグレードの場所
     private func buildBaskets() {
         // かご置き場（入口のそば）：台と看板。かごは重ねて置く
@@ -756,7 +860,7 @@ final class MartScene {
         let upgrade = Self.decal(Self.upgradeImage(), width: zone.width, length: zone.height)
         upgrade.position = SCNVector3(Float(zone.midX), 0.014, Float(zone.midY))
         world.addChildNode(upgrade)
-        let mark = Self.billboard(Self.label("⬆️", size: 60, color: .white,
+        let mark = Self.billboard(Self.label("🛠️⬆️", size: 60, color: .white,
                                              background: UIColor(red: 0.45, green: 0.35, blue: 0.95, alpha: 1)), width: 0.7)
         mark.position = SCNVector3(Float(zone.midX), 1.3, Float(zone.midY))
         mark.runAction(.repeatForever(.sequence([.moveBy(x: 0, y: 0.15, z: 0, duration: 0.8), .moveBy(x: 0, y: -0.15, z: 0, duration: 0.8)])))
@@ -794,7 +898,7 @@ final class MartScene {
             border.lineWidth = 10
             purple.setStroke()
             border.stroke()
-            ("💰" as NSString).draw(at: CGPoint(x: 96, y: 68), withAttributes: [.font: UIFont.systemFont(ofSize: 100)])
+            ("🛠️" as NSString).draw(at: CGPoint(x: 96, y: 68), withAttributes: [.font: UIFont.systemFont(ofSize: 100)])
             ("⬆️" as NSString).draw(at: CGPoint(x: 216, y: 68), withAttributes: [.font: UIFont.systemFont(ofSize: 100)])
         }
         imageCache[key] = image
@@ -1631,13 +1735,29 @@ final class MartScene {
             if let existing = customerNodes[customer.id] {
                 node = existing
             } else {
-                node = CharacterNode(style: .customer(customer.shirt))
+                switch customer.kind {
+                case .normal: node = CharacterNode(style: .customer(customer.shirt))
+                case .vip: node = CharacterNode(style: .vip)
+                case .thief: node = CharacterNode(style: .thief)
+                }
                 node.root.position = SCNVector3(Float(customer.walker.pos.x), 0, Float(customer.walker.pos.y))
                 world.addChildNode(node.root)
                 customerNodes[customer.id] = node
             }
             node.update(customer.walker, smooth: smooth, dt: dt)
             let stock = game.stock[customer.product.rawValue]
+            if customer.kind == .thief {
+                // どろぼう：頭の上に 🦹。商品を持って逃げているあいだは 🚨
+                let fleeing = customer.phase == .leaving && customer.got > 0
+                node.setBubble(fleeing ? Self.label("🚨", size: 60, background: UIColor(red: 1, green: 0.3, blue: 0.3, alpha: 1))
+                               : Self.label("🦹", size: 60, background: .white))
+                if customer.phase == .leaving, customer.angry, !leavingCustomers.contains(customer.id) {
+                    leavingCustomers.insert(customer.id)
+                    floatText("🙀", at: SCNVector3(node.root.position.x, 2.0, node.root.position.z))
+                    burst(at: SCNVector3(node.root.position.x, 1.0, node.root.position.z))
+                }
+                continue
+            }
             node.setBasket(customer.basket && customer.phase != .leaving ? customer.got : nil, product: customer.product)
             switch customer.phase {
             case .toBasket:
@@ -1770,6 +1890,24 @@ final class MartScene {
         } else {
             maxLabel.isHidden = true
         }
+        // プレゼント箱：出ているときだけ見せ、拾ったら紙吹雪
+        if let gift = game.events.gift {
+            giftNode.isHidden = false
+            giftNode.position = SCNVector3(Float(gift.x), 0, Float(gift.y))
+        } else {
+            giftNode.isHidden = true
+            if let last = lastGift, built {
+                burst(at: SCNVector3(Float(last.x), 0.8, Float(last.y)))
+            }
+        }
+        lastGift = game.events.gift
+        // コンボ
+        if game.events.combo > lastCombo, game.events.combo >= 2 {
+            floatText("🔥×\(game.events.combo)", at: SCNVector3(Float(MartGame.serveSpot.x), 2.4, Float(MartGame.serveSpot.y)))
+        }
+        lastCombo = game.events.combo
+        saleSign.isHidden = game.events.saleTime <= 0
+        updateCat(game, dt: dt)
         updateArrow(game)
         // カメラは自分の店員を追う
         if let mine = playerNodes.indices.contains(game.me) ? playerNodes[game.me] : nil {
@@ -1825,11 +1963,15 @@ final class MartScene {
         }
         let me = game.players[game.me]
         var point: CGPoint?
-        // かごが足りないときは、いつでも案内する
-        if me.baskets > 0 {
+        // 逃げるどろぼう・かごが足りないときは、いつでも案内する
+        if let thief = game.customers.first(where: { $0.kind == .thief && $0.phase == .leaving && $0.got > 0 }) {
+            point = thief.walker.pos
+        } else if me.baskets > 0 {
             point = MartGame.basketStand
         } else if game.standBaskets == 0, game.returnedBaskets > 0, me.carry.isEmpty {
             point = MartGame.basketReturn
+        } else if let gift = game.events.gift, me.carry.isEmpty {
+            point = gift
         } else if game.level >= 4 {
             point = nil
         } else if game.cash >= 10 {
@@ -1984,6 +2126,8 @@ final class CharacterNode {
         case helper
         case basketHelper
         case customer(Int)
+        case vip
+        case thief
     }
 
     let root = SCNNode()
@@ -2058,8 +2202,19 @@ final class CharacterNode {
             shirt = Self.customerColors[index % Self.customerColors.count]
             pants = [UIColor(red: 0.27, green: 0.31, blue: 0.42, alpha: 1), UIColor(red: 0.4, green: 0.36, blue: 0.33, alpha: 1),
                      UIColor(white: 0.32, alpha: 1)][index % 3]
+        case .vip:
+            shirt = UIColor(red: 1, green: 0.8, blue: 0.2, alpha: 1)
+            pants = UIColor(red: 0.35, green: 0.2, blue: 0.5, alpha: 1)
+        case .thief:
+            shirt = UIColor(white: 0.18, alpha: 1)
+            pants = UIColor(white: 0.12, alpha: 1)
         }
-        showsLabel = { if case .customer = style { return false } else { return true } }()
+        showsLabel = {
+            switch style {
+            case .customer, .vip, .thief: return false
+            default: return true
+            }
+        }()
         body = MartScene.capsule(0.165, 0.64, shirt)
         tray = MartScene.box(0.44, 0.03, 0.34, UIColor(white: 0.97, alpha: 1), chamfer: 0.012)
         root.addChildNode(pivot)
@@ -2138,6 +2293,40 @@ final class CharacterNode {
                 back.position = SCNVector3(-0.12, 0.4, 0)
                 body.addChildNode(back)
             }
+        case .vip:
+            // 金の王冠と、足もとの金の輪
+            let gold = UIColor(red: 1, green: 0.82, blue: 0.2, alpha: 1)
+            let hair = MartScene.sphere(0.164, UIColor(red: 0.22, green: 0.16, blue: 0.12, alpha: 1))
+            hair.scale = SCNVector3(1, 0.68, 1)
+            hair.position = SCNVector3(-0.025, 0.53, 0)
+            body.addChildNode(hair)
+            let crown = MartScene.cylinder(0.1, 0.07, gold)
+            crown.position = SCNVector3(0, 0.66, 0)
+            for index in 0..<5 {
+                let angle = CGFloat(index) / 5 * 2 * .pi
+                let spike = SCNNode(geometry: SCNCone(topRadius: 0, bottomRadius: 0.03, height: 0.08))
+                spike.geometry?.materials = [MartScene.material(gold)]
+                crown.addChildNode(MartScene.at(spike, cos(angle) * 0.08, 0.07, sin(angle) * 0.08))
+            }
+            crown.addChildNode(MartScene.at(MartScene.sphere(0.022, UIColor(red: 0.9, green: 0.15, blue: 0.3, alpha: 1)), 0.1, 0, 0))
+            body.addChildNode(crown)
+            let ring = MartScene.decal(MartScene.ringImage(gold), width: 0.85, length: 0.85)
+            ring.position = SCNVector3(0, 0.03, 0)
+            root.addChildNode(ring)
+        case .thief:
+            // 黒いニット帽と目かくし、背中に大きな袋
+            let dark = UIColor(white: 0.1, alpha: 1)
+            let hat = MartScene.sphere(0.165, dark)
+            hat.scale = SCNVector3(1, 0.7, 1)
+            hat.position = SCNVector3(0, 0.55, 0)
+            body.addChildNode(hat)
+            body.addChildNode(MartScene.at(MartScene.box(0.06, 0.06, 0.3, dark, chamfer: 0.02), 0.13, 0.48, 0))
+            for z in [-0.05, 0.05] as [CGFloat] {
+                body.addChildNode(MartScene.at(MartScene.sphere(0.018, .white), 0.165, 0.48, z))
+            }
+            let sack = MartScene.sphere(0.2, UIColor(red: 0.7, green: 0.55, blue: 0.35, alpha: 1))
+            sack.scale = SCNVector3(0.8, 1, 0.9)
+            body.addChildNode(MartScene.at(sack, -0.24, 0.05, 0))
         }
         // 運ぶ商品をのせるお盆
         tray.isHidden = true

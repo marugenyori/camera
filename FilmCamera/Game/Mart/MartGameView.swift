@@ -202,6 +202,7 @@ struct MartPlayView: View {
             joystick
             VStack(spacing: 8) {
                 hud
+                eventPills
                 questCard
                 if !session.status.isEmpty {
                     HStack(spacing: 8) {
@@ -346,52 +347,21 @@ struct MartPlayView: View {
 
     /// アップグレード（床の UPGRADE に立つと出る）
     private var upgradePanel: some View {
-        // 2 列のタイル（アイコン・レベル・効果・値段）
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-            ForEach(MartUpgrade.allCases) { upgrade in
-                let level = game.upgradeLevel(upgrade)
-                let maxed = level >= MartUpgrade.maxLevel
-                let cost = upgrade.cost(level)
-                Button {
-                    game.buyUpgrade(upgrade)
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: upgrade.symbol)
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 34, height: 34)
-                            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(Color(red: 0.45, green: 0.35, blue: 0.95)))
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 2) {
-                                ForEach(0..<MartUpgrade.maxLevel, id: \.self) { index in
-                                    Capsule()
-                                        .fill(index < level ? Color(red: 0.45, green: 0.35, blue: 0.95) : Color(white: 0.85))
-                                        .frame(width: 9, height: 4)
-                                }
-                                Text(upgrade.effect(level))
-                                    .font(.system(size: 11, weight: .heavy, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .padding(.leading, 2)
-                            }
-                            Text(maxed ? "MAX" : MartYen.text(cost))
-                                .font(.system(size: 13, weight: .black, design: .rounded))
-                                .foregroundStyle(.white)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 4)
-                                .background(Capsule().fill(maxed ? Color(white: 0.6)
-                                                           : game.money >= cost ? Color(red: 0.3, green: 0.75, blue: 0.35) : Color(white: 0.72)))
-                        }
-                    }
-                    .padding(7)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.6)))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "wrench.and.screwdriver.fill")
+                Text("アップグレード")
+                Spacer()
+                Text("タップで買う")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.system(size: 15, weight: .black, design: .rounded))
+            // 2 列のタイル：アイコンと名前、レベル、「いま → つぎ」の効果、値段
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                ForEach(MartUpgrade.allCases) { upgrade in
+                    upgradeTile(upgrade)
                 }
-                .buttonStyle(.plain)
-                .disabled(maxed)
-                .accessibilityLabel(upgrade.title)
             }
         }
         .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.28))
@@ -402,6 +372,91 @@ struct MartPlayView: View {
         .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
         .padding(.horizontal, 14)
         .padding(.bottom, 24)
+    }
+
+    private func upgradeTile(_ upgrade: MartUpgrade) -> some View {
+        let level = game.upgradeLevel(upgrade)
+        let maxed = level >= MartUpgrade.maxLevel
+        let cost = upgrade.cost(level)
+        let purple = Color(red: 0.45, green: 0.35, blue: 0.95)
+        return Button {
+            game.buyUpgrade(upgrade)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: upgrade.symbol)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 26, height: 26)
+                        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(purple))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(upgrade.title)
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                        HStack(spacing: 2) {
+                            ForEach(0..<MartUpgrade.maxLevel, id: \.self) { index in
+                                Capsule()
+                                    .fill(index < level ? purple : Color(white: 0.85))
+                                    .frame(width: 9, height: 4)
+                            }
+                        }
+                    }
+                }
+                Text(maxed ? upgrade.effect(level) : (level == 0 ? "なし" : upgrade.effect(level)) + " → " + upgrade.effect(level + 1))
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(maxed ? "MAX" : MartYen.text(cost))
+                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(maxed ? Color(white: 0.6)
+                                               : game.money >= cost ? Color(red: 0.3, green: 0.75, blue: 0.35) : Color(white: 0.72)))
+            }
+            .padding(7)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.6)))
+        }
+        .buttonStyle(.plain)
+        .disabled(maxed)
+    }
+
+    /// 評判の星と、タイムセールの残り時間
+    private var eventPills: some View {
+        HStack(spacing: 8) {
+            Spacer()
+            if game.saleSeconds > 0 {
+                HStack(spacing: 4) {
+                    Text("⏰")
+                    Text("SALE \(game.saleSeconds)")
+                        .monospacedDigit()
+                }
+                .font(.system(size: 13, weight: .black, design: .rounded))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Color(red: 0.95, green: 0.25, blue: 0.3)))
+                .transition(.scale.combined(with: .opacity))
+            }
+            HStack(spacing: 1) {
+                ForEach(0..<5, id: \.self) { index in
+                    let value = game.stars - Double(index)
+                    Image(systemName: value >= 1 ? "star.fill" : value >= 0.5 ? "star.leadinghalf.filled" : "star")
+                }
+            }
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(Color(red: 1, green: 0.72, blue: 0.1))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.regularMaterial, in: Capsule())
+            .accessibilityLabel("評判 \(game.stars)")
+        }
+        .padding(.horizontal, 14)
+        .animation(.spring(duration: 0.3), value: game.saleSeconds > 0)
     }
 
     /// 留守のあいだにかせいだお金
