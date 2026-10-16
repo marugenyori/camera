@@ -207,45 +207,49 @@ final class MartGame: ObservableObject {
     enum Role { case solo, host, guest }
 
     // 店の形
-    nonisolated static let floor = CGRect(x: 0, y: 0, width: 14.5, height: 11)
-    nonisolated static let counter = CGRect(x: 12.0, y: 2.6, width: 1.0, height: 2.3)
-    nonisolated static let cashierSpot = CGPoint(x: 13.65, y: 3.75)
-    nonisolated static let serveSpot = CGPoint(x: 11.35, y: 3.75)
-    nonisolated static let cashSpot = CGPoint(x: 12.5, y: 5.8)
-    nonisolated static let door = CGPoint(x: 14.2, y: 10)
-    nonisolated static let outside = CGPoint(x: 17, y: 10)
+    nonisolated static let floor = CGRect(x: 0, y: 0, width: 22, height: 16)
+    nonisolated static let counter = CGRect(x: 19.2, y: 3.5, width: 1.2, height: 3.0)
+    nonisolated static let cashierSpot = CGPoint(x: 21.15, y: 5.0)
+    nonisolated static let serveSpot = CGPoint(x: 18.35, y: 5.0)
+    nonisolated static let cashSpot = CGPoint(x: 19.9, y: 8.3)
+    nonisolated static let door = CGPoint(x: 21.7, y: 14.5)
+    nonisolated static let outside = CGPoint(x: 25, y: 14.5)
     nonisolated static let shelfCapacity = 8
+    /// お客さんが通る縦の通路（棚とレジのあいだ）
+    nonisolated static let aisleX: CGFloat = 17.6
+    /// 品出し係が通る縦の通路（倉庫の台と棚のあいだ）
+    nonisolated static let helperX: CGFloat = 2.9
 
     nonisolated static func shelfRect(_ k: Int) -> CGRect {
-        CGRect(x: 2.4 + 2.0 * CGFloat(k % 4), y: k < 4 ? 2.0 : 6.0, width: 1.6, height: 0.8)
+        CGRect(x: 4.2 + 3.4 * CGFloat(k % 4), y: k < 4 ? 3.0 : 8.5, width: 2.2, height: 1.0)
     }
 
     /// お客さんが立って商品を取る場所（棚の手前）
     nonisolated static func shelfFront(_ k: Int) -> CGPoint {
         let rect = shelfRect(k)
-        return CGPoint(x: rect.midX, y: rect.maxY + 0.5)
+        return CGPoint(x: rect.midX, y: rect.maxY + 0.7)
     }
 
     /// 倉庫の台（左の壁ぞい）
     nonisolated static func supplySpot(_ k: Int) -> CGPoint {
-        CGPoint(x: 0.95, y: 1.4 + 1.5 * CGFloat(k))
+        CGPoint(x: 1.6, y: 2.2 + 2.1 * CGFloat(k))
     }
 
     nonisolated static let steps: [MartStep] = [
         MartStep(kind: .shelf(1), cost: 600, pos: CGPoint(x: shelfRect(1).midX, y: shelfRect(1).midY)),
-        MartStep(kind: .capacity, cost: 1200, pos: CGPoint(x: 5.2, y: 9.9)),
+        MartStep(kind: .capacity, cost: 1200, pos: CGPoint(x: 7.6, y: 12.6)),
         MartStep(kind: .shelf(2), cost: 2100, pos: CGPoint(x: shelfRect(2).midX, y: shelfRect(2).midY)),
-        MartStep(kind: .cashier, cost: 3000, pos: CGPoint(x: 13.65, y: 2.0)),
+        MartStep(kind: .cashier, cost: 3000, pos: CGPoint(x: 21.15, y: 2.4)),
         MartStep(kind: .shelf(3), cost: 4500, pos: CGPoint(x: shelfRect(3).midX, y: shelfRect(3).midY)),
-        MartStep(kind: .speed, cost: 4200, pos: CGPoint(x: 7.0, y: 9.9)),
-        MartStep(kind: .stocker, cost: 6600, pos: CGPoint(x: 2.4, y: 9.9)),
+        MartStep(kind: .speed, cost: 4200, pos: CGPoint(x: 10.8, y: 12.6)),
+        MartStep(kind: .stocker, cost: 6600, pos: CGPoint(x: 4.4, y: 12.6)),
         MartStep(kind: .shelf(4), cost: 7800, pos: CGPoint(x: shelfRect(4).midX, y: shelfRect(4).midY)),
-        MartStep(kind: .customers, cost: 6000, pos: CGPoint(x: 8.8, y: 9.9)),
-        MartStep(kind: .capacity, cost: 9600, pos: CGPoint(x: 5.2, y: 9.9)),
+        MartStep(kind: .customers, cost: 6000, pos: CGPoint(x: 14.0, y: 12.6)),
+        MartStep(kind: .capacity, cost: 9600, pos: CGPoint(x: 7.6, y: 12.6)),
         MartStep(kind: .shelf(5), cost: 12600, pos: CGPoint(x: shelfRect(5).midX, y: shelfRect(5).midY)),
-        MartStep(kind: .stocker, cost: 15000, pos: CGPoint(x: 2.4, y: 9.9)),
-        MartStep(kind: .customers, cost: 13500, pos: CGPoint(x: 8.8, y: 9.9)),
-        MartStep(kind: .speed, cost: 18000, pos: CGPoint(x: 7.0, y: 9.9)),
+        MartStep(kind: .stocker, cost: 15000, pos: CGPoint(x: 4.4, y: 12.6)),
+        MartStep(kind: .customers, cost: 13500, pos: CGPoint(x: 14.0, y: 12.6)),
+        MartStep(kind: .speed, cost: 18000, pos: CGPoint(x: 10.8, y: 12.6)),
     ]
 
     let role: Role
@@ -263,7 +267,7 @@ final class MartGame: ObservableObject {
     /// いまのクエストを始めたときの数
     @Published private(set) var questBase = 0
 
-    private(set) var players: [MartWalker] = [MartWalker(pos: CGPoint(x: 6.5, y: 9.0))]
+    private(set) var players: [MartWalker] = [MartWalker(pos: CGPoint(x: 9.0, y: 13.5))]
     private(set) var customers: [MartCustomer] = []
     private(set) var helpers: [MartHelper] = []
     private(set) var stock: [Int] = Array(repeating: 0, count: MartProduct.allCases.count)
@@ -274,7 +278,7 @@ final class MartGame: ObservableObject {
     private(set) var cash = 0
     private(set) var hasCashier = false
     private(set) var capacity = 4
-    private(set) var speed: CGFloat = 3.2
+    private(set) var speed: CGFloat = 4.3
     private(set) var maxCustomers = 3
     /// 会計の進み具合（0〜1）
     private(set) var serving: Double = 0
@@ -296,7 +300,7 @@ final class MartGame: ObservableObject {
         self.role = role
         if role != .guest { load() }
         if role == .guest {
-            players.append(MartWalker(pos: CGPoint(x: 7.5, y: 9.4)))
+            players.append(MartWalker(pos: CGPoint(x: 10.0, y: 13.9)))
         }
     }
 
@@ -337,7 +341,7 @@ final class MartGame: ObservableObject {
     /// ゲストが来た（ホスト）
     func addGuest() {
         guard players.count < 2 else { return }
-        players.append(MartWalker(pos: CGPoint(x: 7.5, y: 9.4)))
+        players.append(MartWalker(pos: CGPoint(x: 10.0, y: 13.9)))
         banner = "🤝 友だちが来ました"
     }
 
@@ -365,7 +369,7 @@ final class MartGame: ObservableObject {
     func apply(_ snapshot: MartSnapshot) {
         let mine = players.indices.contains(me) ? players[me] : nil
         players = snapshot.players
-        while players.count < 2 { players.append(MartWalker(pos: CGPoint(x: 7.5, y: 9.4))) }
+        while players.count < 2 { players.append(MartWalker(pos: CGPoint(x: 10.0, y: 13.9))) }
         if let mine {
             players[me].pos = mine.pos
             players[me].heading = mine.heading
@@ -474,7 +478,7 @@ final class MartGame: ObservableObject {
         walls += unlocked.map { Self.shelfRect($0) }
         for k in unlocked {
             let spot = Self.supplySpot(k)
-            walls.append(CGRect(x: spot.x - 0.75, y: spot.y - 0.35, width: 0.4, height: 0.7))
+            walls.append(CGRect(x: spot.x - 1.1, y: spot.y - 0.5, width: 0.75, height: 1.0))
         }
         return walls.contains { $0.insetBy(dx: -r, dy: -r).contains(point) }
     }
@@ -488,7 +492,7 @@ final class MartGame: ObservableObject {
         dropTimers[index] -= dt
         let pos = players[index].pos
         // 倉庫の台：そばにいる間、運べる数まで受け取る
-        for product in unlockedProducts where distance(pos, Self.supplySpot(product.rawValue)) < 0.8 {
+        for product in unlockedProducts where distance(pos, Self.supplySpot(product.rawValue)) < 1.15 {
             if players[index].carry.count < capacity, pickTimers[index] <= 0 {
                 players[index].carry.append(product)
                 pickTimers[index] = 0.1
@@ -497,7 +501,7 @@ final class MartGame: ObservableObject {
         }
         // 棚のそば：その棚の商品を並べる
         for product in unlockedProducts {
-            let zone = Self.shelfRect(product.rawValue).insetBy(dx: -0.75, dy: -0.75)
+            let zone = Self.shelfRect(product.rawValue).insetBy(dx: -1.0, dy: -1.0)
             guard zone.contains(pos), dropTimers[index] <= 0, stock[product.rawValue] < Self.shelfCapacity,
                   let at = players[index].carry.lastIndex(of: product) else { continue }
             players[index].carry.remove(at: at)
@@ -509,7 +513,7 @@ final class MartGame: ObservableObject {
     }
 
     private func handleRegister(_ dt: Double) {
-        let staffed = hasCashier || players.contains { distance($0.pos, Self.cashierSpot) < 0.7 }
+        let staffed = hasCashier || players.contains { distance($0.pos, Self.cashierSpot) < 1.0 }
         guard staffed, let first = queue.first, let index = customers.firstIndex(where: { $0.id == first }),
               customers[index].phase == .queued, distance(customers[index].walker.pos, Self.serveSpot) < 0.15 else {
             serving = 0
@@ -524,13 +528,13 @@ final class MartGame: ObservableObject {
         stats.earned += customer.got * customer.product.price
         queue.removeFirst()
         customers[index].phase = .leaving
-        customers[index].path = [CGPoint(x: Self.serveSpot.x, y: 10), Self.door, Self.outside]
+        customers[index].path = [CGPoint(x: Self.serveSpot.x, y: Self.door.y), Self.door, Self.outside]
         GameAudio.shared.play(.tap)
     }
 
     private func handleCash(_ dt: Double) {
         cashTimer -= dt
-        guard cash > 0, players.contains(where: { distance($0.pos, Self.cashSpot) < 1.0 }), cashTimer <= 0 else { return }
+        guard cash > 0, players.contains(where: { distance($0.pos, Self.cashSpot) < 1.4 }), cashTimer <= 0 else { return }
         let take = max(1, min(cash, 60 + cash / 7))
         cash -= take
         money += take
@@ -548,7 +552,7 @@ final class MartGame: ObservableObject {
     }
 
     private func handlePads(_ dt: Double) {
-        for (index, step) in visibleSteps where players.contains(where: { distance($0.pos, step.pos) < 0.8 }) && money > 0 {
+        for (index, step) in visibleSteps where players.contains(where: { distance($0.pos, step.pos) < 1.0 }) && money > 0 {
             let rate = max(Double(step.cost) / 1.2, 900)
             payCarry += rate * dt
             let amount = min(Int(payCarry), money, step.cost - paidAmount(index))
@@ -585,7 +589,7 @@ final class MartGame: ObservableObject {
         unlocked = [0]
         hasCashier = false
         capacity = 4
-        speed = 3.2
+        speed = 4.3
         maxCustomers = 3
         var stockers = 0
         for index in done.sorted() where Self.steps.indices.contains(index) {
@@ -594,12 +598,12 @@ final class MartGame: ObservableObject {
             case .cashier: hasCashier = true
             case .stocker: stockers += 1
             case .capacity: capacity += 2
-            case .speed: speed += 0.7
+            case .speed: speed += 0.9
             case .customers: maxCustomers += 2
             }
         }
         if role != .guest {
-            while helpers.count < stockers { helpers.append(MartHelper(walker: MartWalker(pos: CGPoint(x: 1.8, y: 9.5)))) }
+            while helpers.count < stockers { helpers.append(MartHelper(walker: MartWalker(pos: CGPoint(x: 2.9, y: 13.5)))) }
         }
         level = done.count
     }
@@ -621,14 +625,14 @@ final class MartGame: ObservableObject {
         let want = Int.random(in: 1...min(4, 1 + level / 3))
         var customer = MartCustomer(walker: MartWalker(pos: Self.outside), product: product, want: want,
                                     shirt: Int.random(in: 0..<8))
-        customer.path = [Self.door, CGPoint(x: 11.0, y: 10), CGPoint(x: 11.0, y: front.y), front]
+        customer.path = [Self.door, CGPoint(x: Self.aisleX, y: Self.door.y), CGPoint(x: Self.aisleX, y: front.y), front]
         customers.append(customer)
     }
 
     private func updateCustomer(_ customer: inout MartCustomer, _ dt: Double) {
         switch customer.phase {
         case .toShelf:
-            if follow(&customer.walker, path: &customer.path, speed: 2.0, dt: dt) {
+            if follow(&customer.walker, path: &customer.path, speed: 2.7, dt: dt) {
                 customer.phase = .shopping
                 // 棚のほうを向く
                 customer.walker.heading = -.pi / 2
@@ -650,7 +654,7 @@ final class MartGame: ObservableObject {
                     customer.angry = true
                     customer.phase = .leaving
                     let front = Self.shelfFront(k)
-                    customer.path = [CGPoint(x: 11.0, y: front.y), CGPoint(x: 11.0, y: 10), Self.door, Self.outside]
+                    customer.path = [CGPoint(x: Self.aisleX, y: front.y), CGPoint(x: Self.aisleX, y: Self.door.y), Self.door, Self.outside]
                     return
                 }
             }
@@ -658,10 +662,10 @@ final class MartGame: ObservableObject {
                 queue.append(customer.id)
                 customer.phase = .toQueue
                 let front = Self.shelfFront(k)
-                customer.path = [CGPoint(x: 11.0, y: front.y)]
+                customer.path = [CGPoint(x: Self.aisleX, y: front.y)]
             }
         case .toQueue:
-            if follow(&customer.walker, path: &customer.path, speed: 2.0, dt: dt) {
+            if follow(&customer.walker, path: &customer.path, speed: 2.7, dt: dt) {
                 customer.phase = .queued
                 customer.waited = 0
             }
@@ -674,19 +678,19 @@ final class MartGame: ObservableObject {
                 customer.got = 0
                 customer.angry = true
                 customer.phase = .leaving
-                customer.path = [CGPoint(x: Self.serveSpot.x - 0.6, y: customer.walker.pos.y), CGPoint(x: Self.serveSpot.x - 0.6, y: 10),
+                customer.path = [CGPoint(x: Self.serveSpot.x - 0.6, y: customer.walker.pos.y), CGPoint(x: Self.serveSpot.x - 0.6, y: Self.door.y),
                                  Self.door, Self.outside]
                 return
             }
             let index = queue.firstIndex(of: customer.id) ?? 0
             var target = Self.serveSpot
-            target.y += 0.75 * CGFloat(index)
+            target.y += 0.85 * CGFloat(index)
             var path = [target]
-            if follow(&customer.walker, path: &path, speed: 2.0, dt: dt) {
+            if follow(&customer.walker, path: &path, speed: 2.7, dt: dt) {
                 customer.walker.heading = 0
             }
         case .leaving:
-            _ = follow(&customer.walker, path: &customer.path, speed: 2.4, dt: dt)
+            _ = follow(&customer.walker, path: &customer.path, speed: 3.1, dt: dt)
         }
     }
 
@@ -723,10 +727,10 @@ final class MartGame: ObservableObject {
             guard let product = candidates.min(by: { stock[$0.rawValue] < stock[$1.rawValue] }) else { return }
             helper.target = product
             let supply = Self.supplySpot(product.rawValue)
-            helper.path = [CGPoint(x: 1.85, y: helper.walker.pos.y), CGPoint(x: 1.85, y: supply.y)]
+            helper.path = [CGPoint(x: Self.helperX, y: helper.walker.pos.y), CGPoint(x: Self.helperX, y: supply.y)]
             helper.phase = .toSupply
         case .toSupply:
-            if follow(&helper.walker, path: &helper.path, speed: 2.4, dt: dt) { helper.phase = .loading }
+            if follow(&helper.walker, path: &helper.path, speed: 3.1, dt: dt) { helper.phase = .loading }
         case .loading:
             helper.timer -= dt
             if helper.timer <= 0 {
@@ -735,11 +739,11 @@ final class MartGame: ObservableObject {
             }
             if helper.walker.carry.count >= 5 {
                 let front = Self.shelfFront(helper.target.rawValue)
-                helper.path = [CGPoint(x: 1.85, y: front.y), front]
+                helper.path = [CGPoint(x: Self.helperX, y: front.y), front]
                 helper.phase = .toShelf
             }
         case .toShelf:
-            if follow(&helper.walker, path: &helper.path, speed: 2.4, dt: dt) { helper.phase = .unloading }
+            if follow(&helper.walker, path: &helper.path, speed: 3.1, dt: dt) { helper.phase = .unloading }
         case .unloading:
             helper.timer -= dt
             let k = helper.target.rawValue
@@ -826,7 +830,7 @@ final class MartGame: ObservableObject {
         customers = []
         queue = []
         for index in players.indices {
-            players[index].pos = CGPoint(x: 6.5 + CGFloat(index), y: 9.0)
+            players[index].pos = CGPoint(x: 9.0 + CGFloat(index), y: 13.5)
             players[index].carry = []
         }
         rebuildUnlocks()

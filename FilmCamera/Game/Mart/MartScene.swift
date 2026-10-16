@@ -10,7 +10,7 @@ final class MartScene {
     let cameraNode = SCNNode()
     private let sun = SCNNode()
     private let world = SCNNode()
-    private var target = SCNVector3(6.5, 0, 9)
+    private var target = SCNVector3(9, 0, 13.5)
 
     private var shelfNodes: [Int: SCNNode] = [:]
     private var shelfItems: [Int: [SCNNode]] = [:]
@@ -336,12 +336,12 @@ final class MartScene {
         let ground = SCNNode(geometry: SCNPlane(width: 80, height: 80))
         ground.geometry?.materials = [Self.material(UIColor(red: 0.7, green: 0.83, blue: 0.62, alpha: 1))]
         ground.eulerAngles.x = -.pi / 2
-        ground.position = SCNVector3(7, -0.21, 6)
+        ground.position = SCNVector3(11, -0.21, 8)
         world.addChildNode(ground)
-        world.addChildNode(Self.at(Self.box(4, 0.1, 40, UIColor(red: 0.82, green: 0.82, blue: 0.8, alpha: 1), chamfer: 0), 16.8, -0.17, 6))
-        world.addChildNode(Self.at(Self.box(5, 0.08, 40, UIColor(red: 0.45, green: 0.47, blue: 0.52, alpha: 1), chamfer: 0), 21.3, -0.18, 6))
-        for k in 0..<8 {
-            world.addChildNode(Self.at(Self.box(0.15, 0.02, 1.2, .white, chamfer: 0), 21.3, -0.13, -6 + CGFloat(k) * 4))
+        world.addChildNode(Self.at(Self.box(4, 0.1, 40, UIColor(red: 0.82, green: 0.82, blue: 0.8, alpha: 1), chamfer: 0), 24.3, -0.17, 8))
+        world.addChildNode(Self.at(Self.box(5, 0.08, 40, UIColor(red: 0.45, green: 0.47, blue: 0.52, alpha: 1), chamfer: 0), 28.8, -0.18, 8))
+        for k in 0..<10 {
+            world.addChildNode(Self.at(Self.box(0.15, 0.02, 1.2, .white, chamfer: 0), 28.8, -0.13, -8 + CGFloat(k) * 4))
         }
 
         // 床（市松模様）
@@ -381,29 +381,29 @@ final class MartScene {
         world.addChildNode(Self.at(Self.box(floor.width + 0.4, 0.2, 0.4, trim, chamfer: 0.03), floor.midX - 0.15, 2.6, -0.15))
         world.addChildNode(Self.at(Self.box(0.4, 0.2, floor.height + 0.3, trim, chamfer: 0.03), -0.15, 2.6, floor.midY - 0.15))
         world.addChildNode(Self.at(Self.box(floor.width - 0.3, 0.3, 0.15, trim), floor.midX - 0.15, 0.15, floor.maxY + 0.07))
-        world.addChildNode(Self.at(Self.box(0.15, 0.3, 8.6, trim), floor.maxX + 0.07, 0.15, 4.3))
+        world.addChildNode(Self.at(Self.box(0.15, 0.3, 13.2, trim), floor.maxX + 0.07, 0.15, 6.6))
         // 看板
         let sign = Self.decalStanding(Self.label("MACHIKADO MART", size: 80, color: UIColor(red: 0.3, green: 0.33, blue: 0.38, alpha: 1)),
-                                      width: 6)
-        sign.position = SCNVector3(7.5, 1.75, 0.02)
+                                      width: 8)
+        sign.position = SCNVector3(Float(floor.midX), 1.75, 0.02)
         world.addChildNode(sign)
         // 倉庫の扉（左の壁）
         let shutter = Self.box(0.08, 1.9, 2.4, UIColor(red: 0.45, green: 0.5, blue: 0.56, alpha: 1), chamfer: 0.01)
-        shutter.position = SCNVector3(0.02, 0.95, 5.5)
+        shutter.position = SCNVector3(0.02, 0.95, 15.0)
         world.addChildNode(shutter)
         for k in 1..<7 {
             world.addChildNode(Self.at(Self.box(0.1, 0.03, 2.3, UIColor(red: 0.6, green: 0.65, blue: 0.7, alpha: 1), chamfer: 0),
-                                       0.04, CGFloat(k) * 0.27, 5.5))
+                                       0.04, CGFloat(k) * 0.27, 15.0))
         }
         // 入口の自動ドア
         let frame = UIColor(white: 0.35, alpha: 1)
-        world.addChildNode(Self.at(Self.box(0.25, 2.2, 0.25, frame), floor.maxX + 0.05, 1.1, 8.65))
-        world.addChildNode(Self.at(Self.box(0.25, 0.3, 2.6, frame), floor.maxX + 0.05, 2.2, 9.95))
+        world.addChildNode(Self.at(Self.box(0.25, 2.2, 0.25, frame), floor.maxX + 0.05, 1.1, Float(MartGame.door.y) - 1.3))
+        world.addChildNode(Self.at(Self.box(0.25, 0.3, 2.6, frame), floor.maxX + 0.05, 2.2, Float(MartGame.door.y)))
         world.addChildNode(Self.at(Self.box(0.25, 2.2, 0.25, frame), floor.maxX + 0.05, 1.1, 11.25))
         let glass = UIColor(red: 0.7, green: 0.9, blue: 1, alpha: 0.4)
-        for z in [9.3, 10.6] as [CGFloat] {
+        for z in [MartGame.door.y - 0.65, MartGame.door.y + 0.65] {
             let panel = Self.box(0.08, 2.0, 1.25, glass, chamfer: 0.01)
-            panel.addChildNode(Self.at(Self.box(0.1, 2.0, 0.06, UIColor(white: 0.4, alpha: 1), chamfer: 0), 0, 0, z < 10 ? -0.6 : 0.6))
+            panel.addChildNode(Self.at(Self.box(0.1, 2.0, 0.06, UIColor(white: 0.4, alpha: 1), chamfer: 0), 0, 0, z < MartGame.door.y ? -0.6 : 0.6))
             panel.position = SCNVector3(Float(floor.maxX + 0.05), 1.0, Float(z))
             world.addChildNode(panel)
             doorPanels.append((panel, Float(z)))
@@ -423,7 +423,7 @@ final class MartScene {
         counterNode.position = SCNVector3(Float(counter.midX), 0, Float(counter.midY))
         world.addChildNode(counterNode)
         // レジの立つ場所
-        let spot = Self.decal(Self.spotImage(), width: 1.1, length: 1.1)
+        let spot = Self.decal(Self.spotImage(), width: 1.5, length: 1.5)
         spot.position = SCNVector3(Float(MartGame.cashierSpot.x), 0.015, Float(MartGame.cashierSpot.y))
         world.addChildNode(spot)
         // お金の置き場（マット）
@@ -432,7 +432,7 @@ final class MartScene {
         buildDecorations()
         // 外のトラックと木
         buildTruck()
-        for (x, z, r) in [(17.2, 13.5, 0.7), (19.0, 1.0, 0.6), (15.8, -1.5, 0.8), (3, 13.2, 0.6), (8, 13.6, 0.7), (12.5, 13.2, 0.55)]
+        for (x, z, r) in [(25.0, 18.6, 0.7), (26.3, 1.0, 0.6), (23.4, -1.5, 0.8), (3, 18.2, 0.6), (9, 18.6, 0.7), (15, 18.2, 0.55), (20.5, 18.5, 0.65)]
             as [(CGFloat, CGFloat, CGFloat)] {
             let tree = SCNNode()
             tree.addChildNode(Self.at(Self.cylinder(0.12, 0.6, UIColor(red: 0.55, green: 0.38, blue: 0.25, alpha: 1)), 0, 0.3, 0))
@@ -596,7 +596,7 @@ final class MartScene {
         // 奥の壁の窓（看板の両側）
         let glass = UIColor(red: 0.72, green: 0.9, blue: 1, alpha: 1)
         let frame = UIColor(white: 0.98, alpha: 1)
-        for x in [1.8, 12.8] as [CGFloat] {
+        for x in [4.0, 18.0] as [CGFloat] {
             world.addChildNode(Self.at(Self.box(2.0, 1.2, 0.06, frame, chamfer: 0.02), x, 1.5, 0.02))
             world.addChildNode(Self.at(Self.box(1.8, 1.0, 0.07, glass, chamfer: 0), x, 1.5, 0.03))
             world.addChildNode(Self.at(Self.box(0.06, 1.0, 0.08, frame, chamfer: 0), x, 1.5, 0.04))
@@ -607,7 +607,7 @@ final class MartScene {
         // 左の壁のポスターと時計
         let posterColors: [UIColor] = [UIColor(red: 1, green: 0.8, blue: 0.3, alpha: 1), UIColor(red: 0.5, green: 0.8, blue: 1, alpha: 1),
                                        UIColor(red: 1, green: 0.55, blue: 0.6, alpha: 1)]
-        for (index, z) in ([1.3, 8.4, 9.9] as [CGFloat]).enumerated() {
+        for (index, z) in ([0.9, 13.5, 14.9] as [CGFloat]).enumerated() {
             let poster = Self.box(0.04, 0.9, 0.7, posterColors[index], chamfer: 0.01)
             poster.addChildNode(Self.at(Self.box(0.05, 0.3, 0.5, .white, chamfer: 0.01), 0, 0.15, 0))
             poster.addChildNode(Self.at(Self.box(0.05, 0.08, 0.5, UIColor(white: 1, alpha: 0.7), chamfer: 0), 0, -0.2, 0))
@@ -618,9 +618,9 @@ final class MartScene {
         clock.addChildNode(Self.at(Self.cylinder(0.28, 0.06, UIColor(red: 0.95, green: 0.97, blue: 1, alpha: 1)), 0, 0.005, 0))
         clock.addChildNode(Self.at(Self.box(0.03, 0.07, 0.2, UIColor(white: 0.2, alpha: 1), chamfer: 0), 0, 0.04, -0.08))
         clock.addChildNode(Self.at(Self.box(0.15, 0.07, 0.03, UIColor(white: 0.2, alpha: 1), chamfer: 0), 0.06, 0.04, 0))
-        world.addChildNode(Self.at(clock, 10.3, 2.1, 0.05))
+        world.addChildNode(Self.at(clock, 14.5, 2.1, 0.05))
         // 観葉植物（すみ）
-        for (x, z) in [(0.55, 0.55), (14.0, 0.55), (0.55, 10.5)] as [(CGFloat, CGFloat)] {
+        for (x, z) in [(0.6, 0.6), (21.4, 0.6), (21.4, 11.6)] as [(CGFloat, CGFloat)] {
             let plant = SCNNode()
             plant.addChildNode(Self.at(SCNNode(geometry: {
                 let pot = SCNCone(topRadius: 0.24, bottomRadius: 0.17, height: 0.4)
@@ -637,11 +637,11 @@ final class MartScene {
         let mat = Self.decal(Self.label("WELCOME", size: 50, color: .white,
                                          background: UIColor(red: 0.85, green: 0.3, blue: 0.3, alpha: 1)), width: 1.0, length: 2.2)
         mat.eulerAngles.y = .pi / 2
-        mat.position = SCNVector3(Float(floor.maxX - 0.7), 0.012, 10.0)
+        mat.position = SCNVector3(Float(floor.maxX - 0.7), 0.012, Float(MartGame.door.y))
         world.addChildNode(mat)
         // 外：花だん（手前）
-        for k in 0..<7 {
-            let x = 1.0 + CGFloat(k) * 1.9
+        for k in 0..<11 {
+            let x = 1.0 + CGFloat(k) * 1.95
             world.addChildNode(Self.at(Self.box(1.5, 0.25, 0.5, UIColor(red: 0.75, green: 0.55, blue: 0.4, alpha: 1)), x, -0.08, floor.maxY + 0.6))
             for f in 0..<4 {
                 let colors: [UIColor] = [.systemPink, .systemYellow, .white, .systemOrange]
@@ -652,11 +652,11 @@ final class MartScene {
                                        x, 0.06, floor.maxY + 0.6))
         }
         // 外：街灯とベンチと駐車場の線
-        for z in [0.5, 7.5] as [CGFloat] {
+        for z in [1.0, 9.0] as [CGFloat] {
             let lamp = SCNNode()
             lamp.addChildNode(Self.at(Self.cylinder(0.06, 2.6, UIColor(white: 0.3, alpha: 1)), 0, 1.3, 0))
             lamp.addChildNode(Self.at(Self.sphere(0.2, UIColor(red: 1, green: 0.95, blue: 0.75, alpha: 1)), 0, 2.7, 0))
-            world.addChildNode(Self.at(lamp, 15.2, -0.15, z))
+            world.addChildNode(Self.at(lamp, floor.maxX + 0.7, -0.15, z))
         }
         let bench = SCNNode()
         bench.addChildNode(Self.at(Self.box(0.5, 0.08, 1.5, UIColor(red: 0.7, green: 0.48, blue: 0.3, alpha: 1)), 0, 0.45, 0))
@@ -664,9 +664,9 @@ final class MartScene {
         for dz in [-0.6, 0.6] as [CGFloat] {
             bench.addChildNode(Self.at(Self.box(0.45, 0.45, 0.08, UIColor(white: 0.3, alpha: 1)), 0, 0.22, dz))
         }
-        world.addChildNode(Self.at(bench, 15.4, -0.15, 12.2))
+        world.addChildNode(Self.at(bench, floor.maxX + 0.9, -0.15, 17.0))
         for k in 0..<5 {
-            world.addChildNode(Self.at(Self.box(2.4, 0.02, 0.1, .white, chamfer: 0), 20.2, -0.12, -2 + CGFloat(k) * 2.6))
+            world.addChildNode(Self.at(Self.box(2.4, 0.02, 0.1, .white, chamfer: 0), 27.0, -0.12, -2 + CGFloat(k) * 2.6))
         }
     }
 
@@ -704,12 +704,12 @@ final class MartScene {
             wheel.eulerAngles.z = .pi / 2
             truck.addChildNode(Self.at(wheel, x, 0.32, z))
         }
-        truck.position = SCNVector3(17.2, -0.15, -16)
+        truck.position = SCNVector3(25.6, -0.15, -18)
         world.addChildNode(truck)
         // 商品を届けに来て、また走っていく
-        let arrive = SCNAction.move(to: SCNVector3(17.2, -0.15, 4.5), duration: 3.2)
+        let arrive = SCNAction.move(to: SCNVector3(25.6, -0.15, 6.5), duration: 3.2)
         arrive.timingMode = .easeOut
-        let leave = SCNAction.move(to: SCNVector3(17.2, -0.15, 26), duration: 3.0)
+        let leave = SCNAction.move(to: SCNVector3(25.6, -0.15, 34), duration: 3.0)
         leave.timingMode = .easeIn
         truck.runAction(.repeatForever(.sequence([
             arrive,
@@ -717,7 +717,7 @@ final class MartScene {
             .wait(duration: 9),
             leave,
             .wait(duration: 8),
-            .move(to: SCNVector3(17.2, -0.15, -16), duration: 0),
+            .move(to: SCNVector3(25.6, -0.15, -18), duration: 0),
         ])))
     }
 
@@ -747,7 +747,7 @@ final class MartScene {
             let tier: CGFloat = index < 4 ? 0.12 : 0.53
             let column = CGFloat(index % 4)
             let item = Self.productModel(product)
-            item.position = SCNVector3(Float(-rect.width / 2 + 0.25 + column * 0.37), Float(tier), 0.08)
+            item.position = SCNVector3(Float(-rect.width / 2 + 0.3 + column * (rect.width - 0.6) / 3), Float(tier), 0.1)
             item.isHidden = true
             node.addChildNode(item)
             items.append(item)
@@ -815,13 +815,13 @@ final class MartScene {
             }
         }
         // 床の受け取る場所
-        let zone = Self.decal(Self.zoneImage(product), width: 1.5, length: 1.5)
-        zone.position = SCNVector3(0.55, 0.015, 0)
+        let zone = Self.decal(Self.zoneImage(product), width: 1.7, length: 1.7)
+        zone.position = SCNVector3(0.75, 0.015, 0)
         node.addChildNode(zone)
         let sign = Self.billboard(Self.label(product.label, size: 40, color: .white, background: product.accent), width: 0.95)
         sign.position = SCNVector3(0, 1.75, 0)
         node.addChildNode(sign)
-        node.position = SCNVector3(Float(spot.x - 0.35), 0, Float(spot.y))
+        node.position = SCNVector3(Float(spot.x - 0.75), 0, Float(spot.y))
         return node
     }
 
@@ -871,7 +871,7 @@ final class MartScene {
         }
         // 棚の商品：増えたら店員の手から飛んでいき、減ったらお客さんの手へ飛ぶ
         var staffHands: [SCNVector3] = playerNodes.map(\.handPosition) + helperNodes.map(\.handPosition)
-        if staffHands.isEmpty { staffHands = [SCNVector3(6.5, 1, 9)] }
+        if staffHands.isEmpty { staffHands = [SCNVector3(9, 1, 13.5)] }
         for (k, items) in shelfItems {
             let stock = game.stock.indices.contains(k) ? game.stock[k] : 0
             guard let product = MartProduct(rawValue: k) else { continue }
@@ -983,7 +983,7 @@ final class MartScene {
         let near = (game.players.map(\.pos) + game.customers.map(\.walker.pos)).contains { hypot($0.x - door.x - 0.4, $0.y - door.y) < 1.9 }
         doorOpen += ((near ? 1 : 0) - doorOpen) * Float(min(1, dt * 8))
         for (panel, z) in doorPanels {
-            panel.position.z = z + (z < 10 ? -1 : 1) * doorOpen * 1.05
+            panel.position.z = z + (z < Float(MartGame.door.y) ? -1 : 1) * doorOpen * 1.05
         }
         if game.hasCashier, cashierNode == nil {
             let node = CharacterNode(style: .helper)
@@ -1156,7 +1156,7 @@ final class MartScene {
             }
             let product = carry[index]
             let spot = MartGame.supplySpot(product.rawValue)
-            let from = SCNVector3(Float(spot.x - 0.35), 0.9, Float(spot.y))
+            let from = SCNVector3(Float(spot.x - 0.75), 0.9, Float(spot.y))
             flyClone(Self.productModel(product), from: from, to: pack.worldPosition, duration: 0.2) {
                 pack.isHidden = false
                 pack.scale = SCNVector3(1.2, 0.8, 1.2)
@@ -1503,7 +1503,7 @@ final class PadNode {
             size = CGSize(width: rect.width + 0.5, height: rect.height + 0.9)
             root.position = SCNVector3(Float(rect.midX), 0.02, Float(rect.midY + 0.2))
         } else {
-            size = CGSize(width: 1.6, height: 1.6)
+            size = CGSize(width: 2.0, height: 2.0)
             root.position = SCNVector3(Float(step.pos.x), 0.02, Float(step.pos.y))
         }
         let fillPlane = SCNPlane(width: size.width - 0.12, height: size.height - 0.12)
