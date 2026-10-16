@@ -6,11 +6,12 @@ struct RootView: View {
     @ObservedObject private var album = AlbumStore.shared
     @StateObject private var camera = CameraModel()
     @State private var showingCamera = false
+    @State private var showingGames = false
     @State private var showingSplash = true
 
     var body: some View {
         ZStack {
-            AlbumView(store: album, onOpenCamera: { showingCamera = true })
+            AlbumView(store: album, onOpenCamera: { showingCamera = true }, onOpenGames: { showingGames = true })
             if showingSplash {
                 SplashView {
                     withAnimation(.easeOut(duration: 0.4)) { showingSplash = false }
@@ -20,6 +21,9 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(.light)
+        .fullScreenCover(isPresented: $showingGames) {
+            GameHubView(initialImage: camera.lastPhoto)
+        }
         .fullScreenCover(isPresented: $showingCamera) {
             ContentView(camera: camera)
                 .preferredColorScheme(.dark)

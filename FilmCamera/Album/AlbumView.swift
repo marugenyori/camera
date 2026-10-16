@@ -19,6 +19,8 @@ struct AlbumView: View {
     @ObservedObject var store: AlbumStore
     /// アプリの最初の画面として使うとき、カメラを開く（右下の大きなボタン）
     var onOpenCamera: (() -> Void)? = nil
+    /// ゲームの一覧を開く（メイン画面のときだけ）
+    var onOpenGames: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var viewing: ViewerStart?
     @State private var showingNewAlbum = false
@@ -682,7 +684,13 @@ struct AlbumView: View {
             if selecting {
                 selectionBar
             } else if let onOpenCamera {
-                cameraButton(onOpenCamera)
+                ZStack {
+                    cameraButton(onOpenCamera)
+                    if let onOpenGames {
+                        gamesButton(onOpenGames)
+                            .offset(x: -96)
+                    }
+                }
             }
         }
         .padding(.bottom, 8)
@@ -706,6 +714,23 @@ struct AlbumView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("カメラで撮る")
+    }
+
+    /// ゲームの一覧を開く小さなボタン（カメラのボタンの左）
+    private func gamesButton(_ open: @escaping () -> Void) -> some View {
+        Button(action: open) {
+            ZStack {
+                Circle()
+                    .fill(Deck.key)
+                    .shadow(color: .black.opacity(0.25), radius: 0, x: 0, y: 3)
+                Image(systemName: "gamecontroller.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Deck.orange)
+            }
+            .frame(width: 54, height: 54)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("ゲームで遊ぶ")
     }
 
     private var selectionBar: some View {
