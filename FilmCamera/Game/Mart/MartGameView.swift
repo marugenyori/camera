@@ -9,62 +9,49 @@ struct MartGameView: View {
 
     var body: some View {
         ZStack {
-            HalftoneBackground()
+            LinearGradient(colors: [Color(red: 1, green: 0.85, blue: 0.4), Color(red: 1, green: 0.6, blue: 0.3)],
+                           startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
             VStack(spacing: 18) {
                 Spacer()
                 Image(systemName: "cart.fill")
-                    .font(.system(size: 52, weight: .black))
-                    .foregroundStyle(GameStyle.ink)
-                    .frame(width: 96, height: 96)
-                    .background(BurstShape().fill(.white))
-                    .rotationEffect(.degrees(-8))
-                RansomText(text: "まちかどマート", size: 30)
-                    .rotationEffect(.degrees(-4))
-                Text("運んで、並べて、お会計。\nお金をためてお店を大きくしよう！")
-                    .font(GameStyle.font(15, weight: .heavy))
+                    .font(.system(size: 64))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.2), radius: 4, y: 3)
+                Text("まちかどマート")
+                    .font(.system(size: 40, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.25), radius: 3, y: 3)
+                Text("商品を運んで、棚に並べて、レジでお会計。\nお金をためてお店を大きくしよう！")
+                    .font(.callout.weight(.semibold))
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(GameStyle.ink)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(SlantShape(skew: 10).fill(.white))
-                    .rotationEffect(.degrees(2))
+                    .foregroundStyle(.white.opacity(0.95))
                 Spacer()
-                bigButton("ひとりで遊ぶ", symbol: "person.fill", accent: GameStyle.red) {
+                bigButton("ひとりで遊ぶ", symbol: "person.fill", color: Color(red: 0.25, green: 0.7, blue: 0.35)) {
                     session = MartSession(role: .solo, name: name)
                 }
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     Text("2 人で遊ぶ（近くの iPhone と直接つなぐ）")
-                        .font(GameStyle.font(12, weight: .heavy))
+                        .font(.footnote.weight(.bold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                        .background(SlantShape(skew: 6).fill(GameStyle.ink))
-                    HStack(spacing: 12) {
-                        bigButton("お店を開く", symbol: "storefront.fill", accent: .white) {
+                    HStack(spacing: 10) {
+                        bigButton("お店を開く", symbol: "storefront.fill", color: Color(red: 0.2, green: 0.5, blue: 0.9)) {
                             session = MartSession(role: .host, name: name)
                         }
-                        bigButton("友だちの\nお店へ行く", symbol: "figure.walk", accent: .white) {
+                        bigButton("友だちの\nお店へ行く", symbol: "figure.walk", color: Color(red: 0.9, green: 0.35, blue: 0.35)) {
                             session = MartSession(role: .guest, name: name)
                         }
                     }
                     Text("1 人が「お店を開く」、もう 1 人が「友だちのお店へ行く」を押します。お店は開いた人のものになり、お金は 2 人で共通です。")
-                        .font(.caption.weight(.semibold))
+                        .font(.caption)
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.white.opacity(0.9))
                 }
-                Button {
-                    dismiss()
-                } label: {
-                    Text("もどる")
-                        .font(GameStyle.font(16))
-                        .foregroundStyle(GameStyle.ink)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 9)
-                        .slantCard(fill: .white, shadow: GameStyle.ink, border: GameStyle.ink)
-                }
-                .buttonStyle(SlantButtonStyle())
-                .padding(.top, 6)
-                .padding(.bottom, 20)
+                Button("もどる") { dismiss() }
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .padding(.top, 6)
+                    .padding(.bottom, 20)
             }
             .padding(.horizontal, 24)
         }
@@ -73,22 +60,25 @@ struct MartGameView: View {
         }
     }
 
-    private func bigButton(_ title: String, symbol: String, accent: Color, action: @escaping () -> Void) -> some View {
+    private func bigButton(_ title: String, symbol: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: symbol)
-                    .foregroundStyle(accent == .white ? GameStyle.red : .white)
                 Text(title)
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
             }
-            .font(GameStyle.font(18))
+            .font(.headline.weight(.heavy))
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, minHeight: 58)
-            .slantCard(skew: 14, shadow: accent == .white ? .white : GameStyle.red, border: accent == .white ? GameStyle.red : .white)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(color)
+                    .shadow(color: color.opacity(0.6), radius: 0, x: 0, y: 5)
+            )
         }
-        .buttonStyle(SlantButtonStyle())
+        .buttonStyle(.plain)
     }
 }
 
@@ -225,11 +215,12 @@ struct MartPlayView: View {
                         ProgressView().tint(.white)
                         Text(session.status)
                     }
-                    .font(GameStyle.font(13, weight: .heavy))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .slantCard()
+                    .background(.ultraThinMaterial.opacity(0.9), in: Capsule())
+                    .environment(\.colorScheme, .dark)
                 }
                 Spacer()
                 if game.atUpgrade {
@@ -241,28 +232,20 @@ struct MartPlayView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 if let banner = game.banner {
-                    // ギザギザの赤い吹き出しに、白い斜体（黒い影をずらして重ねる）
                     Text(banner)
-                        .font(GameStyle.font(21))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 44)
-                        .padding(.vertical, 30)
-                        .background(
-                            ZStack {
-                                BurstShape(spikes: 20, depth: 0.12).fill(GameStyle.ink).offset(x: 6, y: 6)
-                                BurstShape(spikes: 20, depth: 0.12).fill(GameStyle.red)
-                                BurstShape(spikes: 20, depth: 0.12).stroke(.white, lineWidth: 3)
-                            }
-                        )
-                        .rotationEffect(.degrees(-4))
-                        .transition(.scale(scale: 0.3).combined(with: .opacity))
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.25))
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 12)
+                        .background(.regularMaterial, in: Capsule())
+                        .overlay(Capsule().stroke(.white.opacity(0.7), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                         .task(id: banner) {
                             try? await Task.sleep(for: .seconds(1.8))
                             withAnimation { game.banner = nil }
                         }
-                        .padding(.bottom, 120)
+                        .padding(.bottom, 140)
                         .allowsHitTesting(false)
                 }
             }
@@ -325,75 +308,83 @@ struct MartPlayView: View {
         let progress = game.questProgress
         return HStack(spacing: 10) {
             Image(systemName: quest.symbol)
-                .font(.system(size: 17, weight: .black))
+                .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(width: 38, height: 36)
-                .background(SlantShape(skew: 6).fill(GameStyle.red))
-                .rotationEffect(.degrees(-6))
+                .frame(width: 38, height: 38)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(LinearGradient(colors: [Color(red: 0.36, green: 0.78, blue: 0.62), Color(red: 0.3, green: 0.62, blue: 0.95)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing)))
             VStack(alignment: .leading, spacing: 4) {
                 Text(quest.title)
-                    .font(GameStyle.font(13, weight: .heavy))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Color(red: 0.2, green: 0.22, blue: 0.3))
                     .lineLimit(1)
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        SlantShape(skew: 4).fill(.white.opacity(0.2))
-                        SlantShape(skew: 4).fill(GameStyle.red)
-                            .frame(width: max(geo.size.width * CGFloat(progress) / CGFloat(max(quest.target, 1)), 10))
+                        Capsule().fill(Color(white: 0.88))
+                        Capsule().fill(Color(red: 0.35, green: 0.8, blue: 0.35))
+                            .frame(width: max(geo.size.width * CGFloat(progress) / CGFloat(max(quest.target, 1)), 8))
                     }
                 }
                 .frame(height: 8)
                 Text((quest.kind == .earn ? "\(MartYen.text(progress))/\(MartYen.text(quest.target))" : "\(progress)/\(quest.target)")
                      + "　報酬 \(MartYen.text(quest.reward))")
-                    .font(.system(size: 11, weight: .bold).italic())
-                    .foregroundStyle(.white.opacity(0.75))
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
             }
             if game.questDone {
                 Button {
                     game.claimQuest()
                 } label: {
                     Text("受け取る")
-                        .font(GameStyle.font(14))
-                        .foregroundStyle(GameStyle.ink)
-                        .padding(.horizontal, 14)
+                        .font(.system(size: 14, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
                         .padding(.vertical, 9)
-                        .background(BurstShape(spikes: 12, depth: 0.1).fill(GameStyle.gold))
+                        .background(Capsule().fill(LinearGradient(colors: [Color(red: 0.36, green: 0.78, blue: 0.62),
+                                                                           Color(red: 0.3, green: 0.62, blue: 0.95)],
+                                                                  startPoint: .leading, endPoint: .trailing)))
                 }
-                .buttonStyle(SlantButtonStyle())
-                .phaseAnimator([1.0, 1.1]) { content, scale in
+                .buttonStyle(.plain)
+                .phaseAnimator([1.0, 1.08]) { content, scale in
                     content.scaleEffect(scale)
-                } animation: { _ in .easeInOut(duration: 0.45) }
+                } animation: { _ in .easeInOut(duration: 0.5) }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .frame(maxWidth: 310, alignment: .leading)
-        .slantCard(skew: 12)
-        .rotationEffect(.degrees(-1.5))
+        .padding(10)
+        .frame(maxWidth: 300, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.7), lineWidth: 1))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
     }
 
     /// アップグレード（床の UPGRADE に立つと出る）
     private var upgradePanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                RansomText(text: "UPGRADE", size: 20)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "wrench.and.screwdriver.fill")
+                Text("アップグレード")
                 Spacer()
                 Text("タップで買う")
-                    .font(GameStyle.font(11, weight: .heavy))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
             }
+            .font(.system(size: 15, weight: .black, design: .rounded))
             // 2 列のタイル：アイコンと名前、レベル、「いま → つぎ」の効果、値段
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                 ForEach(MartUpgrade.allCases) { upgrade in
                     upgradeTile(upgrade)
                 }
             }
         }
-        .padding(16)
-        .frame(maxWidth: 430)
-        .slantCard(skew: 16)
+        .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.28))
+        .padding(14)
+        .frame(maxWidth: 420)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.7), lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
         .padding(.horizontal, 14)
         .padding(.bottom, 24)
     }
@@ -402,68 +393,69 @@ struct MartPlayView: View {
         let level = game.upgradeLevel(upgrade)
         let maxed = level >= MartUpgrade.maxLevel
         let cost = upgrade.cost(level)
-        let affordable = !maxed && game.money >= cost
+        let purple = Color(red: 0.45, green: 0.35, blue: 0.95)
         return Button {
             game.buyUpgrade(upgrade)
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: upgrade.symbol)
-                        .font(.system(size: 13, weight: .black))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 28, height: 26)
-                        .background(SlantShape(skew: 5).fill(GameStyle.red))
+                        .frame(width: 26, height: 26)
+                        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(purple))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(upgrade.title)
-                            .font(GameStyle.font(12, weight: .heavy))
-                            .foregroundStyle(GameStyle.ink)
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                         HStack(spacing: 2) {
                             ForEach(0..<MartUpgrade.maxLevel, id: \.self) { index in
-                                SlantShape(skew: 2)
-                                    .fill(index < level ? GameStyle.red : Color(white: 0.82))
-                                    .frame(width: 10, height: 5)
+                                Capsule()
+                                    .fill(index < level ? purple : Color(white: 0.85))
+                                    .frame(width: 9, height: 4)
                             }
                         }
                     }
                 }
                 Text(maxed ? upgrade.effect(level) : (level == 0 ? "なし" : upgrade.effect(level)) + " → " + upgrade.effect(level + 1))
-                    .font(.system(size: 11, weight: .bold).italic())
-                    .foregroundStyle(Color(white: 0.35))
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Text(maxed ? "MAX" : MartYen.text(cost))
-                    .font(GameStyle.font(13))
-                    .foregroundStyle(maxed ? GameStyle.ink : .white)
+                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
-                    .background(SlantShape(skew: 6).fill(maxed ? GameStyle.gold : affordable ? GameStyle.red : Color(white: 0.55)))
+                    .background(Capsule().fill(maxed ? Color(white: 0.6)
+                                               : game.money >= cost ? Color(red: 0.3, green: 0.75, blue: 0.35) : Color(white: 0.72)))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(SlantShape(skew: 8).fill(.white))
+            .padding(7)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.6)))
         }
-        .buttonStyle(SlantButtonStyle())
+        .buttonStyle(.plain)
         .disabled(maxed)
     }
 
     /// 評判の星と、タイムセールの残り時間
     private var eventPills: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Spacer()
             if game.saleSeconds > 0 {
-                Text("SALE \(game.saleSeconds)")
-                    .font(GameStyle.font(14))
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 12)
-                    .background(BurstShape(spikes: 14, depth: 0.14).fill(GameStyle.red))
-                    .rotationEffect(.degrees(-6))
-                    .transition(.scale.combined(with: .opacity))
+                HStack(spacing: 4) {
+                    Text("⏰")
+                    Text("SALE \(game.saleSeconds)")
+                        .monospacedDigit()
+                }
+                .font(.system(size: 13, weight: .black, design: .rounded))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Color(red: 0.95, green: 0.25, blue: 0.3)))
+                .transition(.scale.combined(with: .opacity))
             }
             if game.boostSeconds > 0 {
                 Text("⚡ \(game.boostSeconds)")
@@ -482,14 +474,14 @@ struct MartPlayView: View {
                     Image(systemName: value >= 1 ? "star.fill" : value >= 0.5 ? "star.leadinghalf.filled" : "star")
                 }
             }
-            .font(.system(size: 12, weight: .black))
-            .foregroundStyle(GameStyle.gold)
-            .padding(.horizontal, 14)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(Color(red: 1, green: 0.72, blue: 0.1))
+            .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .slantCard(skew: 8)
+            .background(.regularMaterial, in: Capsule())
             .accessibilityLabel("評判 \(game.stars)")
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, 14)
         .animation(.spring(duration: 0.3), value: game.saleSeconds > 0)
     }
 
@@ -562,39 +554,39 @@ struct MartPlayView: View {
     /// 留守のあいだにかせいだお金
     private var offlinePopup: some View {
         ZStack {
-            Color.black.opacity(0.55).ignoresSafeArea()
+            Color.black.opacity(0.45).ignoresSafeArea()
             VStack(spacing: 14) {
-                RansomText(text: "おかえり！", size: 30)
-                    .rotationEffect(.degrees(-4))
+                Text("おかえりなさい！")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
                 Text("留守のあいだも、お店は\nがんばってかせいでいました")
-                    .font(GameStyle.font(14, weight: .heavy))
+                    .font(.callout.weight(.semibold))
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(.white.opacity(0.85))
-                Text(MartYen.text(game.offlineEarned))
-                    .font(GameStyle.font(44))
-                    .foregroundStyle(GameStyle.ink)
-                    .padding(.horizontal, 40)
-                    .padding(.vertical, 26)
-                    .background(BurstShape(spikes: 18, depth: 0.12).fill(GameStyle.gold))
-                    .rotationEffect(.degrees(3))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text("💴").font(.system(size: 40))
+                    Text(MartYen.text(game.offlineEarned))
+                        .font(.system(size: 44, weight: .black, design: .rounded))
+                        .foregroundStyle(Color(red: 0.2, green: 0.6, blue: 0.25))
+                }
                 Text("レジの横に置いてあります。拾いに行こう！")
-                    .font(.footnote.weight(.bold).italic())
-                    .foregroundStyle(.white.opacity(0.8))
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.secondary)
                 Button {
                     game.offlineEarned = 0
                     GameAudio.shared.play(.complete)
                 } label: {
                     Text("OK")
-                        .font(GameStyle.font(22))
+                        .font(.system(size: 20, weight: .black, design: .rounded))
                         .foregroundStyle(.white)
                         .frame(width: 160, height: 52)
-                        .slantCard(skew: 14, fill: GameStyle.red, shadow: .white)
+                        .background(Capsule().fill(Color(red: 0.3, green: 0.75, blue: 0.35))
+                            .shadow(color: Color(red: 0.2, green: 0.5, blue: 0.2), radius: 0, x: 0, y: 4))
                 }
-                .buttonStyle(SlantButtonStyle())
+                .buttonStyle(.plain)
             }
+            .padding(28)
+            .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(.white))
             .padding(30)
-            .slantCard(skew: 20)
-            .padding(26)
             .transition(.scale(scale: 0.6).combined(with: .opacity))
         }
     }
@@ -624,14 +616,13 @@ struct MartPlayView: View {
             let clamp = min(length, 45) / max(length, 0.001)
             ZStack {
                 Circle()
-                    .fill(GameStyle.ink.opacity(0.35))
+                    .fill(.white.opacity(0.16))
                     .frame(width: 116, height: 116)
-                    .overlay(Circle().stroke(.white, lineWidth: 3))
+                    .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 2))
                 Circle()
-                    .fill(GameStyle.red)
+                    .fill(.white)
                     .frame(width: 56, height: 56)
-                    .overlay(Circle().stroke(.white, lineWidth: 3))
-                    .shadow(color: GameStyle.ink, radius: 0, x: 3, y: 3)
+                    .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
                     .offset(x: dx * clamp, y: dy * clamp)
             }
             .position(start)
@@ -662,59 +653,62 @@ struct MartPlayView: View {
                 }
             } label: {
                 Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 18, weight: .black))
-                    .foregroundStyle(.white)
-                    .frame(width: 46, height: 42)
-                    .slantCard(skew: 8)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.25))
+                    .frame(width: 42, height: 42)
+                    .background(.regularMaterial, in: Circle())
+                    .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
             }
             // レベル（お店の成長）
             let fraction = CGFloat(game.level) / CGFloat(MartGame.steps.count)
             VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                HStack(spacing: 6) {
                     Text("LV")
-                        .font(GameStyle.font(11))
-                        .foregroundStyle(GameStyle.red)
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
                     Text("\(game.level + 1)")
-                        .font(GameStyle.font(22).monospacedDigit())
-                        .foregroundStyle(.white)
+                        .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
                     Spacer(minLength: 0)
                     Text(fraction >= 1 ? "MAX" : "\(Int(fraction * 100))%")
-                        .font(GameStyle.font(11, weight: .heavy).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.7))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        SlantShape(skew: 4).fill(.white.opacity(0.2))
-                        SlantShape(skew: 4).fill(GameStyle.red)
-                            .frame(width: max(geo.size.width * fraction, 8))
+                        Capsule().fill(Color.black.opacity(0.08))
+                        Capsule()
+                            .fill(LinearGradient(colors: [Color(red: 0.36, green: 0.78, blue: 0.62), Color(red: 0.3, green: 0.62, blue: 0.95)],
+                                                 startPoint: .leading, endPoint: .trailing))
+                            .frame(width: max(geo.size.width * fraction, 5))
                     }
                 }
-                .frame(height: 6)
+                .frame(height: 5)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 6)
+            .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.25))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
             .frame(width: 150)
-            .slantCard(skew: 12)
-            .rotationEffect(.degrees(-2))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.7), lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
             .animation(.smooth, value: game.level)
             Spacer()
-            // 所持金：黒い斜めの帯に、白い太い斜体
-            HStack(spacing: 6) {
-                Text("¥")
-                    .font(GameStyle.font(16))
-                    .foregroundStyle(GameStyle.ink)
-                    .frame(width: 24, height: 24)
-                    .background(BurstShape(spikes: 10, depth: 0.14).fill(GameStyle.gold))
-                Text(MartYen.text(game.money).replacingOccurrences(of: "¥", with: ""))
-                    .font(GameStyle.font(21).monospacedDigit())
-                    .foregroundStyle(.white)
+            HStack(spacing: 7) {
+                Image(systemName: "banknote.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.25, green: 0.7, blue: 0.45))
+                Text(MartYen.text(game.money))
+                    .font(.system(size: 19, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.25))
                     .contentTransition(.numericText())
                     .animation(.snappy, value: game.money)
             }
-            .padding(.horizontal, 18)
-            .frame(height: 44)
-            .slantCard(skew: 12)
-            .rotationEffect(.degrees(1.5))
+            .padding(.horizontal, 16)
+            .frame(height: 42)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.7), lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)
