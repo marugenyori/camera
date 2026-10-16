@@ -26,6 +26,11 @@ final class MartScene {
     private var lastGift: CGPoint?
     private var lastCombo = 0
     private let saleSign = SCNNode()
+    private var selfMachineNodes: [SCNNode] = []
+    private let ambientLight = SCNNode()
+    private var dayTime: Double = 40
+    private var lampBulbs: [SCNMaterial] = []
+    private let boostRing = SCNNode()
     private let cat = SCNNode()
     private let catPivot = SCNNode()
     private var catPos = CGPoint(x: 8, y: 11)
@@ -312,7 +317,7 @@ final class MartScene {
     }
 
     private func setupLights() {
-        let ambient = SCNNode()
+        let ambient = ambientLight
         ambient.light = SCNLight()
         ambient.light?.type = .ambient
         ambient.light?.intensity = 620
@@ -400,6 +405,7 @@ final class MartScene {
         buildDecorations()
         buildBaskets()
         buildFun()
+        buildMachines()
         // 外のトラックと木
         buildTruck()
         for (x, z, r) in [(26.3, 1.0, 0.6), (23.4, -1.5, 0.8)]
@@ -695,7 +701,13 @@ final class MartScene {
         for z in [1.0, 9.0] as [CGFloat] {
             let lamp = SCNNode()
             lamp.addChildNode(Self.at(Self.cylinder(0.06, 2.6, UIColor(white: 0.3, alpha: 1)), 0, 1.3, 0))
-            lamp.addChildNode(Self.at(Self.sphere(0.2, UIColor(red: 1, green: 0.95, blue: 0.75, alpha: 1)), 0, 2.7, 0))
+            let bulb = SCNMaterial()
+            bulb.lightingModel = .lambert
+            bulb.diffuse.contents = UIColor(red: 1, green: 0.95, blue: 0.75, alpha: 1)
+            let globe = SCNSphere(radius: 0.2)
+            globe.materials = [bulb]
+            lampBulbs.append(bulb)
+            lamp.addChildNode(Self.at(SCNNode(geometry: globe), 0, 2.7, 0))
             world.addChildNode(Self.at(lamp, floor.maxX + 0.7, -0.15, z))
         }
         let bench = SCNNode()
@@ -766,6 +778,85 @@ final class MartScene {
         cat.addChildNode(catPivot)
         cat.position = SCNVector3(Float(catPos.x), 0, Float(catPos.y))
         world.addChildNode(cat)
+    }
+
+    /// ガチャの台（赤い台に、カプセルの入った透明なドームと取っ手）とセルフレジ（右の壁ぞい、3 台まで）
+    private func buildMachines() {
+        let gacha = SCNNode()
+        let red = UIColor(red: 0.9, green: 0.08, blue: 0.12, alpha: 1)
+        gacha.addChildNode(Self.at(Self.box(0.62, 0.7, 0.62, red, chamfer: 0.05), 0, 0.35, 0))
+        gacha.addChildNode(Self.at(Self.box(0.5, 0.12, 0.05, UIColor(white: 0.1, alpha: 1), chamfer: 0.01), 0, 0.42, 0.31))
+        let knob = Self.cylinder(0.08, 0.06, .white)
+        knob.eulerAngles.x = .pi / 2
+        gacha.addChildNode(Self.at(knob, 0.12, 0.25, 0.33))
+        let colors: [UIColor] = [.systemYellow, .systemBlue, .systemPink, .systemGreen, .white, .systemOrange]
+        for index in 0..<9 {
+            let angle = CGFloat(index) * 2.1
+            gacha.addChildNode(Self.at(Self.sphere(0.07, colors[index % colors.count]),
+                                       cos(angle) * 0.13, 0.82 + CGFloat(index % 3) * 0.08, sin(angle) * 0.13))
+        }
+        let dome = Self.sphere(0.3, UIColor(red: 0.85, green: 0.95, blue: 1, alpha: 0.25))
+        dome.castsShadow = false
+        gacha.addChildNode(Self.at(dome, 0, 0.92, 0))
+        gacha.addChildNode(Self.at(Self.cylinder(0.32, 0.05, red), 0, 0.72, 0))
+        let sign = Self.billboard(Self.label("🎰", size: 64, background: .white), width: 0.5)
+        sign.position = SCNVector3(0, 1.6, 0)
+        sign.runAction(.repeatForever(.sequence([.moveBy(x: 0, y: 0.1, z: 0, duration: 0.6), .moveBy(x: 0, y: -0.1, z: 0, duration: 0.6)])))
+        gacha.addChildNode(sign)
+        gacha.position = SCNVector3(Float(MartGame.gachaSpot.x), 0, Float(MartGame.gachaSpot.y))
+        world.addChildNode(gacha)
+        let zone = Self.decal(Self.zoneImage(color: red, icon: ""), width: 2.0, length: 2.0)
+        zone.position = SCNVector3(Float(MartGame.gachaSpot.x), 0.013, Float(MartGame.gachaSpot.y))
+        world.addChildNode(zone)
+        // セルフレジ：灰色の台に光る画面と読みとり台（解放されるまで隠す）
+        for index in 0..<3 {
+            let machine = SCNNode()
+            machine.addChildNode(Self.at(Self.box(0.5, 1.0, 0.6, UIColor(white: 0.85, alpha: 1), chamfer: 0.04), 0, 0.5, 0))
+            let screen = Self.box(0.06, 0.34, 0.44, .white, chamfer: 0.01)
+            screen.geometry?.materials = [Self.material(UIColor(red: 0.3, green: 0.75, blue: 1, alpha: 1), emission: true)]
+            screen.eulerAngles.z = 0.25
+            machine.addChildNode(Self.at(screen, -0.2, 1.2, 0))
+            machine.addChildNode(Self.at(Self.box(0.3, 0.06, 0.5, UIColor(white: 0.25, alpha: 1), chamfer: 0.01), -0.32, 0.88, 0))
+            let badge = Self.billboard(Self.label("💳", size: 56, background: .white), width: 0.42)
+            badge.position = SCNVector3(0, 1.75, 0)
+            machine.addChildNode(badge)
+            let spot = MartGame.selfMachine(index)
+            machine.position = SCNVector3(Float(spot.x), 0, Float(spot.y))
+            machine.isHidden = true
+            world.addChildNode(machine)
+            selfMachineNodes.append(machine)
+        }
+        // スピードアップ中の、足もとの黄色い輪
+        let ring = Self.decal(Self.ringImage(UIColor(red: 1, green: 0.85, blue: 0.1, alpha: 1)), width: 1.4, length: 1.4)
+        boostRing.addChildNode(ring)
+        boostRing.position.y = 0.035
+        boostRing.isHidden = true
+        boostRing.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 0.8)))
+        world.addChildNode(boostRing)
+    }
+
+    /// 昼と夜：5 分で 1 日。夕方は橙、夜は青く暗くなり、街灯が光る
+    private func updateDay(dt: Double) {
+        dayTime += dt
+        let t = dayTime.truncatingRemainder(dividingBy: 300) / 300
+        // 0〜0.55 昼、0.55〜0.65 夕方、0.65〜0.9 夜、0.9〜1 朝
+        let night: CGFloat
+        switch t {
+        case ..<0.55: night = 0
+        case ..<0.65: night = CGFloat((t - 0.55) / 0.1)
+        case ..<0.9: night = 1
+        default: night = CGFloat(1 - (t - 0.9) / 0.1)
+        }
+        let dusk = max(0, 1 - abs(night - 0.5) * 2)
+        sun.light?.intensity = 780 - 520 * night
+        sun.light?.color = UIColor(red: 1, green: 1 - 0.25 * dusk - 0.1 * night, blue: 1 - 0.45 * dusk + 0.05 * night, alpha: 1)
+        ambientLight.light?.intensity = 620 - 260 * night
+        ambientLight.light?.color = UIColor(red: 1 - 0.3 * night, green: 0.98 - 0.2 * night, blue: 0.95 + 0.05 * night, alpha: 1)
+        scene.background.contents = UIColor(red: 0.7 - 0.55 * night + 0.2 * dusk, green: 0.83 - 0.6 * night, blue: 0.62 - 0.3 * night, alpha: 1)
+        for bulb in lampBulbs {
+            bulb.emission.contents = UIColor(red: 1, green: 0.9, blue: 0.6, alpha: 1)
+            bulb.emission.intensity = night
+        }
     }
 
     /// 猫：ときどき止まり、お店のどこかへ、売り場をよけてのんびり歩く
@@ -1770,6 +1861,8 @@ final class MartScene {
                                ? Self.bubble(product: customer.product, count: customer.want - customer.got) : nil)
             case .toQueue, .queued:
                 node.setBubble(Self.bubble(product: nil, count: 0))
+            case .selfPay:
+                node.setBubble(Self.label("💳", size: 56, background: .white))
             case .leaving:
                 node.setBubble(nil)
                 if !customer.angry { node.setBag(customer.product) }
@@ -1908,6 +2001,20 @@ final class MartScene {
         lastCombo = game.events.combo
         saleSign.isHidden = game.events.saleTime <= 0
         updateCat(game, dt: dt)
+        updateDay(dt: dt)
+        for (index, machine) in selfMachineNodes.enumerated() where machine.isHidden != (index >= game.selfMachines) {
+            machine.isHidden = index >= game.selfMachines
+            if !machine.isHidden, built {
+                burst(at: SCNVector3(machine.position.x, 1.0, machine.position.z))
+            }
+        }
+        if game.boostSeconds > 0, playerNodes.indices.contains(game.me) {
+            boostRing.isHidden = false
+            boostRing.position.x = playerNodes[game.me].root.position.x
+            boostRing.position.z = playerNodes[game.me].root.position.z
+        } else {
+            boostRing.isHidden = true
+        }
         updateArrow(game)
         // カメラは自分の店員を追う
         if let mine = playerNodes.indices.contains(game.me) ? playerNodes[game.me] : nil {

@@ -144,13 +144,58 @@ struct MartEvents: Codable, Equatable {
     var rating: Double = 3
     /// レジのコンボ（続けて会計すると増える）
     var combo = 0
+    /// ガチャで当てた「スピードアップ」の残り秒
+    var boostTime: Double = 0
+    /// ガチャで当てた「VIP がまとめて来る」の残り人数
+    var vipRush = 0
+}
+
+/// ガチャの景品
+enum MartPrize: String, Codable, CaseIterable {
+    case jackpot, coins, speed, refill, vipRush, lucky
+
+    var icon: String {
+        switch self {
+        case .jackpot: return "💰"
+        case .coins: return "🪙"
+        case .speed: return "⚡"
+        case .refill: return "📦"
+        case .vipRush: return "👑"
+        case .lucky: return "🍀"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .jackpot: return "大当たり！"
+        case .coins: return "半分もどってきた"
+        case .speed: return "30 秒スピードアップ"
+        case .refill: return "全部の売り場が満タン"
+        case .vipRush: return "VIP が 5 人来る"
+        case .lucky: return "レジのお金が 2 倍"
+        }
+    }
+
+    /// 当たりやすさ（合計 100）
+    var weight: Int {
+        switch self {
+        case .jackpot: return 8
+        case .coins: return 27
+        case .speed: return 20
+        case .refill: return 20
+        case .vipRush: return 15
+        case .lucky: return 10
+        }
+    }
 }
 
 struct MartCustomer: Identifiable, Codable {
-    enum Phase: String, Codable { case toBasket, toShelf, shopping, toQueue, queued, leaving }
+    enum Phase: String, Codable { case toBasket, toShelf, shopping, toQueue, queued, selfPay, leaving }
     /// ふつう・VIP（たくさん買って 3 倍払う）・どろぼう（商品を取って逃げる。店員がさわると捕まえられる）
     enum Kind: String, Codable { case normal, vip, thief }
     var kind: Kind = .normal
+    /// セルフレジを使うときの台の番号（-1 = 使わない）
+    var machine = -1
     var id = UUID()
     var walker: MartWalker
     var phase: Phase = .toShelf
@@ -211,7 +256,7 @@ struct MartStep {
 /// ゲストに送るお店の様子
 /// アップグレード（床の UPGRADE の場所で、お金を払ってレベルを上げる）
 enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
-    case capacity, speed, price, cashier, staff, hire, baskets, ads, tips
+    case capacity, speed, price, cashier, staff, hire, baskets, ads, tips, selfCheckout
     var id: String { rawValue }
     static let maxLevel = 5
 
@@ -226,6 +271,7 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .baskets: return "かご係を雇う"
         case .ads: return "宣伝（お客さん）"
         case .tips: return "チップの確率"
+        case .selfCheckout: return "セルフレジ"
         }
     }
 
@@ -240,6 +286,7 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .baskets: return "basket.fill"
         case .ads: return "megaphone.fill"
         case .tips: return "heart.circle.fill"
+        case .selfCheckout: return "creditcard.fill"
         }
     }
 
@@ -254,6 +301,7 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .baskets: return "+\(level) 人"
         case .ads: return "+\(level) 人"
         case .tips: return "\(level * 10)%"
+        case .selfCheckout: return level <= 3 ? "\(level) 台" : "3 台・速さ+\((level - 3) * 25)%"
         }
     }
 
@@ -269,6 +317,7 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .baskets: base = 3_000
         case .ads: base = 4_000
         case .tips: base = 5_000
+        case .selfCheckout: base = 6_000
         }
         return Int((base * pow(2.1, Double(level)) / 100).rounded()) * 100
     }
@@ -361,6 +410,11 @@ final class MartGame: ObservableObject {
     nonisolated static let basketStandMax = 12
     /// ゴミ箱（間違えて取った商品を捨てる）
     nonisolated static let trashSpot = CGPoint(x: 3.2, y: 10.6)
+    /// セルフレジ（右の壁ぞい、最大 3 台）。台の前にお客さんが立つ
+    nonisolated static func selfMachine(_ index: Int) -> CGPoint { CGPoint(x: 21.25, y: 7.4 + 1.4 * CGFloat(index)) }
+    nonisolated static func selfStand(_ index: Int) -> CGPoint { CGPoint(x: 20.4, y: 7.4 + 1.4 * CGFloat(index)) }
+    /// ガチャの台
+    nonisolated static let gachaSpot = CGPoint(x: 10.6, y: 15.0)
     /// アップグレードの場所（左下）
     nonisolated static let upgradeZone = CGRect(x: 12.6, y: 14.0, width: 2.6, height: 1.6)
     /// 広げるごとにのびる奥行き
@@ -477,12 +531,64 @@ final class MartGame: ObservableObject {
     @Published private(set) var saleSeconds = 0
     @Published private(set) var stars: Double = 3
     private var giftTimer: Double = 25
+    /// セルフレジの台の数
+    var selfMachines: Int { min(upgradeLevel(.selfCheckout), 3) }
+    /// このコマで使われているセルフレジ（お客さんの配列を書き換え中に読まないよう、先に調べておく）
+    private var claimedMachines: Set<Int> = []
+    /// ガチャの台のそばにいる
+    @Published private(set) var atGacha = false
+    /// いま当てた景品（画面に出す）
+    @Published var lastPrize: MartPrize?
+    /// ゲストのとき、ガチャをホストに頼む
+    var onGacha: (() -> Void)?
+    /// 画面に出す：スピードアップの残り秒
+    @Published private(set) var boostSeconds = 0
+
+    /// ガチャ 1 回の値段（お店が育つほど高い）
+    var gachaCost: Int { max(500, (level + 1) * 600) / 100 * 100 }
+
+    /// ガチャを回す（ゲストはホストに頼む）
+    func spinGacha() {
+        if role == .guest {
+            onGacha?()
+            return
+        }
+        guard money >= gachaCost else {
+            GameAudio.shared.play(.invalid)
+            return
+        }
+        let cost = gachaCost
+        money -= cost
+        var roll = Int.random(in: 0..<100)
+        var prize = MartPrize.coins
+        for candidate in MartPrize.allCases {
+            if roll < candidate.weight {
+                prize = candidate
+                break
+            }
+            roll -= candidate.weight
+        }
+        switch prize {
+        case .jackpot: money += cost * 5
+        case .coins: money += cost / 2
+        case .speed: events.boostTime = 30
+        case .refill: for k in unlocked { stock[k] = Self.shelfCapacity }
+        case .vipRush: events.vipRush += 5
+        case .lucky: cash += max(cash, cost * 2)
+        }
+        lastPrize = prize
+        banner = "\(prize.icon) \(prize.title)"
+        GameAudio.shared.play(prize == .coins ? .tap : .win)
+        save()
+    }
     private var saleCooldown: Double = 90
     private var comboTimer: Double = 0
 
     private func publishEvents() {
         let seconds = Int(events.saleTime.rounded(.up))
         if seconds != saleSeconds { saleSeconds = seconds }
+        let boost = Int(events.boostTime.rounded(.up))
+        if boost != boostSeconds { boostSeconds = boost }
         let shown = (events.rating * 2).rounded() / 2
         if shown != stars { stars = shown }
     }
@@ -684,6 +790,8 @@ final class MartGame: ObservableObject {
         if players.indices.contains(me) {
             let inside = Self.upgradeZone.insetBy(dx: -0.3, dy: -0.3).contains(players[me].pos)
             if inside != atUpgrade { atUpgrade = inside }
+            let near = distance(players[me].pos, Self.gachaSpot) < 1.0
+            if near != atGacha { atGacha = near }
         }
         guard role != .guest else { return }
         for index in players.indices { handleSupplyAndShelves(index, dt) }
@@ -693,6 +801,7 @@ final class MartGame: ObservableObject {
         handlePads(dt)
         handleEvents(dt)
         spawnCustomers(dt)
+        claimedMachines = Set(customers.map(\.machine).filter { $0 >= 0 })
         for index in customers.indices { updateCustomer(&customers[index], dt) }
         catchThieves()
         // 逃げきったどろぼう：商品はなくなり、評判が下がる
@@ -730,7 +839,8 @@ final class MartGame: ObservableObject {
             let norm = (wx * wx + wy * wy).squareRoot()
             wx /= norm
             wy /= norm
-            want = CGVector(dx: wx * speed * length, dy: wy * speed * length)
+            let boost: CGFloat = events.boostTime > 0 ? 1.5 : 1
+            want = CGVector(dx: wx * speed * boost * length, dy: wy * speed * boost * length)
         }
         // 加速は速く、止まるのは少しだけゆっくり
         let rate: CGFloat = length > 0.08 ? 16 : 11
@@ -773,6 +883,11 @@ final class MartGame: ObservableObject {
     private var obstacles: [CGRect] {
         var walls = [Self.counter, CGRect(x: Self.trashSpot.x - 0.3, y: Self.trashSpot.y - 0.3, width: 0.6, height: 0.6)]
         walls += unlocked.map { Self.shelfRect($0) }
+        for index in 0..<selfMachines {
+            let machine = Self.selfMachine(index)
+            walls.append(CGRect(x: machine.x - 0.3, y: machine.y - 0.35, width: 0.6, height: 0.7))
+        }
+        walls.append(CGRect(x: Self.gachaSpot.x - 0.3, y: Self.gachaSpot.y - 0.3, width: 0.6, height: 0.6))
         for k in unlocked {
             let spot = Self.supplySpot(k)
             walls.append(CGRect(x: spot.x - 1.1, y: spot.y - 0.5, width: 0.75, height: 1.0))
@@ -787,7 +902,7 @@ final class MartGame: ObservableObject {
 
     /// 通れるマスの表（売り場が増えたり床が広がったときだけ作り直す）
     private func walkGrid() -> (columns: Int, rows: Int, open: [Bool]) {
-        let key = unlocked.reduce(expansions << 20) { $0 + 1 << $1 }
+        let key = unlocked.reduce((expansions << 20) + (selfMachines << 16)) { $0 + 1 << $1 }
         if let grid, grid.key == key { return (grid.columns, grid.rows, grid.open) }
         let floor = floorRect
         let columns = Int(floor.width / Self.cell), rows = Int(floor.height / Self.cell)
@@ -1134,7 +1249,8 @@ final class MartGame: ObservableObject {
             customer.want = 3
             customer.phase = .toShelf
             customer.path = [Self.door] + route(from: Self.door, to: Self.shelfFront(product.rawValue))
-        } else if level >= 2, Int.random(in: 0..<10) == 0 {
+        } else if events.vipRush > 0 || (level >= 2 && Int.random(in: 0..<10) == 0) {
+            if events.vipRush > 0 { events.vipRush -= 1 }
             customer.kind = .vip
             customer.want = Int.random(in: 5...7)
         }
@@ -1207,6 +1323,17 @@ final class MartGame: ObservableObject {
                     return
                 }
             }
+            // セルフレジがあいていて、レジに人が並んでいたら（またはときどき）セルフレジへ
+            if customer.got >= customer.want, customer.timer <= 0,
+               let free = (0..<selfMachines).first(where: { !claimedMachines.contains($0) }),
+               !queue.isEmpty || Bool.random() {
+                claimedMachines.insert(free)
+                customer.machine = free
+                customer.phase = .selfPay
+                customer.timer = 0
+                customer.path = route(from: customer.walker.pos, to: Self.selfStand(free))
+                return
+            }
             if customer.got >= customer.want, customer.timer <= 0 {
                 queue.append(customer.id)
                 customer.phase = .toQueue
@@ -1241,6 +1368,25 @@ final class MartGame: ObservableObject {
             if follow(&customer.walker, path: &path, speed: 3.4, dt: dt) {
                 customer.walker.heading = 0
             }
+        case .selfPay:
+            // セルフレジ：台の前で商品を読みとって、自分で払う（お金はレジの横の山へ）
+            guard follow(&customer.walker, path: &customer.path, speed: 3.4, dt: dt) else { return }
+            customer.walker.heading = 0
+            customer.timer += dt
+            let duration = 2.4 / (1 + 0.25 * Double(max(upgradeLevel(.selfCheckout) - 3, 0)))
+            guard customer.timer >= duration else { return }
+            var amount = sale(customer.product, count: customer.got)
+            if customer.kind == .vip { amount *= 3 }
+            cash += amount
+            stats.served += 1
+            stats.earned += amount
+            if customer.basket { returnedBaskets = min(returnedBaskets + 1, 20) }
+            customer.basket = false
+            customer.machine = -1
+            rate(customer.kind == .vip ? 0.1 : 0.04)
+            customer.phase = .leaving
+            customer.path = route(from: customer.walker.pos, to: Self.door) + [Self.outside]
+            GameAudio.shared.play(.tap)
         case .leaving:
             _ = follow(&customer.walker, path: &customer.path, speed: customer.kind == .thief && customer.got > 0 ? 4.2 : 3.9, dt: dt)
         }
@@ -1284,6 +1430,7 @@ final class MartGame: ObservableObject {
                 GameAudio.shared.play(.special)
             }
         }
+        if events.boostTime > 0 { events.boostTime = max(events.boostTime - dt, 0) }
         // レジのコンボは 5 秒あくと切れる
         if comboTimer > 0 {
             comboTimer -= dt

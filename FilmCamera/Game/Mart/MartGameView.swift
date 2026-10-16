@@ -110,6 +110,7 @@ final class MartSession: ObservableObject, Identifiable {
         case snapshot(MartSnapshot)
         case claim
         case upgrade(MartUpgrade)
+        case gacha
     }
 
     init(role: MartGame.Role, name: String) {
@@ -140,6 +141,8 @@ final class MartSession: ObservableObject, Identifiable {
                 if role == .host { self.game.claimQuest() }
             case .upgrade(let upgrade):
                 if role == .host { self.game.buyUpgrade(upgrade) }
+            case .gacha:
+                if role == .host { self.game.spinGacha() }
             }
         }
         link.start()
@@ -147,6 +150,9 @@ final class MartSession: ObservableObject, Identifiable {
         if role == .guest {
             game.onClaim = { [weak link] in
                 if let data = try? JSONEncoder().encode(Message.claim) { link?.send(data) }
+            }
+            game.onGacha = { [weak link] in
+                if let data = try? JSONEncoder().encode(Message.gacha) { link?.send(data) }
             }
             game.onUpgrade = { [weak link] upgrade in
                 if let data = try? JSONEncoder().encode(Message.upgrade(upgrade)) { link?.send(data) }
@@ -230,6 +236,10 @@ struct MartPlayView: View {
                     upgradePanel
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+                if game.atGacha {
+                    gachaPanel
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 if let banner = game.banner {
                     // ギザギザの赤い吹き出しに、白い斜体（黒い影をずらして重ねる）
                     Text(banner)
@@ -263,6 +273,11 @@ struct MartPlayView: View {
         .preferredColorScheme(.light)
         .animation(.spring(duration: 0.4, bounce: 0.5), value: game.banner)
         .animation(.spring(duration: 0.35, bounce: 0.25), value: game.atUpgrade)
+        .animation(.spring(duration: 0.35, bounce: 0.25), value: game.atGacha)
+        .overlay {
+            if let prize = game.lastPrize { prizeReveal(prize) }
+        }
+        .animation(.spring(duration: 0.45, bounce: 0.45), value: game.lastPrize)
         .animation(.spring(duration: 0.4, bounce: 0.3), value: game.offlineEarned)
         .statusBarHidden()
         .task { await run() }
@@ -450,6 +465,17 @@ struct MartPlayView: View {
                     .rotationEffect(.degrees(-6))
                     .transition(.scale.combined(with: .opacity))
             }
+            if game.boostSeconds > 0 {
+                Text("⚡ \(game.boostSeconds)")
+                    .font(GameStyle.font(14))
+                    .monospacedDigit()
+                    .foregroundStyle(GameStyle.ink)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 11)
+                    .background(BurstShape(spikes: 12, depth: 0.14).fill(GameStyle.gold))
+                    .rotationEffect(.degrees(5))
+                    .transition(.scale.combined(with: .opacity))
+            }
             HStack(spacing: 1) {
                 ForEach(0..<5, id: \.self) { index in
                     let value = game.stars - Double(index)
@@ -465,6 +491,72 @@ struct MartPlayView: View {
         }
         .padding(.horizontal, 18)
         .animation(.spring(duration: 0.3), value: game.saleSeconds > 0)
+    }
+
+    /// ガチャ（台のそばに立つと出る）
+    private var gachaPanel: some View {
+        let affordable = game.money >= game.gachaCost
+        return VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                RansomText(text: "ガチャ", size: 22)
+                Spacer()
+                Text(MartPrize.allCases.map(\.icon).joined())
+                    .font(.system(size: 16))
+            }
+            Button {
+                game.spinGacha()
+            } label: {
+                HStack(spacing: 10) {
+                    Text("🎰")
+                        .font(.system(size: 26))
+                    Text("回す")
+                        .font(GameStyle.font(22))
+                    Text(MartYen.text(game.gachaCost))
+                        .font(GameStyle.font(17).monospacedDigit())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .background(SlantShape(skew: 6).fill(GameStyle.ink))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, minHeight: 58)
+                .slantCard(skew: 14, fill: affordable ? GameStyle.red : Color(white: 0.45), shadow: .white)
+            }
+            .buttonStyle(SlantButtonStyle())
+            .disabled(!affordable)
+        }
+        .padding(16)
+        .frame(maxWidth: 380)
+        .slantCard(skew: 16)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 24)
+    }
+
+    /// 当たった景品：ギザギザの中に大きなアイコン、下に名前（タップか 2 秒で閉じる）
+    private func prizeReveal(_ prize: MartPrize) -> some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+            VStack(spacing: 18) {
+                Text(prize.icon)
+                    .font(.system(size: 84))
+                    .frame(width: 200, height: 200)
+                    .background(
+                        ZStack {
+                            BurstShape(spikes: 22, depth: 0.16).fill(GameStyle.ink).offset(x: 8, y: 8)
+                            BurstShape(spikes: 22, depth: 0.16).fill(prize == .coins ? Color.white : GameStyle.gold)
+                        }
+                    )
+                    .rotationEffect(.degrees(-8))
+                RansomText(text: prize.title, size: 24)
+                    .rotationEffect(.degrees(-3))
+            }
+            .transition(.scale(scale: 0.2).combined(with: .opacity))
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { game.lastPrize = nil }
+        .task(id: prize) {
+            try? await Task.sleep(for: .seconds(2))
+            game.lastPrize = nil
+        }
     }
 
     /// 留守のあいだにかせいだお金
