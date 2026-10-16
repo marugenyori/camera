@@ -397,9 +397,9 @@ final class MartScene {
         }
         // 入口の自動ドア
         let frame = UIColor(white: 0.35, alpha: 1)
-        world.addChildNode(Self.at(Self.box(0.25, 2.2, 0.25, frame), floor.maxX + 0.05, 1.1, Float(MartGame.door.y) - 1.3))
-        world.addChildNode(Self.at(Self.box(0.25, 0.3, 2.6, frame), floor.maxX + 0.05, 2.2, Float(MartGame.door.y)))
-        world.addChildNode(Self.at(Self.box(0.25, 2.2, 0.25, frame), floor.maxX + 0.05, 1.1, 11.25))
+        world.addChildNode(Self.at(Self.box(0.25, 2.2, 0.25, frame), floor.maxX + 0.05, 1.1, MartGame.door.y - 1.3))
+        world.addChildNode(Self.at(Self.box(0.25, 0.3, 2.6, frame), floor.maxX + 0.05, 2.2, MartGame.door.y))
+        world.addChildNode(Self.at(Self.box(0.25, 2.2, 0.25, frame), floor.maxX + 0.05, 1.1, MartGame.door.y + 1.3))
         let glass = UIColor(red: 0.7, green: 0.9, blue: 1, alpha: 0.4)
         for z in [MartGame.door.y - 0.65, MartGame.door.y + 0.65] {
             let panel = Self.box(0.08, 2.0, 1.25, glass, chamfer: 0.01)
