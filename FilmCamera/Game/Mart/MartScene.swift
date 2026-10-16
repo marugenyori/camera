@@ -26,8 +26,6 @@ final class MartScene {
     private var maxLabel = SCNNode()
     private var servingRing = SCNNode()
     private var standBasketNodes: [SCNNode] = []
-    private var stockBadges: [Int: SCNNode] = [:]
-    private var badgeCounts: [Int: Int] = [:]
     private var lastCarry: [[MartProduct]] = []
     private var returnBasketNodes: [SCNNode] = []
 
@@ -827,30 +825,28 @@ final class MartScene {
         let metal = UIColor(white: 0.97, alpha: 1)
         let post = UIColor(red: 0.36, green: 0.4, blue: 0.46, alpha: 1)
         node.addChildNode(Self.at(Self.box(rect.width, 0.12, rect.height, metal), 0, 0.06, 0))
-        node.addChildNode(Self.at(Self.box(rect.width, 1.15, 0.06, metal), 0, 0.6, -rect.height / 2 + 0.03))
+        node.addChildNode(Self.at(Self.box(rect.width, 1.35, 0.06, metal), 0, 0.68, -rect.height / 2 + 0.03))
         for x in [-rect.width / 2 + 0.04, rect.width / 2 - 0.04] {
-            node.addChildNode(Self.at(Self.box(0.08, 1.2, rect.height, post), x, 0.6, 0))
+            node.addChildNode(Self.at(Self.box(0.08, 1.4, rect.height, post), x, 0.7, 0))
         }
-        for y in [0.5, 0.95] as [CGFloat] {
+        for y in [0.66, 1.3] as [CGFloat] {
             node.addChildNode(Self.at(Self.box(rect.width - 0.1, 0.05, rect.height - 0.05, metal), 0, y, 0.02))
         }
         guard let product = MartProduct(rawValue: k) else { return node }
-        // 上の看板（売り場の名前）と、段ごとの値札
-        // 上に、商品のアイコンと残りの数（8 マスのメーター）
-        let badge = Self.billboard(Self.stockImage(product, count: 0), width: 1.25)
+        // 上に、売り場のアイコン（数は棚に並んだ商品そのもので見せる）
+        let badge = Self.billboard(Self.label(product.icon, size: 64, background: .white), width: 0.6)
         let badgeHeight: Float
         switch product {
-        case .soda: badgeHeight = 2.75
-        case .toy: badgeHeight = 2.45
-        case .sandwich, .fruit: badgeHeight = 2.15
+        case .soda: badgeHeight = 2.7
+        case .toy: badgeHeight = 2.6
+        case .sandwich, .fruit: badgeHeight = 2.3
         case .snack, .noodle: badgeHeight = 1.95
         }
         badge.position = SCNVector3(0, badgeHeight, 0)
         node.addChildNode(badge)
-        stockBadges[k] = badge
         let price = Self.label(MartYen.text(product.price), size: 40, color: UIColor(white: 0.12, alpha: 1),
                                background: UIColor(red: 1, green: 0.88, blue: 0.25, alpha: 1))
-        for y in [0.08, 0.49] as [CGFloat] {
+        for y in [0.08, 0.625] as [CGFloat] {
             for x in [-rect.width / 2 + 0.35, rect.width / 2 - 0.35] {
                 let tag = Self.decalStanding(price, width: 0.36)
                 tag.position = SCNVector3(Float(x), Float(y), Float(rect.height / 2 + 0.035))
@@ -861,7 +857,7 @@ final class MartScene {
         // 商品（8 個ぶんの場所を作っておく）
         var items: [SCNNode] = []
         for index in 0..<MartGame.shelfCapacity {
-            let tier: CGFloat = index < 4 ? 0.12 : 0.53
+            let tier: CGFloat = index < 4 ? 0.12 : 0.685
             let column = CGFloat(index % 4)
             let item = Self.productModel(product)
             item.position = SCNVector3(Float(-rect.width / 2 + 0.3 + column * (rect.width - 0.6) / 3), Float(tier), 0.1)
@@ -881,7 +877,7 @@ final class MartScene {
         switch product {
         case .soda, .sandwich:
             let tall = product == .soda
-            let height: CGFloat = tall ? 1.9 : 1.25
+            let height: CGFloat = tall ? 2.0 : 1.5
             let shell = UIColor(white: 0.96, alpha: 1)
             // 外箱（奥・左右・天井）と、光る内側
             node.addChildNode(Self.at(Self.box(rect.width + 0.16, height, 0.08, shell), 0, height / 2, -half - 0.02))
@@ -921,9 +917,9 @@ final class MartScene {
             let stripes = Self.textured(Self.stripeImage(UIColor(red: 0.3, green: 0.68, blue: 0.35, alpha: 1)))
             awning.geometry?.materials = [stripes]
             awning.eulerAngles.x = 0.35
-            node.addChildNode(Self.at(awning, 0, 1.55, -half + 0.2))
+            node.addChildNode(Self.at(awning, 0, 1.75, -half + 0.2))
             for x in [-rect.width / 2 - 0.05, rect.width / 2 + 0.05] {
-                node.addChildNode(Self.at(Self.cylinder(0.025, 1.6, UIColor(red: 0.55, green: 0.4, blue: 0.28, alpha: 1)), x, 0.8, -half))
+                node.addChildNode(Self.at(Self.cylinder(0.025, 1.8, UIColor(red: 0.55, green: 0.4, blue: 0.28, alpha: 1)), x, 0.9, -half))
             }
             let wood = UIColor(red: 0.78, green: 0.58, blue: 0.36, alpha: 1)
             for (crateIndex, x) in ([-0.55, 0.0, 0.55] as [CGFloat]).enumerated() {
@@ -945,7 +941,7 @@ final class MartScene {
                 let balloon = Self.sphere(0.17, colors[index])
                 balloon.scale = SCNVector3(1, 1.15, 1)
                 balloon.addChildNode(Self.at(Self.cylinder(0.006, 0.45, UIColor(white: 0.5, alpha: 1)), 0, -0.4, 0))
-                node.addChildNode(Self.at(balloon, x, 1.75 + CGFloat(index % 2) * 0.12, -half + 0.1))
+                node.addChildNode(Self.at(balloon, x, 1.95 + CGFloat(index % 2) * 0.12, -half + 0.1))
                 balloon.runAction(.repeatForever(.sequence([.moveBy(x: 0, y: 0.08, z: 0, duration: 1.1 + Double(index) * 0.2),
                                                             .moveBy(x: 0, y: -0.08, z: 0, duration: 1.1 + Double(index) * 0.2)])))
             }
@@ -953,7 +949,7 @@ final class MartScene {
             // 端に立てる特売のポップ
             let pop = Self.decalStanding(Self.label(product == .snack ? "⭐" : "✨", size: 50, color: .white,
                                                     background: UIColor(red: 0.95, green: 0.3, blue: 0.3, alpha: 1)), width: 0.5)
-            pop.position = SCNVector3(Float(rect.width / 2 + 0.05), 1.35, Float(half))
+            pop.position = SCNVector3(Float(rect.width / 2 + 0.05), 1.55, Float(half))
             pop.eulerAngles.y = -0.4
             node.addChildNode(pop)
         }
@@ -961,7 +957,10 @@ final class MartScene {
 
     /// 棚に並ぶ商品の形（包装の絵を貼った、缶・ペットボトル・袋・カップ・サンド・果物・くま）
     static func productModel(_ product: MartProduct) -> SCNNode {
+        let outer = SCNNode()
         let node = SCNNode()
+        node.scale = SCNVector3(1.2, 1.2, 1.2)
+        outer.addChildNode(node)
         let silver = UIColor(white: 0.86, alpha: 1)
         switch product {
         case .soda:
@@ -1046,8 +1045,9 @@ final class MartScene {
             }
         case .toy:
             // くまのぬいぐるみ（首にリボン）
-            let fur = UIColor(red: 0.78, green: 0.56, blue: 0.36, alpha: 1)
-            let light = UIColor(red: 0.95, green: 0.82, blue: 0.66, alpha: 1)
+            // ほかの商品とまぎれない、うすむらさきのくま
+            let fur = UIColor(red: 0.74, green: 0.58, blue: 0.95, alpha: 1)
+            let light = UIColor(red: 0.97, green: 0.9, blue: 1, alpha: 1)
             let dark = UIColor(white: 0.12, alpha: 1)
             let body = sphere(0.11, fur)
             body.scale = SCNVector3(1, 1.05, 0.9)
@@ -1070,10 +1070,10 @@ final class MartScene {
             }
             node.addChildNode(at(head, 0, 0.3, 0))
             for x in [-0.03, 0.03] as [CGFloat] {
-                node.addChildNode(at(sphere(0.025, product.color), x, 0.215, 0.05))
+                node.addChildNode(at(sphere(0.028, UIColor(red: 1, green: 0.4, blue: 0.55, alpha: 1)), x, 0.215, 0.05))
             }
         }
-        return node
+        return outer
     }
 
     /// 絵を貼る材料（同じ絵は使いまわす）
@@ -1166,39 +1166,6 @@ final class MartScene {
             case .sandwich, .fruit, .toy:
                 product.color.setFill()
                 context.fill(all)
-            }
-        }
-        imageCache[key] = image
-        return image
-    }
-
-    /// 棚の上の札：商品のアイコン・残りの数・8 マスのメーター（少ないと赤）
-    static func stockImage(_ product: MartProduct, count: Int) -> UIImage {
-        let key = "stock|\(product.rawValue)|\(count)"
-        if let cached = imageCache[key] { return cached }
-        let size = CGSize(width: 300, height: 120)
-        let image = UIGraphicsImageRenderer(size: size).image { _ in
-            let card = CGRect(x: 4, y: 4, width: 292, height: 108)
-            UIColor(white: 0, alpha: 0.15).setFill()
-            UIBezierPath(roundedRect: card.offsetBy(dx: 0, dy: 5), cornerRadius: 30).fill()
-            UIColor.white.setFill()
-            UIBezierPath(roundedRect: card, cornerRadius: 30).fill()
-            (product.icon as NSString).draw(at: CGPoint(x: 18, y: 18), withAttributes: [.font: UIFont.systemFont(ofSize: 60)])
-            let capacity = MartGame.shelfCapacity
-            let color: UIColor = count == 0 ? UIColor(red: 0.92, green: 0.25, blue: 0.25, alpha: 1)
-                : count <= capacity / 4 ? UIColor(red: 0.98, green: 0.6, blue: 0.15, alpha: 1)
-                : UIColor(red: 0.3, green: 0.75, blue: 0.4, alpha: 1)
-            let number = "\(count)" as NSString
-            let font = UIFont.systemFont(ofSize: 50, weight: .black).rounded()
-            number.draw(at: CGPoint(x: 106, y: 10), withAttributes: [.font: font, .foregroundColor: color])
-            // メーター
-            for index in 0..<capacity {
-                let pip = CGRect(x: 108 + CGFloat(index) * 22, y: 76, width: 18, height: 20)
-                (index < count ? color : UIColor(white: 0.88, alpha: 1)).setFill()
-                UIBezierPath(roundedRect: pip, cornerRadius: 5).fill()
-            }
-            if count == 0 {
-                ("❗" as NSString).draw(at: CGPoint(x: 232, y: 10), withAttributes: [.font: UIFont.systemFont(ofSize: 48)])
             }
         }
         imageCache[key] = image
@@ -1319,14 +1286,22 @@ final class MartScene {
         let node = SCNNode()
         let spot = MartGame.supplySpot(product.rawValue)
         node.addChildNode(Self.at(Self.box(1.0, 0.12, 1.0, UIColor(red: 0.78, green: 0.58, blue: 0.38, alpha: 1)), 0, 0.06, 0))
-        let cardboard = UIColor(red: 0.85, green: 0.65, blue: 0.42, alpha: 1)
-        for (x, z, levels) in [(-0.22, -0.22, 3), (0.22, -0.22, 2), (-0.22, 0.22, 2), (0.22, 0.22, 1)] as [(CGFloat, CGFloat, Int)] {
-            for level in 0..<levels {
-                let crate = Self.box(0.4, 0.34, 0.4, cardboard, chamfer: 0.02)
-                crate.addChildNode(Self.at(Self.box(0.3, 0.12, 0.41, product.color, chamfer: 0.01), 0, 0.02, 0))
-                node.addChildNode(Self.at(crate, x, 0.29 + CGFloat(level) * 0.35, z))
+        // 商品そのものを山に積む（3×3 を、奥ほど高く）。動かないので 1 つにまとめて軽くする
+        let pile = SCNNode()
+        let layer = CGFloat(CharacterNode.height(product))
+        for row in 0..<3 {
+            for column in 0..<3 {
+                let levels = row == 0 ? 3 : row == 1 ? 2 : 1
+                for level in 0..<levels {
+                    let item = Self.productModel(product)
+                    item.position = SCNVector3(Float(-0.32 + CGFloat(column) * 0.32), Float(0.12 + CGFloat(level) * layer),
+                                               Float(-0.32 + CGFloat(row) * 0.32))
+                    item.eulerAngles.y = Float((row * 3 + column + level) % 4) * 0.35 - 0.5
+                    pile.addChildNode(item)
+                }
             }
         }
+        node.addChildNode(pile.flattenedClone())
         // 床の受け取る場所
         let zone = Self.decal(Self.zoneImage(product), width: 1.7, length: 1.7)
         zone.position = SCNVector3(0.75, 0.015, 0)
@@ -1423,18 +1398,6 @@ final class MartScene {
         }
         lastStock = game.stock
         syncPads(game)
-        // 棚の上の札（数が変わったときだけ描き直す）
-        for (k, badge) in stockBadges {
-            let count = game.stock.indices.contains(k) ? game.stock[k] : 0
-            guard badgeCounts[k] != count, let product = MartProduct(rawValue: k) else { continue }
-            badgeCounts[k] = count
-            badge.geometry?.firstMaterial?.diffuse.contents = Self.stockImage(product, count: count)
-            if built, count == 0 {
-                badge.removeAllActions()
-                badge.scale = SCNVector3(1.3, 1.3, 1.3)
-                badge.runAction(.scale(to: 1, duration: 0.25))
-            }
-        }
         // かご
         for (index, basket) in standBasketNodes.enumerated() where basket.isHidden != (index >= game.standBaskets) {
             basket.isHidden = index >= game.standBaskets
@@ -1858,12 +1821,12 @@ final class CharacterNode {
     /// 積むときの、商品 1 つぶんの高さ
     static func height(_ product: MartProduct) -> Float {
         switch product {
-        case .soda: return 0.36
-        case .snack: return 0.36
-        case .noodle: return 0.25
-        case .sandwich: return 0.21
-        case .fruit: return 0.23
-        case .toy: return 0.4
+        case .soda: return 0.43
+        case .snack: return 0.43
+        case .noodle: return 0.3
+        case .sandwich: return 0.27
+        case .fruit: return 0.28
+        case .toy: return 0.48
         }
     }
 
