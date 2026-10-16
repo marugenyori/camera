@@ -347,28 +347,18 @@ struct MartPlayView: View {
     /// アップグレード（床の UPGRADE に立つと出る）
     private var upgradePanel: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("⬆️ アップグレード")
-                    .font(.system(size: 17, weight: .black, design: .rounded))
-                Spacer()
-                Text("出ると閉じます")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
-            }
             ForEach(MartUpgrade.allCases) { upgrade in
                 let level = game.upgradeLevel(upgrade)
                 let maxed = level >= MartUpgrade.maxLevel
                 let cost = upgrade.cost(level)
                 HStack(spacing: 10) {
                     Image(systemName: upgrade.symbol)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: 19, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
+                        .frame(width: 40, height: 40)
                         .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
                             .fill(Color(red: 0.45, green: 0.35, blue: 0.95)))
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(upgrade.title)
-                            .font(.system(size: 14, weight: .heavy, design: .rounded))
                         HStack(spacing: 3) {
                             ForEach(0..<MartUpgrade.maxLevel, id: \.self) { index in
                                 Capsule()
@@ -376,7 +366,7 @@ struct MartPlayView: View {
                                     .frame(width: 14, height: 5)
                             }
                             Text(upgrade.effect(level))
-                                .font(.caption2.weight(.bold))
+                                .font(.system(size: 13, weight: .heavy, design: .rounded))
                                 .foregroundStyle(.secondary)
                                 .padding(.leading, 4)
                         }

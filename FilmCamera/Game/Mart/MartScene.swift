@@ -26,6 +26,9 @@ final class MartScene {
     private var maxLabel = SCNNode()
     private var servingRing = SCNNode()
     private var standBasketNodes: [SCNNode] = []
+    private var stockBadges: [Int: SCNNode] = [:]
+    private var badgeCounts: [Int: Int] = [:]
+    private var lastCarry: [[MartProduct]] = []
     private var returnBasketNodes: [SCNNode] = []
 
     /// 画面に映す広さ（大きいほど引く。2 本指で変えられる）
@@ -185,12 +188,8 @@ final class MartScene {
             shape.addLine(to: CGPoint(x: 88, y: 95))
             shape.fill()
             if let product {
-                // 商品の小さな絵
-                let icon = CGRect(x: 22, y: 22, width: 52, height: 56)
-                product.color.setFill()
-                UIBezierPath(roundedRect: icon, cornerRadius: 12).fill()
-                product.accent.setFill()
-                UIBezierPath(rect: CGRect(x: icon.minX, y: icon.midY - 7, width: icon.width, height: 14)).fill()
+                // 商品のアイコン
+                (product.icon as NSString).draw(at: CGPoint(x: 16, y: 18), withAttributes: [.font: UIFont.systemFont(ofSize: 52)])
                 let text = "\(count)" as NSString
                 let font = UIFont.systemFont(ofSize: 50, weight: .black).rounded()
                 text.draw(at: CGPoint(x: 86, y: 18), withAttributes: [.font: font, .foregroundColor: UIColor(white: 0.15, alpha: 1)])
@@ -214,10 +213,10 @@ final class MartScene {
         if let cached = imageCache[key] { return cached }
         let font = UIFont.systemFont(ofSize: 34, weight: .bold).rounded()
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor(white: 0.15, alpha: 1)]
-        let parts = counts.map { "\($0.0.name) ×\($0.1)" }
+        let parts = counts.map { "\($0.0.icon)×\($0.1)" }
         let widths = parts.map { ($0 as NSString).size(withAttributes: attributes).width }
         let height: CGFloat = 60
-        let width = widths.reduce(0, +) + CGFloat(parts.count) * 44 + CGFloat(max(parts.count - 1, 0)) * 14 + 20
+        let width = widths.reduce(0, +) + CGFloat(parts.count) * 8 + CGFloat(max(parts.count - 1, 0)) * 14 + 20
         let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height + 8)).image { _ in
             UIColor(white: 0, alpha: 0.12).setFill()
             UIBezierPath(roundedRect: CGRect(x: 0, y: 6, width: width, height: height), cornerRadius: height / 2).fill()
@@ -225,14 +224,6 @@ final class MartScene {
             UIBezierPath(roundedRect: CGRect(x: 0, y: 0, width: width, height: height), cornerRadius: height / 2).fill()
             var x: CGFloat = 16
             for (index, part) in parts.enumerated() {
-                let product = counts[index].0
-                product.color.setFill()
-                UIBezierPath(ovalIn: CGRect(x: x, y: height / 2 - 13, width: 26, height: 26)).fill()
-                product.accent.setStroke()
-                let ring = UIBezierPath(ovalIn: CGRect(x: x + 2, y: height / 2 - 11, width: 22, height: 22))
-                ring.lineWidth = 4
-                ring.stroke()
-                x += 36
                 (part as NSString).draw(at: CGPoint(x: x, y: height / 2 - font.lineHeight / 2), withAttributes: attributes)
                 x += widths[index] + 22
             }
@@ -252,19 +243,21 @@ final class MartScene {
             border.setLineDash([26, 16], count: 2, phase: 0)
             UIColor.white.setStroke()
             border.stroke()
-            let config = UIImage.SymbolConfiguration(pointSize: min(pixels.width, pixels.height) * 0.2, weight: .bold)
-            if let symbol = UIImage(systemName: step.symbol, withConfiguration: config)?
-                .withTintColor(UIColor(white: 1, alpha: 0.95), renderingMode: .alwaysOriginal) {
-                symbol.draw(at: CGPoint(x: pixels.width / 2 - symbol.size.width / 2, y: pixels.height * 0.16))
+            // 文字は出さず、アイコンだけ（棚は商品の絵文字）
+            let side = min(pixels.width, pixels.height)
+            if case .shelf(let k) = step.kind, let product = MartProduct(rawValue: k) {
+                let icon = product.icon as NSString
+                let attributes: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: side * 0.3)]
+                let iconSize = icon.size(withAttributes: attributes)
+                icon.draw(at: CGPoint(x: pixels.width / 2 - iconSize.width / 2, y: pixels.height * 0.42 - iconSize.height / 2),
+                          withAttributes: attributes)
+            } else {
+                let config = UIImage.SymbolConfiguration(pointSize: side * 0.26, weight: .bold)
+                if let symbol = UIImage(systemName: step.symbol, withConfiguration: config)?
+                    .withTintColor(UIColor(white: 1, alpha: 0.95), renderingMode: .alwaysOriginal) {
+                    symbol.draw(at: CGPoint(x: pixels.width / 2 - symbol.size.width / 2, y: pixels.height * 0.42 - symbol.size.height / 2))
+                }
             }
-            let titleFont = UIFont.systemFont(ofSize: min(pixels.width, pixels.height) * 0.12, weight: .heavy).rounded()
-            let title = step.title as NSString
-            let titleAttributes: [NSAttributedString.Key: Any] = [
-                .font: titleFont, .foregroundColor: UIColor.white,
-                .strokeColor: UIColor(white: 0, alpha: 0.35), .strokeWidth: -3,
-            ]
-            let titleSize = title.size(withAttributes: titleAttributes)
-            title.draw(at: CGPoint(x: pixels.width / 2 - titleSize.width / 2, y: pixels.height * 0.47), withAttributes: titleAttributes)
             let price = MartYen.text(remaining) as NSString
             let priceAttributes: [NSAttributedString.Key: Any] = [
                 .font: UIFont.systemFont(ofSize: min(pixels.width, pixels.height) * 0.16, weight: .black).rounded(),
@@ -679,7 +672,7 @@ final class MartScene {
         let stand = SCNNode()
         stand.addChildNode(Self.at(Self.box(0.6, 0.1, 0.45, UIColor(white: 0.35, alpha: 1)), 0, 0.05, 0))
         stand.addChildNode(Self.at(Self.cylinder(0.025, 1.3, UIColor(white: 0.55, alpha: 1)), 0.28, 0.65, -0.2))
-        let sign = Self.decalStanding(Self.label("かご", size: 50, color: .white, background: UIColor(red: 0.9, green: 0.22, blue: 0.25, alpha: 1)),
+        let sign = Self.decalStanding(Self.label("🧺", size: 60, color: .white, background: UIColor(red: 0.9, green: 0.22, blue: 0.25, alpha: 1)),
                                       width: 0.5)
         sign.position = SCNVector3(0.28, 1.35, -0.18)
         stand.addChildNode(sign)
@@ -710,13 +703,28 @@ final class MartScene {
             world.addChildNode(basket)
             returnBasketNodes.append(basket)
         }
+        // ゴミ箱
+        let trash = SCNNode()
+        let bin = SCNNode(geometry: SCNCone(topRadius: 0.3, bottomRadius: 0.24, height: 0.75))
+        bin.geometry?.materials = [Self.material(UIColor(red: 0.45, green: 0.52, blue: 0.6, alpha: 1))]
+        trash.addChildNode(Self.at(bin, 0, 0.375, 0))
+        trash.addChildNode(Self.at(Self.cylinder(0.32, 0.06, UIColor(red: 0.32, green: 0.38, blue: 0.45, alpha: 1)), 0, 0.78, 0))
+        trash.addChildNode(Self.at(Self.box(0.32, 0.03, 0.1, UIColor(white: 0.12, alpha: 1), chamfer: 0.01), 0, 0.815, 0))
+        let trashIcon = Self.billboard(Self.label("🗑️", size: 60, background: .white), width: 0.55)
+        trashIcon.position = SCNVector3(0, 1.35, 0)
+        trash.addChildNode(trashIcon)
+        trash.position = SCNVector3(Float(MartGame.trashSpot.x), 0, Float(MartGame.trashSpot.y))
+        world.addChildNode(trash)
+        let trashZone = Self.decal(Self.zoneImage(color: UIColor(white: 0.45, alpha: 1), icon: ""), width: 1.7, length: 1.7)
+        trashZone.position = SCNVector3(Float(MartGame.trashSpot.x), 0.014, Float(MartGame.trashSpot.y))
+        world.addChildNode(trashZone)
         // アップグレードの場所（左下）
         let zone = MartGame.upgradeZone
         let upgrade = Self.decal(Self.upgradeImage(), width: zone.width, length: zone.height)
         upgrade.position = SCNVector3(Float(zone.midX), 0.014, Float(zone.midY))
         world.addChildNode(upgrade)
-        let mark = Self.billboard(Self.label("⬆️ UPGRADE", size: 44, color: .white,
-                                             background: UIColor(red: 0.45, green: 0.35, blue: 0.95, alpha: 1)), width: 1.5)
+        let mark = Self.billboard(Self.label("⬆️", size: 60, color: .white,
+                                             background: UIColor(red: 0.45, green: 0.35, blue: 0.95, alpha: 1)), width: 0.7)
         mark.position = SCNVector3(Float(zone.midX), 1.3, Float(zone.midY))
         mark.runAction(.repeatForever(.sequence([.moveBy(x: 0, y: 0.15, z: 0, duration: 0.8), .moveBy(x: 0, y: -0.15, z: 0, duration: 0.8)])))
         world.addChildNode(mark)
@@ -753,13 +761,8 @@ final class MartScene {
             border.lineWidth = 10
             purple.setStroke()
             border.stroke()
-            let font = UIFont.systemFont(ofSize: 62, weight: .black).rounded()
-            let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white,
-                                                             .strokeColor: purple, .strokeWidth: -4]
-            let text = "UPGRADE" as NSString
-            let textSize = text.size(withAttributes: attributes)
-            text.draw(at: CGPoint(x: (size.width - textSize.width) / 2, y: 150 - textSize.height / 2), withAttributes: attributes)
-            ("⬆️" as NSString).draw(at: CGPoint(x: 172, y: 30), withAttributes: [.font: UIFont.systemFont(ofSize: 64)])
+            ("💰" as NSString).draw(at: CGPoint(x: 96, y: 68), withAttributes: [.font: UIFont.systemFont(ofSize: 100)])
+            ("⬆️" as NSString).draw(at: CGPoint(x: 216, y: 68), withAttributes: [.font: UIFont.systemFont(ofSize: 100)])
         }
         imageCache[key] = image
         return image
@@ -833,9 +836,18 @@ final class MartScene {
         }
         guard let product = MartProduct(rawValue: k) else { return node }
         // 上の看板（売り場の名前）と、段ごとの値札
-        let header = Self.decalStanding(Self.label(product.name, size: 48, color: .white, background: product.accent), width: 1.1)
-        header.position = SCNVector3(0, 1.38, Float(-rect.height / 2 + 0.07))
-        if product != .soda && product != .sandwich { node.addChildNode(header) }
+        // 上に、商品のアイコンと残りの数（8 マスのメーター）
+        let badge = Self.billboard(Self.stockImage(product, count: 0), width: 1.25)
+        let badgeHeight: Float
+        switch product {
+        case .soda: badgeHeight = 2.75
+        case .toy: badgeHeight = 2.45
+        case .sandwich, .fruit: badgeHeight = 2.15
+        case .snack, .noodle: badgeHeight = 1.95
+        }
+        badge.position = SCNVector3(0, badgeHeight, 0)
+        node.addChildNode(badge)
+        stockBadges[k] = badge
         let price = Self.label(MartYen.text(product.price), size: 40, color: UIColor(white: 0.12, alpha: 1),
                                background: UIColor(red: 1, green: 0.88, blue: 0.25, alpha: 1))
         for y in [0.08, 0.49] as [CGFloat] {
@@ -884,8 +896,8 @@ final class MartScene {
             inner.geometry?.materials = [Self.material(UIColor(red: 0.62, green: 0.8, blue: 0.95, alpha: 1), emission: true)]
             node.addChildNode(Self.at(inner, 0, height / 2, -half + 0.04))
             // 上の光る看板
-            let sign = Self.decalStanding(Self.label(tall ? "COLD DRINKS" : "FRESH", size: 44, color: .white,
-                                                     background: UIColor(red: 0.2, green: 0.55, blue: 0.95, alpha: 1)), width: 1.3)
+            let sign = Self.decalStanding(Self.label("❄️", size: 60, color: .white,
+                                                     background: UIColor(red: 0.2, green: 0.55, blue: 0.95, alpha: 1)), width: 0.6)
             sign.position = SCNVector3(0, Float(height + 0.2), Float(-half))
             node.addChildNode(sign)
             if tall {
@@ -939,7 +951,7 @@ final class MartScene {
             }
         case .snack, .noodle:
             // 端に立てる特売のポップ
-            let pop = Self.decalStanding(Self.label(product == .snack ? "人気!" : "NEW", size: 40, color: .white,
+            let pop = Self.decalStanding(Self.label(product == .snack ? "⭐" : "✨", size: 50, color: .white,
                                                     background: UIColor(red: 0.95, green: 0.3, blue: 0.3, alpha: 1)), width: 0.5)
             pop.position = SCNVector3(Float(rect.width / 2 + 0.05), 1.35, Float(half))
             pop.eulerAngles.y = -0.4
@@ -1160,6 +1172,56 @@ final class MartScene {
         return image
     }
 
+    /// 棚の上の札：商品のアイコン・残りの数・8 マスのメーター（少ないと赤）
+    static func stockImage(_ product: MartProduct, count: Int) -> UIImage {
+        let key = "stock|\(product.rawValue)|\(count)"
+        if let cached = imageCache[key] { return cached }
+        let size = CGSize(width: 300, height: 120)
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            let card = CGRect(x: 4, y: 4, width: 292, height: 108)
+            UIColor(white: 0, alpha: 0.15).setFill()
+            UIBezierPath(roundedRect: card.offsetBy(dx: 0, dy: 5), cornerRadius: 30).fill()
+            UIColor.white.setFill()
+            UIBezierPath(roundedRect: card, cornerRadius: 30).fill()
+            (product.icon as NSString).draw(at: CGPoint(x: 18, y: 18), withAttributes: [.font: UIFont.systemFont(ofSize: 60)])
+            let capacity = MartGame.shelfCapacity
+            let color: UIColor = count == 0 ? UIColor(red: 0.92, green: 0.25, blue: 0.25, alpha: 1)
+                : count <= capacity / 4 ? UIColor(red: 0.98, green: 0.6, blue: 0.15, alpha: 1)
+                : UIColor(red: 0.3, green: 0.75, blue: 0.4, alpha: 1)
+            let number = "\(count)" as NSString
+            let font = UIFont.systemFont(ofSize: 50, weight: .black).rounded()
+            number.draw(at: CGPoint(x: 106, y: 10), withAttributes: [.font: font, .foregroundColor: color])
+            // メーター
+            for index in 0..<capacity {
+                let pip = CGRect(x: 108 + CGFloat(index) * 22, y: 76, width: 18, height: 20)
+                (index < count ? color : UIColor(white: 0.88, alpha: 1)).setFill()
+                UIBezierPath(roundedRect: pip, cornerRadius: 5).fill()
+            }
+            if count == 0 {
+                ("❗" as NSString).draw(at: CGPoint(x: 232, y: 10), withAttributes: [.font: UIFont.systemFont(ofSize: 48)])
+            }
+        }
+        imageCache[key] = image
+        return image
+    }
+
+    /// 店員の足もとの輪（自分・仲間・係を見分ける）
+    static func ringImage(_ color: UIColor) -> UIImage {
+        let key = "ring|\(color)"
+        if let cached = imageCache[key] { return cached }
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 160, height: 160)).image { _ in
+            let circle = CGRect(x: 12, y: 12, width: 136, height: 136)
+            color.withAlphaComponent(0.25).setFill()
+            UIBezierPath(ovalIn: circle).fill()
+            let ring = UIBezierPath(ovalIn: circle)
+            ring.lineWidth = 12
+            color.setStroke()
+            ring.stroke()
+        }
+        imageCache[key] = image
+        return image
+    }
+
     /// サンドの断面（パン・レタス・たまご・ハム）
     static func sandwichImage() -> UIImage {
         let key = "sandwich-cut"
@@ -1269,7 +1331,7 @@ final class MartScene {
         let zone = Self.decal(Self.zoneImage(product), width: 1.7, length: 1.7)
         zone.position = SCNVector3(0.75, 0.015, 0)
         node.addChildNode(zone)
-        let sign = Self.billboard(Self.label(product.label, size: 40, color: .white, background: product.accent), width: 0.95)
+        let sign = Self.billboard(Self.label(product.icon, size: 60, color: .white, background: product.accent), width: 0.6)
         sign.position = SCNVector3(0, 1.75, 0)
         node.addChildNode(sign)
         node.position = SCNVector3(Float(spot.x - 0.75), 0, Float(spot.y))
@@ -1361,6 +1423,18 @@ final class MartScene {
         }
         lastStock = game.stock
         syncPads(game)
+        // 棚の上の札（数が変わったときだけ描き直す）
+        for (k, badge) in stockBadges {
+            let count = game.stock.indices.contains(k) ? game.stock[k] : 0
+            guard badgeCounts[k] != count, let product = MartProduct(rawValue: k) else { continue }
+            badgeCounts[k] = count
+            badge.geometry?.firstMaterial?.diffuse.contents = Self.stockImage(product, count: count)
+            if built, count == 0 {
+                badge.removeAllActions()
+                badge.scale = SCNVector3(1.3, 1.3, 1.3)
+                badge.runAction(.scale(to: 1, duration: 0.25))
+            }
+        }
         // かご
         for (index, basket) in standBasketNodes.enumerated() where basket.isHidden != (index >= game.standBaskets) {
             basket.isHidden = index >= game.standBaskets
@@ -1382,9 +1456,18 @@ final class MartScene {
         }
         while playerNodes.count > game.players.count { playerNodes.removeLast().root.removeFromParentNode() }
         for (index, walker) in game.players.enumerated() {
+            let before = lastCarry.indices.contains(index) ? lastCarry[index] : []
+            let hand = playerNodes[index].handPosition
             let added = playerNodes[index].update(walker, smooth: index == game.me ? 1 : smooth, dt: dt)
             flyFromSupply(added, carry: walker.carry)
+            // ゴミ箱に捨てた商品が、箱へ飛んでいく
+            if built, walker.carry.count < before.count, let thrown = before.last,
+               hypot(walker.pos.x - MartGame.trashSpot.x, walker.pos.y - MartGame.trashSpot.y) < 1.2 {
+                flyClone(Self.productModel(thrown), from: hand,
+                         to: SCNVector3(Float(MartGame.trashSpot.x), 0.8, Float(MartGame.trashSpot.y)), duration: 0.22, shrink: true)
+            }
         }
+        lastCarry = game.players.map(\.carry)
         var seen = Set<UUID>()
         for customer in game.customers {
             seen.insert(customer.id)
@@ -1761,11 +1844,15 @@ final class CharacterNode {
     private var stride: Float = 0
     private let showsLabel: Bool
 
+    /// 係（品出し・レジ）の制服の色
+    static let helperColor = UIColor(red: 0.18, green: 0.7, blue: 0.45, alpha: 1)
+
+    /// お客さんの服：店員の青・赤・緑とまぎれない、落ち着いた私服の色
     private static let customerColors: [UIColor] = [
-        UIColor(red: 0.45, green: 0.6, blue: 0.85, alpha: 1), UIColor(red: 0.9, green: 0.58, blue: 0.55, alpha: 1),
-        UIColor(red: 0.55, green: 0.75, blue: 0.6, alpha: 1), UIColor(red: 0.95, green: 0.8, blue: 0.5, alpha: 1),
-        UIColor(red: 0.7, green: 0.6, blue: 0.85, alpha: 1), UIColor(red: 0.5, green: 0.75, blue: 0.78, alpha: 1),
-        UIColor(red: 0.92, green: 0.7, blue: 0.78, alpha: 1), UIColor(red: 0.62, green: 0.64, blue: 0.7, alpha: 1),
+        UIColor(red: 0.93, green: 0.86, blue: 0.72, alpha: 1), UIColor(red: 0.95, green: 0.72, blue: 0.78, alpha: 1),
+        UIColor(red: 0.74, green: 0.66, blue: 0.88, alpha: 1), UIColor(red: 0.98, green: 0.84, blue: 0.45, alpha: 1),
+        UIColor(red: 0.6, green: 0.48, blue: 0.4, alpha: 1), UIColor(red: 0.96, green: 0.96, blue: 0.94, alpha: 1),
+        UIColor(red: 0.98, green: 0.66, blue: 0.5, alpha: 1), UIColor(red: 0.55, green: 0.56, blue: 0.6, alpha: 1),
     ]
 
     /// 積むときの、商品 1 つぶんの高さ
@@ -1785,12 +1872,13 @@ final class CharacterNode {
         let shirt: UIColor
         let pants: UIColor
         switch style {
-        case .staff:
-            shirt = UIColor(red: 0.22, green: 0.25, blue: 0.32, alpha: 1)
-            pants = UIColor(red: 0.18, green: 0.2, blue: 0.26, alpha: 1)
+        case .staff(let cap):
+            // 店員は帽子と同じ色のはっきりした制服
+            shirt = cap
+            pants = UIColor(red: 0.16, green: 0.18, blue: 0.24, alpha: 1)
         case .helper:
-            shirt = UIColor(red: 0.3, green: 0.48, blue: 0.4, alpha: 1)
-            pants = UIColor(red: 0.2, green: 0.26, blue: 0.24, alpha: 1)
+            shirt = Self.helperColor
+            pants = UIColor(red: 0.16, green: 0.18, blue: 0.24, alpha: 1)
         case .customer(let index):
             shirt = Self.customerColors[index % Self.customerColors.count]
             pants = [UIColor(red: 0.27, green: 0.31, blue: 0.42, alpha: 1), UIColor(red: 0.4, green: 0.36, blue: 0.33, alpha: 1),
@@ -1840,13 +1928,29 @@ final class CharacterNode {
             brim.scale = SCNVector3(1.5, 1, 1.1)
             brim.position = SCNVector3(0.14, 0.5, 0)
             body.addChildNode(brim)
-            let apron = MartScene.box(0.04, 0.42, 0.26, cap, chamfer: 0.015)
+            let apron = MartScene.box(0.04, 0.42, 0.26, UIColor(white: 0.97, alpha: 1), chamfer: 0.015)
             apron.position = SCNVector3(0.155, -0.08, 0)
             body.addChildNode(apron)
+            // 足もとの輪（自分・仲間を見分ける）
+            let ring = MartScene.decal(MartScene.ringImage(cap), width: 0.95, length: 0.95)
+            ring.position = SCNVector3(0, 0.03, 0)
+            root.addChildNode(ring)
+            ring.runAction(.repeatForever(.sequence([.scale(to: 1.12, duration: 0.6), .scale(to: 1, duration: 0.6)])))
         case .helper:
-            let apron = MartScene.box(0.04, 0.42, 0.26, UIColor(white: 0.96, alpha: 1), chamfer: 0.015)
+            let crown = MartScene.sphere(0.162, Self.helperColor.darker(0.08))
+            crown.scale = SCNVector3(1, 0.6, 1)
+            crown.position = SCNVector3(0, 0.53, 0)
+            body.addChildNode(crown)
+            let brim = MartScene.cylinder(0.11, 0.025, Self.helperColor.darker(0.08))
+            brim.scale = SCNVector3(1.5, 1, 1.1)
+            brim.position = SCNVector3(0.14, 0.5, 0)
+            body.addChildNode(brim)
+            let apron = MartScene.box(0.04, 0.42, 0.26, UIColor(white: 0.97, alpha: 1), chamfer: 0.015)
             apron.position = SCNVector3(0.155, -0.08, 0)
             body.addChildNode(apron)
+            let ring = MartScene.decal(MartScene.ringImage(Self.helperColor), width: 0.8, length: 0.8)
+            ring.position = SCNVector3(0, 0.03, 0)
+            root.addChildNode(ring)
         case .customer(let index):
             let hairColors: [UIColor] = [UIColor(red: 0.22, green: 0.16, blue: 0.12, alpha: 1), UIColor(red: 0.1, green: 0.09, blue: 0.09, alpha: 1),
                                          UIColor(red: 0.8, green: 0.62, blue: 0.32, alpha: 1), UIColor(red: 0.5, green: 0.28, blue: 0.17, alpha: 1)]

@@ -43,6 +43,18 @@ enum MartProduct: Int, CaseIterable, Codable {
         }
     }
 
+    /// 絵文字のアイコン（文字の代わりに出す）
+    var icon: String {
+        switch self {
+        case .soda: return "🥤"
+        case .snack: return "🍿"
+        case .noodle: return "🍜"
+        case .sandwich: return "🥪"
+        case .fruit: return "🍎"
+        case .toy: return "🧸"
+        }
+    }
+
     var accent: UIColor {
         switch self {
         case .soda: return UIColor(red: 0.2, green: 0.4, blue: 0.92, alpha: 1)
@@ -126,7 +138,7 @@ struct MartStep {
         case .stocker: return "品出し係"
         case .capacity: return "運べる数 +2"
         case .speed: return "スピードアップ"
-        case .customers: return "お客さん +2"
+        case .customers: return "お客さん +3"
         }
     }
 
@@ -275,6 +287,8 @@ final class MartGame: ObservableObject {
     nonisolated static let basketStand = CGPoint(x: 20.3, y: 12.4)
     nonisolated static let basketReturn = CGPoint(x: 16.3, y: 6.7)
     nonisolated static let basketStandMax = 12
+    /// ゴミ箱（間違えて取った商品を捨てる）
+    nonisolated static let trashSpot = CGPoint(x: 3.3, y: 6.2)
     /// アップグレードの場所（左下）
     nonisolated static let upgradeZone = CGRect(x: 0.6, y: 14.0, width: 2.6, height: 1.6)
     /// お客さんが通る縦の通路（棚とレジのあいだ）
@@ -341,7 +355,7 @@ final class MartGame: ObservableObject {
     private(set) var hasCashier = false
     private(set) var capacity = 4
     private(set) var speed: CGFloat = 4.3
-    private(set) var maxCustomers = 3
+    private(set) var maxCustomers = 5
     /// かご置き場のかご・返ってきたかご
     private(set) var standBaskets = 6
     private(set) var returnedBaskets = 0
@@ -586,7 +600,7 @@ final class MartGame: ObservableObject {
         let r: CGFloat = 0.28
         let inner = Self.floor.insetBy(dx: r + 0.1, dy: r + 0.1)
         if !inner.contains(point) { return true }
-        var walls = [Self.counter]
+        var walls = [Self.counter, CGRect(x: Self.trashSpot.x - 0.3, y: Self.trashSpot.y - 0.3, width: 0.6, height: 0.6)]
         walls += unlocked.map { Self.shelfRect($0) }
         for k in unlocked {
             let spot = Self.supplySpot(k)
@@ -608,21 +622,27 @@ final class MartGame: ObservableObject {
            players[index].baskets < capacity + 2, pickTimers[index] <= 0 {
             returnedBaskets -= 1
             players[index].baskets += 1
-            pickTimers[index] = 0.1
+            pickTimers[index] = 0.07
             tick()
         }
         if players[index].baskets > 0, distance(pos, Self.basketStand) < 1.3, standBaskets < Self.basketStandMax,
            dropTimers[index] <= 0 {
             players[index].baskets -= 1
             standBaskets += 1
-            dropTimers[index] = 0.09
+            dropTimers[index] = 0.06
+            tick()
+        }
+        // ゴミ箱：そばにいると、持っている商品を 1 つずつ捨てる
+        if !players[index].carry.isEmpty, distance(pos, Self.trashSpot) < 0.85, dropTimers[index] <= 0 {
+            players[index].carry.removeLast()
+            dropTimers[index] = 0.06
             tick()
         }
         // 倉庫の台：そばにいる間、運べる数まで受け取る（かごを持っていないとき）
         for product in unlockedProducts where distance(pos, Self.supplySpot(product.rawValue)) < 1.15 && players[index].baskets == 0 {
             if players[index].carry.count < capacity, pickTimers[index] <= 0 {
                 players[index].carry.append(product)
-                pickTimers[index] = 0.1
+                pickTimers[index] = 0.07
                 tick()
             }
         }
@@ -634,7 +654,7 @@ final class MartGame: ObservableObject {
             players[index].carry.remove(at: at)
             stock[product.rawValue] += 1
             stats.shelved += 1
-            dropTimers[index] = 0.09
+            dropTimers[index] = 0.06
             tick()
         }
     }
@@ -646,7 +666,7 @@ final class MartGame: ObservableObject {
             serving = 0
             return
         }
-        serving += dt / (hasCashier ? 0.8 : 0.55) * (1 + 0.2 * Double(upgradeLevel(.cashier)))
+        serving += dt / (hasCashier ? 0.6 : 0.4) * (1 + 0.2 * Double(upgradeLevel(.cashier)))
         guard serving >= 1 else { return }
         serving = 0
         let customer = customers[index]
@@ -734,8 +754,8 @@ final class MartGame: ObservableObject {
         unlocked = [0]
         hasCashier = false
         capacity = 4
-        speed = 4.3
-        maxCustomers = 3
+        speed = 4.8
+        maxCustomers = 5
         var stockers = 0
         for index in done.sorted() where Self.steps.indices.contains(index) {
             switch Self.steps[index].kind {
@@ -744,7 +764,7 @@ final class MartGame: ObservableObject {
             case .stocker: stockers += 1
             case .capacity: capacity += 2
             case .speed: speed += 0.9
-            case .customers: maxCustomers += 2
+            case .customers: maxCustomers += 3
             }
         }
         capacity += 2 * upgradeLevel(.capacity)
@@ -767,7 +787,7 @@ final class MartGame: ObservableObject {
     private func spawnCustomers(_ dt: Double) {
         spawnTimer -= dt
         guard spawnTimer <= 0, customers.count < maxCustomers, let product = unlockedProducts.randomElement() else { return }
-        spawnTimer = Double.random(in: 1.2...3.0)
+        spawnTimer = Double.random(in: 0.5...1.4)
         let want = Int.random(in: 1...min(4, 1 + level / 3))
         var customer = MartCustomer(walker: MartWalker(pos: Self.outside), product: product, want: want,
                                     shirt: Int.random(in: 0..<8))
@@ -779,7 +799,7 @@ final class MartGame: ObservableObject {
     private func updateCustomer(_ customer: inout MartCustomer, _ dt: Double) {
         switch customer.phase {
         case .toBasket:
-            guard follow(&customer.walker, path: &customer.path, speed: 2.7, dt: dt) else { return }
+            guard follow(&customer.walker, path: &customer.path, speed: 3.4, dt: dt) else { return }
             customer.walker.heading = -.pi / 2
             if standBaskets > 0 {
                 // かごを取って、棚へ
@@ -799,7 +819,7 @@ final class MartGame: ObservableObject {
                 }
             }
         case .toShelf:
-            if follow(&customer.walker, path: &customer.path, speed: 2.7, dt: dt) {
+            if follow(&customer.walker, path: &customer.path, speed: 3.4, dt: dt) {
                 customer.phase = .shopping
                 // 棚のほうを向く
                 customer.walker.heading = -.pi / 2
@@ -810,7 +830,7 @@ final class MartGame: ObservableObject {
             if customer.timer <= 0, stock[k] > 0, customer.got < customer.want {
                 stock[k] -= 1
                 customer.got += 1
-                customer.timer = 0.4
+                customer.timer = 0.25
                 customer.waited = 0
             } else if stock[k] == 0, customer.got < customer.want {
                 customer.waited += dt
@@ -834,7 +854,7 @@ final class MartGame: ObservableObject {
                 customer.path = [CGPoint(x: Self.aisleX, y: front.y)]
             }
         case .toQueue:
-            if follow(&customer.walker, path: &customer.path, speed: 2.7, dt: dt) {
+            if follow(&customer.walker, path: &customer.path, speed: 3.4, dt: dt) {
                 customer.phase = .queued
                 customer.waited = 0
             }
@@ -857,11 +877,11 @@ final class MartGame: ObservableObject {
             var target = Self.serveSpot
             target.y += 0.85 * CGFloat(index)
             var path = [target]
-            if follow(&customer.walker, path: &path, speed: 2.7, dt: dt) {
+            if follow(&customer.walker, path: &path, speed: 3.4, dt: dt) {
                 customer.walker.heading = 0
             }
         case .leaving:
-            _ = follow(&customer.walker, path: &customer.path, speed: 3.1, dt: dt)
+            _ = follow(&customer.walker, path: &customer.path, speed: 3.9, dt: dt)
         }
     }
 
@@ -901,7 +921,7 @@ final class MartGame: ObservableObject {
             helper.path = [CGPoint(x: Self.helperX, y: helper.walker.pos.y), CGPoint(x: Self.helperX, y: supply.y)]
             helper.phase = .toSupply
         case .toSupply:
-            if follow(&helper.walker, path: &helper.path, speed: 3.1 * (1 + 0.2 * CGFloat(upgradeLevel(.staff))), dt: dt) { helper.phase = .loading }
+            if follow(&helper.walker, path: &helper.path, speed: 3.7 * (1 + 0.2 * CGFloat(upgradeLevel(.staff))), dt: dt) { helper.phase = .loading }
         case .loading:
             helper.timer -= dt
             if helper.timer <= 0 {
@@ -914,7 +934,7 @@ final class MartGame: ObservableObject {
                 helper.phase = .toShelf
             }
         case .toShelf:
-            if follow(&helper.walker, path: &helper.path, speed: 3.1 * (1 + 0.2 * CGFloat(upgradeLevel(.staff))), dt: dt) { helper.phase = .unloading }
+            if follow(&helper.walker, path: &helper.path, speed: 3.7 * (1 + 0.2 * CGFloat(upgradeLevel(.staff))), dt: dt) { helper.phase = .unloading }
         case .unloading:
             helper.timer -= dt
             let k = helper.target.rawValue
