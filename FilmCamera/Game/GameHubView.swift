@@ -8,7 +8,7 @@ struct GameHubView: View {
     @State private var playing: Game?
 
     enum Game: String, Identifiable {
-        case jewel, candy, romance, chameleon, hakoniwa
+        case jewel, candy, romance, chameleon, hakoniwa, civ
         var id: String { rawValue }
     }
 
@@ -29,6 +29,8 @@ struct GameHubView: View {
                            systemImage: "lizard.fill", colors: [.green, .teal]) { playing = .chameleon }
                 gameButton(title: "ちいさな箱庭", subtitle: "地面を塗って家や木を置く。人や動物が歩きまわる",
                            systemImage: "house.lodge.fill", colors: [.mint, .blue]) { playing = .hakoniwa }
+                gameButton(title: "ふたりの文明", subtitle: "2 人で交代に文明を育てる。近くでも、離れていても",
+                           systemImage: "globe.asia.australia.fill", colors: [.orange, .indigo]) { playing = .civ }
                 Spacer()
                 Button("カメラに戻る") { dismiss() }
                     .padding(.bottom, 24)
@@ -43,6 +45,7 @@ struct GameHubView: View {
             case .romance: RomanceGameView()
             case .chameleon: ChameleonGameView(initialImage: initialImage)
             case .hakoniwa: HakoniwaGameView()
+            case .civ: CivGameView()
             }
         }
     }
