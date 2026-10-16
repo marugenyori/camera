@@ -345,7 +345,7 @@ final class CivSession: ObservableObject {
 /// 近くの iPhone と直接つなぐ。作る人は待ち受け（advertiser）、参加する人は探して（browser）招待を送る
 final class CivNearby: NSObject, MCSessionDelegate, MCNearbyServiceAdvertiserDelegate, MCNearbyServiceBrowserDelegate,
     @unchecked Sendable {
-    static let service = "filmciv"
+    private let service: String
 
     private let peer: MCPeerID
     private let session: MCSession
@@ -356,7 +356,9 @@ final class CivNearby: NSObject, MCSessionDelegate, MCNearbyServiceAdvertiserDel
     var onReceive: (@MainActor (Data) -> Void)?
     var onPeers: (@MainActor (Int) -> Void)?
 
-    init(name: String, host: Bool) {
+    /// service は Info.plist の NSBonjourServices に書いた名前（_名前._tcp）
+    init(name: String, host: Bool, service: String = "filmciv") {
+        self.service = service
         peer = MCPeerID(displayName: String(name.prefix(30)))
         session = MCSession(peer: peer, securityIdentity: nil, encryptionPreference: .required)
         self.host = host
@@ -366,12 +368,12 @@ final class CivNearby: NSObject, MCSessionDelegate, MCNearbyServiceAdvertiserDel
 
     func start() {
         if host {
-            let advertiser = MCNearbyServiceAdvertiser(peer: peer, discoveryInfo: nil, serviceType: Self.service)
+            let advertiser = MCNearbyServiceAdvertiser(peer: peer, discoveryInfo: nil, serviceType: service)
             advertiser.delegate = self
             advertiser.startAdvertisingPeer()
             self.advertiser = advertiser
         } else {
-            let browser = MCNearbyServiceBrowser(peer: peer, serviceType: Self.service)
+            let browser = MCNearbyServiceBrowser(peer: peer, serviceType: service)
             browser.delegate = self
             browser.startBrowsingForPeers()
             self.browser = browser
@@ -384,9 +386,9 @@ final class CivNearby: NSObject, MCSessionDelegate, MCNearbyServiceAdvertiserDel
         session.disconnect()
     }
 
-    func send(_ data: Data) {
+    func send(_ data: Data, reliable: Bool = true) {
         guard !session.connectedPeers.isEmpty else { return }
-        try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
+        try? session.send(data, toPeers: session.connectedPeers, with: reliable ? .reliable : .unreliable)
     }
 
     func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didReceiveInvitationFromPeer peerID: MCPeerID,

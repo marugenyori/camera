@@ -29,6 +29,8 @@
 	<array>
 		<string>_filmciv._tcp</string>
 		<string>_filmciv._udp</string>
+		<string>_filmmart._tcp</string>
+		<string>_filmmart._udp</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>

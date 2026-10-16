@@ -1,10 +1,12 @@
 import SwiftUI
 
 /// 「まちかどマート」：お店の経営ゲーム（スーパーマーケット・シミュレーション）。
-/// 指でなぞって店員を動かし、倉庫の台で商品を受け取り（頭の上まで積んで運ぶ）、棚のそばに行くと並べる。
-/// お客さんは棚から商品を取ってレジに並び、店員がレジの場所に立つと会計してお金が出る。お金のそばを通ると拾える。
+/// 指でなぞって店員を動かし、倉庫の台で商品を受け取り（手の上に高く積んで運ぶ）、棚のそばに行くと並べる。
+/// お客さんは棚から商品を取ってレジに並び、店員がレジの奥に立つと会計してお金が出る。お金のそばを通ると拾える。
 /// 床の点線の「解放マーク」の上に立つとお金を払い、新しい棚・レジ係・品出し係・運べる数・速さなどが増える。
-/// 座標はお店の床のマス（x は右下、y は左下へ）。描くのは MartRenderer
+/// 2 人で遊ぶとき（近くの iPhone と直接つなぐ）は、お店を開いた人（ホスト）がお店を動かし、
+/// 遊びに来た人（ゲスト）は自分の位置を送って、ホストから 1 秒に 15 回お店の様子（MartSnapshot）を受け取る。
+/// お金は 2 人で共通。座標はお店の床のマス（x は右下、y は左下へ）。描くのは MartScene（SceneKit の 3D）
 enum MartProduct: Int, CaseIterable, Codable {
     case soda, snack, noodle, sandwich, fruit, toy
 
@@ -30,25 +32,25 @@ enum MartProduct: Int, CaseIterable, Codable {
         }
     }
 
-    var color: Color {
+    var color: UIColor {
         switch self {
-        case .soda: return Color(red: 0.9, green: 0.2, blue: 0.25)
-        case .snack: return Color(red: 1, green: 0.75, blue: 0.15)
-        case .noodle: return Color(red: 0.95, green: 0.95, blue: 0.9)
-        case .sandwich: return Color(red: 0.95, green: 0.6, blue: 0.3)
-        case .fruit: return Color(red: 0.4, green: 0.8, blue: 0.3)
-        case .toy: return Color(red: 0.6, green: 0.45, blue: 0.95)
+        case .soda: return UIColor(red: 0.92, green: 0.2, blue: 0.24, alpha: 1)
+        case .snack: return UIColor(red: 1, green: 0.78, blue: 0.15, alpha: 1)
+        case .noodle: return UIColor(red: 0.97, green: 0.95, blue: 0.9, alpha: 1)
+        case .sandwich: return UIColor(red: 0.98, green: 0.72, blue: 0.4, alpha: 1)
+        case .fruit: return UIColor(red: 0.98, green: 0.4, blue: 0.3, alpha: 1)
+        case .toy: return UIColor(red: 0.62, green: 0.45, blue: 0.98, alpha: 1)
         }
     }
 
-    var accent: Color {
+    var accent: UIColor {
         switch self {
-        case .soda: return Color(red: 0.2, green: 0.4, blue: 0.9)
-        case .snack: return Color(red: 0.9, green: 0.25, blue: 0.2)
-        case .noodle: return Color(red: 0.9, green: 0.3, blue: 0.2)
-        case .sandwich: return Color(red: 0.4, green: 0.7, blue: 0.3)
-        case .fruit: return Color(red: 0.95, green: 0.3, blue: 0.3)
-        case .toy: return Color(red: 1, green: 0.85, blue: 0.3)
+        case .soda: return UIColor(red: 0.2, green: 0.4, blue: 0.92, alpha: 1)
+        case .snack: return UIColor(red: 0.92, green: 0.25, blue: 0.2, alpha: 1)
+        case .noodle: return UIColor(red: 0.92, green: 0.3, blue: 0.22, alpha: 1)
+        case .sandwich: return UIColor(red: 0.45, green: 0.75, blue: 0.3, alpha: 1)
+        case .fruit: return UIColor(red: 0.4, green: 0.75, blue: 0.3, alpha: 1)
+        case .toy: return UIColor(red: 1, green: 0.85, blue: 0.3, alpha: 1)
         }
     }
 
@@ -65,17 +67,18 @@ enum MartProduct: Int, CaseIterable, Codable {
 }
 
 /// 歩く人（店員・お客さん・係）
-struct MartWalker {
+struct MartWalker: Codable {
     var pos: CGPoint
-    var facing: CGFloat = 1
+    /// 向き（床の上の角度。atan2(dy, dx)）
+    var heading: CGFloat = .pi * 0.75
     var moving = false
     var step: Double = 0
     var carry: [MartProduct] = []
 }
 
-struct MartCustomer: Identifiable {
-    enum Phase { case toShelf, shopping, toQueue, queued, leaving }
-    let id = UUID()
+struct MartCustomer: Identifiable, Codable {
+    enum Phase: String, Codable { case toShelf, shopping, toQueue, queued, leaving }
+    var id = UUID()
     var walker: MartWalker
     var phase: Phase = .toShelf
     var product: MartProduct
@@ -86,8 +89,8 @@ struct MartCustomer: Identifiable {
     var shirt: Int
 }
 
-struct MartHelper {
-    enum Phase { case idle, toSupply, loading, toShelf, unloading }
+struct MartHelper: Codable {
+    enum Phase: String, Codable { case idle, toSupply, loading, toShelf, unloading }
     var walker: MartWalker
     var phase: Phase = .idle
     var target: MartProduct = .soda
@@ -104,11 +107,11 @@ struct MartStep {
 
     var title: String {
         switch kind {
-        case .shelf(let k): return MartProduct(rawValue: k)?.name ?? "棚"
+        case .shelf(let k): return (MartProduct(rawValue: k)?.name ?? "") + "の棚"
         case .cashier: return "レジ係"
         case .stocker: return "品出し係"
         case .capacity: return "運べる数 +2"
-        case .speed: return "足が速くなる"
+        case .speed: return "スピードアップ"
         case .customers: return "お客さん +2"
         }
     }
@@ -125,59 +128,75 @@ struct MartStep {
     }
 }
 
+/// ゲストに送るお店の様子
+struct MartSnapshot: Codable {
+    var players: [MartWalker]
+    var customers: [MartCustomer]
+    var helpers: [MartWalker]
+    var stock: [Int]
+    var cash: Int
+    var money: Int
+    var done: [Int]
+    var paid: [Int: Int]
+    var serving: Double
+}
+
 @MainActor
 final class MartGame: ObservableObject {
-    // 店の形
-    static let floor = CGRect(x: 0, y: 0, width: 14.5, height: 11)
-    static let counter = CGRect(x: 12.0, y: 2.6, width: 1.0, height: 2.3)
-    static let cashierSpot = CGPoint(x: 13.65, y: 3.75)
-    static let serveSpot = CGPoint(x: 11.35, y: 3.75)
-    static let cashSpot = CGPoint(x: 12.5, y: 5.7)
-    static let door = CGPoint(x: 14.2, y: 10)
-    static let outside = CGPoint(x: 16.5, y: 10)
+    enum Role { case solo, host, guest }
 
-    static func shelfRect(_ k: Int) -> CGRect {
+    // 店の形
+    nonisolated static let floor = CGRect(x: 0, y: 0, width: 14.5, height: 11)
+    nonisolated static let counter = CGRect(x: 12.0, y: 2.6, width: 1.0, height: 2.3)
+    nonisolated static let cashierSpot = CGPoint(x: 13.65, y: 3.75)
+    nonisolated static let serveSpot = CGPoint(x: 11.35, y: 3.75)
+    nonisolated static let cashSpot = CGPoint(x: 12.5, y: 5.8)
+    nonisolated static let door = CGPoint(x: 14.2, y: 10)
+    nonisolated static let outside = CGPoint(x: 17, y: 10)
+    nonisolated static let shelfCapacity = 8
+
+    nonisolated static func shelfRect(_ k: Int) -> CGRect {
         CGRect(x: 2.4 + 2.0 * CGFloat(k % 4), y: k < 4 ? 2.0 : 6.0, width: 1.6, height: 0.8)
     }
 
     /// お客さんが立って商品を取る場所（棚の手前）
-    static func shelfFront(_ k: Int) -> CGPoint {
+    nonisolated static func shelfFront(_ k: Int) -> CGPoint {
         let rect = shelfRect(k)
         return CGPoint(x: rect.midX, y: rect.maxY + 0.5)
     }
 
     /// 倉庫の台（左の壁ぞい）
-    static func supplySpot(_ k: Int) -> CGPoint {
+    nonisolated static func supplySpot(_ k: Int) -> CGPoint {
         CGPoint(x: 0.95, y: 1.4 + 1.5 * CGFloat(k))
     }
 
-    static let shelfCapacity = 8
-
-    static let steps: [MartStep] = [
+    nonisolated static let steps: [MartStep] = [
         MartStep(kind: .shelf(1), cost: 20, pos: CGPoint(x: shelfRect(1).midX, y: shelfRect(1).midY)),
         MartStep(kind: .capacity, cost: 40, pos: CGPoint(x: 5.2, y: 9.9)),
         MartStep(kind: .shelf(2), cost: 70, pos: CGPoint(x: shelfRect(2).midX, y: shelfRect(2).midY)),
-        MartStep(kind: .cashier, cost: 100, pos: CGPoint(x: 13.65, y: 2.2)),
+        MartStep(kind: .cashier, cost: 100, pos: CGPoint(x: 13.65, y: 2.0)),
         MartStep(kind: .shelf(3), cost: 150, pos: CGPoint(x: shelfRect(3).midX, y: shelfRect(3).midY)),
         MartStep(kind: .speed, cost: 140, pos: CGPoint(x: 7.0, y: 9.9)),
-        MartStep(kind: .stocker, cost: 220, pos: CGPoint(x: 2.2, y: 9.9)),
+        MartStep(kind: .stocker, cost: 220, pos: CGPoint(x: 2.4, y: 9.9)),
         MartStep(kind: .shelf(4), cost: 260, pos: CGPoint(x: shelfRect(4).midX, y: shelfRect(4).midY)),
         MartStep(kind: .customers, cost: 200, pos: CGPoint(x: 8.8, y: 9.9)),
         MartStep(kind: .capacity, cost: 320, pos: CGPoint(x: 5.2, y: 9.9)),
         MartStep(kind: .shelf(5), cost: 420, pos: CGPoint(x: shelfRect(5).midX, y: shelfRect(5).midY)),
-        MartStep(kind: .stocker, cost: 500, pos: CGPoint(x: 2.2, y: 9.9)),
+        MartStep(kind: .stocker, cost: 500, pos: CGPoint(x: 2.4, y: 9.9)),
         MartStep(kind: .customers, cost: 450, pos: CGPoint(x: 8.8, y: 9.9)),
         MartStep(kind: .speed, cost: 600, pos: CGPoint(x: 7.0, y: 9.9)),
     ]
+
+    let role: Role
+    /// 自分の店員（players の番号。ゲストは 1）
+    var me: Int { role == .guest ? 1 : 0 }
 
     @Published private(set) var money = 0
     @Published private(set) var level = 0
     /// 解放したときの合図（画面に出す文）
     @Published var banner: String?
 
-    var player = MartWalker(pos: CGPoint(x: 6.5, y: 9.0))
-    /// 画面の真ん中に映す場所（店員を少し遅れて追いかける）
-    private(set) var camera = CGPoint(x: 6.5, y: 9.0)
+    private(set) var players: [MartWalker] = [MartWalker(pos: CGPoint(x: 6.5, y: 9.0))]
     private(set) var customers: [MartCustomer] = []
     private(set) var helpers: [MartHelper] = []
     private(set) var stock: [Int] = Array(repeating: 0, count: MartProduct.allCases.count)
@@ -188,7 +207,7 @@ final class MartGame: ObservableObject {
     private(set) var cash = 0
     private(set) var hasCashier = false
     private(set) var capacity = 4
-    private(set) var speed: CGFloat = 3.0
+    private(set) var speed: CGFloat = 3.2
     private(set) var maxCustomers = 3
     /// 会計の進み具合（0〜1）
     private(set) var serving: Double = 0
@@ -197,14 +216,20 @@ final class MartGame: ObservableObject {
 
     private var queue: [UUID] = []
     private var spawnTimer: Double = 1
-    private var pickTimer: Double = 0
-    private var dropTimer: Double = 0
+    private var pickTimers: [Double] = [0, 0]
+    private var dropTimers: [Double] = [0, 0]
     private var cashTimer: Double = 0
     private var payCarry: Double = 0
     private var saveTimer: Double = 0
     private var soundTimer: Double = 0
 
-    init() { load() }
+    init(role: Role) {
+        self.role = role
+        if role != .guest { load() }
+        if role == .guest {
+            players.append(MartWalker(pos: CGPoint(x: 7.5, y: 9.4)))
+        }
+    }
 
     var unlockedProducts: [MartProduct] {
         MartProduct.allCases.filter { unlocked.contains($0.rawValue) }
@@ -217,24 +242,81 @@ final class MartGame: ObservableObject {
 
     func paidAmount(_ index: Int) -> Int { paid[index] ?? 0 }
 
-    func queueIndex(of id: UUID) -> Int? { queue.firstIndex(of: id) }
+    // MARK: - 2 人
+
+    /// ゲストが来た（ホスト）
+    func addGuest() {
+        guard players.count < 2 else { return }
+        players.append(MartWalker(pos: CGPoint(x: 7.5, y: 9.4)))
+        banner = "🤝 友だちが来ました"
+    }
+
+    func removeGuest() {
+        guard role == .host, players.count > 1 else { return }
+        players.removeLast()
+    }
+
+    /// ゲストの位置を受け取る（ホスト）
+    func setGuest(_ walker: MartWalker) {
+        guard players.count > 1 else { addGuest(); return }
+        players[1].pos = walker.pos
+        players[1].heading = walker.heading
+        players[1].moving = walker.moving
+        players[1].step = walker.step
+    }
+
+    func snapshot() -> MartSnapshot {
+        MartSnapshot(players: players, customers: customers, helpers: helpers.map(\.walker), stock: stock, cash: cash,
+                     money: money, done: Array(done), paid: paid, serving: serving)
+    }
+
+    /// ホストから届いたお店の様子を当てはめる（ゲスト。自分の位置はそのまま）
+    func apply(_ snapshot: MartSnapshot) {
+        let mine = players.indices.contains(me) ? players[me] : nil
+        players = snapshot.players
+        while players.count < 2 { players.append(MartWalker(pos: CGPoint(x: 7.5, y: 9.4))) }
+        if let mine {
+            players[me].pos = mine.pos
+            players[me].heading = mine.heading
+            players[me].moving = mine.moving
+            players[me].step = mine.step
+        }
+        customers = snapshot.customers
+        helpers = snapshot.helpers.map { MartHelper(walker: $0) }
+        stock = snapshot.stock
+        cash = snapshot.cash
+        money = snapshot.money
+        paid = snapshot.paid
+        serving = snapshot.serving
+        let newDone = Set(snapshot.done)
+        if newDone != done {
+            let added = newDone.subtracting(done)
+            done = newDone
+            rebuildUnlocks()
+            if let index = added.max(), Self.steps.indices.contains(index) {
+                banner = "🎉 \(Self.steps[index].title)"
+            }
+        }
+    }
 
     // MARK: - 1 コマ進める
 
     func update(_ dt: Double) {
         soundTimer -= dt
-        movePlayer(dt)
-        let follow = min(1, CGFloat(dt) * 6)
-        camera.x += (player.pos.x - camera.x) * follow
-        camera.y += (player.pos.y - camera.y) * follow
-        handleSupplyAndShelves(dt)
+        movePlayer(me, dt)
+        guard role != .guest else { return }
+        for index in players.indices { handleSupplyAndShelves(index, dt) }
         handleRegister(dt)
         handleCash(dt)
         handlePads(dt)
         spawnCustomers(dt)
         for index in customers.indices { updateCustomer(&customers[index], dt) }
         customers.removeAll { $0.phase == .leaving && $0.path.isEmpty }
-        for index in helpers.indices { updateHelper(&helpers[index], dt) }
+        for index in helpers.indices {
+            // ほかの係が向かっている棚（書き換え中の配列を読まないよう、先に調べる）
+            let busy = Set(helpers.enumerated().filter { $0.offset != index && $0.element.phase != .idle }.map(\.element.target))
+            updateHelper(&helpers[index], busy: busy, dt)
+        }
         saveTimer += dt
         if saveTimer > 5 {
             saveTimer = 0
@@ -242,12 +324,13 @@ final class MartGame: ObservableObject {
         }
     }
 
-    private func movePlayer(_ dt: Double) {
-        // 画面の向き → 床の向き（斜め上から見ているので変換する）
+    private func movePlayer(_ index: Int, _ dt: Double) {
+        guard players.indices.contains(index) else { return }
+        // 画面の向き → 床の向き（右上ななめから見下ろしているので変換する）
         let sx = stick.dx, sy = stick.dy
         let length = min((sx * sx + sy * sy).squareRoot(), 1)
         guard length > 0.08 else {
-            player.moving = false
+            players[index].moving = false
             return
         }
         var wx = sx / 2 + sy
@@ -256,15 +339,16 @@ final class MartGame: ObservableObject {
         wx /= norm
         wy /= norm
         let distance = speed * CGFloat(dt) * length
-        var next = player.pos
+        let start = players[index].pos
+        var next = start
         next.x += wx * distance
-        if blocked(next) { next.x = player.pos.x }
+        if blocked(next) { next.x = start.x }
         next.y += wy * distance
-        if blocked(next) { next.y = player.pos.y }
-        player.pos = next
-        player.moving = true
-        player.step += Double(distance)
-        if abs(sx) > 0.05 { player.facing = sx > 0 ? 1 : -1 }
+        if blocked(next) { next.y = start.y }
+        players[index].pos = next
+        players[index].moving = true
+        players[index].step += Double(distance)
+        players[index].heading = atan2(wy, wx)
     }
 
     /// 店員がそこに立てないか（壁・棚・レジ台）
@@ -274,6 +358,10 @@ final class MartGame: ObservableObject {
         if !inner.contains(point) { return true }
         var walls = [Self.counter]
         walls += unlocked.map { Self.shelfRect($0) }
+        for k in unlocked {
+            let spot = Self.supplySpot(k)
+            walls.append(CGRect(x: spot.x - 0.75, y: spot.y - 0.35, width: 0.4, height: 0.7))
+        }
         return walls.contains { $0.insetBy(dx: -r, dy: -r).contains(point) }
     }
 
@@ -281,37 +369,38 @@ final class MartGame: ObservableObject {
         hypot(a.x - b.x, a.y - b.y)
     }
 
-    private func handleSupplyAndShelves(_ dt: Double) {
-        pickTimer -= dt
-        dropTimer -= dt
-        // 倉庫の台：のっている間、運べる数まで受け取る
-        for product in unlockedProducts where distance(player.pos, Self.supplySpot(product.rawValue)) < 0.75 {
-            if player.carry.count < capacity, pickTimer <= 0 {
-                player.carry.append(product)
-                pickTimer = 0.12
+    private func handleSupplyAndShelves(_ index: Int, _ dt: Double) {
+        pickTimers[index] -= dt
+        dropTimers[index] -= dt
+        let pos = players[index].pos
+        // 倉庫の台：そばにいる間、運べる数まで受け取る
+        for product in unlockedProducts where distance(pos, Self.supplySpot(product.rawValue)) < 0.8 {
+            if players[index].carry.count < capacity, pickTimers[index] <= 0 {
+                players[index].carry.append(product)
+                pickTimers[index] = 0.1
                 tick()
             }
         }
         // 棚のそば：その棚の商品を並べる
         for product in unlockedProducts {
             let zone = Self.shelfRect(product.rawValue).insetBy(dx: -0.75, dy: -0.75)
-            guard zone.contains(player.pos), dropTimer <= 0, stock[product.rawValue] < Self.shelfCapacity,
-                  let index = player.carry.lastIndex(of: product) else { continue }
-            player.carry.remove(at: index)
+            guard zone.contains(pos), dropTimers[index] <= 0, stock[product.rawValue] < Self.shelfCapacity,
+                  let at = players[index].carry.lastIndex(of: product) else { continue }
+            players[index].carry.remove(at: at)
             stock[product.rawValue] += 1
-            dropTimer = 0.1
+            dropTimers[index] = 0.09
             tick()
         }
     }
 
     private func handleRegister(_ dt: Double) {
-        let staffed = hasCashier || distance(player.pos, Self.cashierSpot) < 0.7
+        let staffed = hasCashier || players.contains { distance($0.pos, Self.cashierSpot) < 0.7 }
         guard staffed, let first = queue.first, let index = customers.firstIndex(where: { $0.id == first }),
               customers[index].phase == .queued, distance(customers[index].walker.pos, Self.serveSpot) < 0.15 else {
             serving = 0
             return
         }
-        serving += dt / (hasCashier ? 0.9 : 0.6)
+        serving += dt / (hasCashier ? 0.8 : 0.55)
         guard serving >= 1 else { return }
         serving = 0
         let customer = customers[index]
@@ -324,20 +413,20 @@ final class MartGame: ObservableObject {
 
     private func handleCash(_ dt: Double) {
         cashTimer -= dt
-        guard cash > 0, distance(player.pos, Self.cashSpot) < 1.0, cashTimer <= 0 else { return }
-        let take = max(1, cash / 6)
+        guard cash > 0, players.contains(where: { distance($0.pos, Self.cashSpot) < 1.0 }), cashTimer <= 0 else { return }
+        let take = max(1, min(cash, 3 + cash / 8))
         cash -= take
         money += take
-        cashTimer = 0.05
+        cashTimer = 0.06
         if soundTimer <= 0 {
             GameAudio.shared.play(.pop(combo: 1))
-            soundTimer = 0.25
+            soundTimer = 0.2
         }
     }
 
     private func handlePads(_ dt: Double) {
-        for (index, step) in visibleSteps where distance(player.pos, step.pos) < 0.75 && money > 0 {
-            let rate = max(Double(step.cost) / 1.3, 25)
+        for (index, step) in visibleSteps where players.contains(where: { distance($0.pos, step.pos) < 0.8 }) && money > 0 {
+            let rate = max(Double(step.cost) / 1.2, 30)
             payCarry += rate * dt
             let amount = min(Int(payCarry), money, step.cost - paidAmount(index))
             guard amount > 0 else { continue }
@@ -346,43 +435,56 @@ final class MartGame: ObservableObject {
             paid[index] = paidAmount(index) + amount
             if soundTimer <= 0 {
                 GameAudio.shared.tick()
-                soundTimer = 0.08
+                soundTimer = 0.07
             }
-            if paidAmount(index) >= step.cost { complete(index, step) }
+            if paidAmount(index) >= step.cost { complete(index) }
         }
     }
 
-    private func complete(_ index: Int, _ step: MartStep) {
+    private func complete(_ index: Int) {
         done.insert(index)
         paid[index] = nil
-        level = done.count
-        switch step.kind {
-        case .shelf(let k):
-            unlocked.insert(k)
-            // 新しい棚に店員がはまらないよう、手前に出す
-            if Self.shelfRect(k).insetBy(dx: -0.3, dy: -0.3).contains(player.pos) {
-                player.pos = Self.shelfFront(k)
+        rebuildUnlocks()
+        let step = Self.steps[index]
+        // 新しい棚に店員がはまらないよう、手前に出す
+        if case .shelf(let k) = step.kind {
+            for p in players.indices where Self.shelfRect(k).insetBy(dx: -0.35, dy: -0.35).contains(players[p].pos) {
+                players[p].pos = Self.shelfFront(k)
             }
-        case .cashier:
-            hasCashier = true
-        case .stocker:
-            helpers.append(MartHelper(walker: MartWalker(pos: CGPoint(x: 1.8, y: 9.5))))
-        case .capacity:
-            capacity += 2
-        case .speed:
-            speed += 0.6
-        case .customers:
-            maxCustomers += 2
         }
         banner = "🎉 \(step.title)"
         GameAudio.shared.play(.complete)
         save()
     }
 
+    /// 解放したものから、棚・係・運べる数などを決め直す
+    private func rebuildUnlocks() {
+        unlocked = [0]
+        hasCashier = false
+        capacity = 4
+        speed = 3.2
+        maxCustomers = 3
+        var stockers = 0
+        for index in done.sorted() where Self.steps.indices.contains(index) {
+            switch Self.steps[index].kind {
+            case .shelf(let k): unlocked.insert(k)
+            case .cashier: hasCashier = true
+            case .stocker: stockers += 1
+            case .capacity: capacity += 2
+            case .speed: speed += 0.7
+            case .customers: maxCustomers += 2
+            }
+        }
+        if role != .guest {
+            while helpers.count < stockers { helpers.append(MartHelper(walker: MartWalker(pos: CGPoint(x: 1.8, y: 9.5)))) }
+        }
+        level = done.count
+    }
+
     private func tick() {
         if soundTimer <= 0 {
             GameAudio.shared.play(.tap)
-            soundTimer = 0.09
+            soundTimer = 0.08
         }
     }
 
@@ -391,9 +493,9 @@ final class MartGame: ObservableObject {
     private func spawnCustomers(_ dt: Double) {
         spawnTimer -= dt
         guard spawnTimer <= 0, customers.count < maxCustomers, let product = unlockedProducts.randomElement() else { return }
-        spawnTimer = Double.random(in: 1.5...3.5)
+        spawnTimer = Double.random(in: 1.2...3.0)
         let front = Self.shelfFront(product.rawValue)
-        let want = Int.random(in: 1...min(3, 1 + level / 3))
+        let want = Int.random(in: 1...min(4, 1 + level / 3))
         var customer = MartCustomer(walker: MartWalker(pos: Self.outside), product: product, want: want,
                                     shirt: Int.random(in: 0..<8))
         customer.path = [Self.door, CGPoint(x: 11.0, y: 10), CGPoint(x: 11.0, y: front.y), front]
@@ -403,14 +505,18 @@ final class MartGame: ObservableObject {
     private func updateCustomer(_ customer: inout MartCustomer, _ dt: Double) {
         switch customer.phase {
         case .toShelf:
-            if follow(&customer.walker, path: &customer.path, speed: 1.9, dt: dt) { customer.phase = .shopping }
+            if follow(&customer.walker, path: &customer.path, speed: 2.0, dt: dt) {
+                customer.phase = .shopping
+                // 棚のほうを向く
+                customer.walker.heading = -.pi / 2
+            }
         case .shopping:
             customer.timer -= dt
             let k = customer.product.rawValue
             if customer.timer <= 0, stock[k] > 0, customer.got < customer.want {
                 stock[k] -= 1
                 customer.got += 1
-                customer.timer = 0.45
+                customer.timer = 0.4
             }
             if customer.got >= customer.want, customer.timer <= 0 {
                 queue.append(customer.id)
@@ -419,15 +525,17 @@ final class MartGame: ObservableObject {
                 customer.path = [CGPoint(x: 11.0, y: front.y)]
             }
         case .toQueue:
-            if follow(&customer.walker, path: &customer.path, speed: 1.9, dt: dt) { customer.phase = .queued }
+            if follow(&customer.walker, path: &customer.path, speed: 2.0, dt: dt) { customer.phase = .queued }
         case .queued:
             let index = queue.firstIndex(of: customer.id) ?? 0
             var target = Self.serveSpot
             target.y += 0.75 * CGFloat(index)
             var path = [target]
-            _ = follow(&customer.walker, path: &path, speed: 1.9, dt: dt)
+            if follow(&customer.walker, path: &path, speed: 2.0, dt: dt) {
+                customer.walker.heading = 0
+            }
         case .leaving:
-            _ = follow(&customer.walker, path: &customer.path, speed: 2.2, dt: dt)
+            _ = follow(&customer.walker, path: &customer.path, speed: 2.4, dt: dt)
         }
     }
 
@@ -447,44 +555,40 @@ final class MartGame: ObservableObject {
             walker.pos.x += dx / d * stride
             walker.pos.y += dy / d * stride
             walker.step += Double(stride)
+            walker.heading = atan2(dy, dx)
         }
         walker.moving = d > 0.01
-        // 画面の左右の向き（x − y が増えると右）
-        let screenDX = dx - dy
-        if abs(screenDX) > 0.01 { walker.facing = screenDX > 0 ? 1 : -1 }
         return path.isEmpty
     }
 
     // MARK: - 品出し係
 
-    private func updateHelper(_ helper: inout MartHelper, _ dt: Double) {
+    private func updateHelper(_ helper: inout MartHelper, busy: Set<MartProduct>, _ dt: Double) {
         switch helper.phase {
         case .idle:
-            // いちばん減っている棚を選ぶ
-            guard let product = unlockedProducts.min(by: { stock[$0.rawValue] < stock[$1.rawValue] }),
-                  stock[product.rawValue] < Self.shelfCapacity - 1 else {
-                helper.walker.moving = false
-                return
-            }
+            helper.walker.moving = false
+            // いちばん減っている棚を選ぶ（ほかの係と同じ棚は避ける）
+            let candidates = unlockedProducts.filter { stock[$0.rawValue] < Self.shelfCapacity - 1 && !busy.contains($0) }
+            guard let product = candidates.min(by: { stock[$0.rawValue] < stock[$1.rawValue] }) else { return }
             helper.target = product
             let supply = Self.supplySpot(product.rawValue)
-            helper.path = [CGPoint(x: 1.8, y: helper.walker.pos.y), CGPoint(x: 1.8, y: supply.y), supply]
+            helper.path = [CGPoint(x: 1.85, y: helper.walker.pos.y), CGPoint(x: 1.85, y: supply.y)]
             helper.phase = .toSupply
         case .toSupply:
-            if follow(&helper.walker, path: &helper.path, speed: 2.2, dt: dt) { helper.phase = .loading }
+            if follow(&helper.walker, path: &helper.path, speed: 2.4, dt: dt) { helper.phase = .loading }
         case .loading:
             helper.timer -= dt
             if helper.timer <= 0 {
                 helper.walker.carry.append(helper.target)
-                helper.timer = 0.15
+                helper.timer = 0.13
             }
-            if helper.walker.carry.count >= 4 {
+            if helper.walker.carry.count >= 5 {
                 let front = Self.shelfFront(helper.target.rawValue)
-                helper.path = [CGPoint(x: 1.8, y: helper.walker.pos.y), CGPoint(x: 1.8, y: front.y), front]
+                helper.path = [CGPoint(x: 1.85, y: front.y), front]
                 helper.phase = .toShelf
             }
         case .toShelf:
-            if follow(&helper.walker, path: &helper.path, speed: 2.2, dt: dt) { helper.phase = .unloading }
+            if follow(&helper.walker, path: &helper.path, speed: 2.4, dt: dt) { helper.phase = .unloading }
         case .unloading:
             helper.timer -= dt
             let k = helper.target.rawValue
@@ -492,20 +596,16 @@ final class MartGame: ObservableObject {
                 if stock[k] < Self.shelfCapacity {
                     helper.walker.carry.removeLast()
                     stock[k] += 1
-                    helper.timer = 0.15
+                    helper.timer = 0.13
                 } else {
                     helper.walker.carry.removeAll()
                 }
             }
-            if helper.walker.carry.isEmpty {
-                let front = Self.shelfFront(k)
-                helper.walker.pos = front
-                helper.phase = .idle
-            }
+            if helper.walker.carry.isEmpty { helper.phase = .idle }
         }
     }
 
-    // MARK: - 保存
+    // MARK: - 保存（ひとり・ホスト）
 
     private struct SaveData: Codable {
         var money: Int
@@ -516,6 +616,7 @@ final class MartGame: ObservableObject {
     }
 
     func save() {
+        guard role != .guest else { return }
         let data = SaveData(money: money, done: Array(done), paid: paid, stock: stock, cash: cash)
         if let encoded = try? JSONEncoder().encode(data) {
             UserDefaults.standard.set(encoded, forKey: "martSave")
@@ -529,37 +630,25 @@ final class MartGame: ObservableObject {
         paid = saved.paid
         cash = saved.cash
         if saved.stock.count == stock.count { stock = saved.stock }
-        // 解放したものを、順にもう一度当てはめる
-        for index in saved.done.sorted() where Self.steps.indices.contains(index) {
-            done.insert(index)
-            switch Self.steps[index].kind {
-            case .shelf(let k): unlocked.insert(k)
-            case .cashier: hasCashier = true
-            case .stocker: helpers.append(MartHelper(walker: MartWalker(pos: CGPoint(x: 1.8, y: 9.5))))
-            case .capacity: capacity += 2
-            case .speed: speed += 0.6
-            case .customers: maxCustomers += 2
-            }
-        }
-        level = done.count
+        done = Set(saved.done.filter { Self.steps.indices.contains($0) })
+        rebuildUnlocks()
     }
 
     func reset() {
+        guard role != .guest else { return }
         UserDefaults.standard.removeObject(forKey: "martSave")
         money = 0
-        level = 0
         done = []
         paid = [:]
         stock = Array(repeating: 0, count: MartProduct.allCases.count)
-        unlocked = [0]
         cash = 0
-        hasCashier = false
-        capacity = 4
-        speed = 3.0
-        maxCustomers = 3
         helpers = []
         customers = []
         queue = []
-        player = MartWalker(pos: CGPoint(x: 6.5, y: 9.0))
+        for index in players.indices {
+            players[index].pos = CGPoint(x: 6.5 + CGFloat(index), y: 9.0)
+            players[index].carry = []
+        }
+        rebuildUnlocks()
     }
 }
