@@ -1,11 +1,11 @@
 import Foundation
 
-/// 「ふたりの文明」のルール。シビライゼーションへのオマージュで、2 人が 1 つの文明を交代で育てる協力ゲーム。
-/// - 自分の番では「行動」を 3 回まで使える：都市を作る・土地を改良する（畑・鉱山・港）・都市に建物を建てる・
-///   世界の不思議を建てる・霧の向こうを探検する
-/// - 番を終えると、都市が働いて資材（🔨）と知識（📖）が入り、食料で人口が増える。知識で技術を研究すると、建てられるものが増える
-/// - 宇宙船を打ち上げたら 2 人の勝ち
-/// 状態（CivState）はまるごと相手に送る（近くなら直接、離れていれば iCloud の共有アルバム）。version が大きいほうが新しい
+/// 「ふたりの文明」のルール。シビライゼーションへのオマージュで、2 人が 1 つの文明を一緒に育てる協力ゲーム。
+/// 番はなく（リアルタイム）、2 人とも好きなときに資材を使って行動できる：都市を作る・土地を改良する（畑・鉱山・港）・
+/// 都市に建物を建てる・世界の不思議を建てる・霧の向こうを探検する。
+/// 5 秒で 1 年たち、都市が働いて資材（🔨）と知識（📖）が入り、食料で人口が増える（アプリを閉じていた間も、最大 30 分ぶん進む）。
+/// 知識で技術を研究すると、建てられるものが増える。宇宙船を打ち上げたら 2 人の勝ち
+/// 状態（CivState）はまるごと相手に送る（近くなら直接、離れていれば iCloud の共有アルバム）
 enum CivTerrain: String, Codable, CaseIterable {
     case grass, plains, forest, hills, mountain, water, desert
 
@@ -341,21 +341,25 @@ struct CivPlayer: Codable, Equatable {
 }
 
 struct CivLog: Codable, Equatable {
-    var turn: Int
+    var year: Int
     var text: String
 }
 
 struct CivState: Codable, Equatable {
     static let size = 14
-    static let actionsPerTurn = 3
+    /// 1 年の長さ（秒）
+    static let yearSeconds = 5.0
+    /// アプリを閉じていた間に進める年の上限（30 分）
+    static let maxCatchUp = 360
 
     var version = 0
     var tiles: [CivTile]
     var cities: [CivCity] = []
     var players: [CivPlayer]
-    var turn = 1
-    var current = 0
-    var actions = CivState.actionsPerTurn
+    /// たった年数
+    var year = 0
+    /// 最後に 1 年進めた時刻
+    var lastTick = Date()
     /// たまっている資材
     var production = 15
     var techs: [CivTech] = [.agriculture]
@@ -484,7 +488,7 @@ struct CivState: Codable, Equatable {
         return total
     }
 
-    /// 1 回の番で入る資材と知識
+    /// 1 年で入る資材と知識
     var income: CivYield {
         cities.indices.map { cityYield($0) }.reduce(CivYield(), +)
     }
@@ -504,7 +508,7 @@ struct CivState: Codable, Equatable {
 
     // MARK: - 行動
 
-    enum Action {
+    enum Action: Codable {
         case foundCity(Int, Int)
         case improve(Int, Int, CivImprovement)
         case build(Int, CivBuilding)
@@ -521,7 +525,6 @@ struct CivState: Codable, Equatable {
             return canResearch(tech) ? nil : "まだ研究できません"
         }
         if won { return "ゲームは終わりました" }
-        if actions <= 0 { return "この番の行動はもうありません" }
         switch action {
         case .foundCity(let x, let y):
             guard let tile = tile(x, y), tile.revealed else { return "見えていない場所です" }
@@ -586,7 +589,7 @@ struct CivState: Codable, Equatable {
             wonders.append(wonder)
             if wonder == .spaceship {
                 won = true
-                note("🚀 宇宙船が打ち上がりました！ \(turn) ターンで 2 人の勝ち")
+                note("🚀 宇宙船が打ち上がりました！ \(year) 年で 2 人の勝ち")
             } else {
                 note("🏛 \(name)さんが世界の不思議「\(wonder.name)」を完成させました")
             }
@@ -599,7 +602,6 @@ struct CivState: Codable, Equatable {
                 note("\(name)さんが探検しました")
             }
         }
-        actions -= 1
         version += 1
         return true
     }
@@ -639,16 +641,30 @@ struct CivState: Codable, Equatable {
     }
 
     mutating func note(_ text: String) {
-        log.append(CivLog(turn: turn, text: text))
+        log.append(CivLog(year: year, text: text))
         if log.count > 60 { log.removeFirst(log.count - 60) }
     }
 
-    // MARK: - 番を終える
+    // MARK: - 時間を進める
 
-    mutating func endTurn() {
-        guard !won else { return }
-        let name = players.indices.contains(current) ? players[current].name : ""
-        // 都市が働く
+    /// いまの時刻まで年を進める（進めた年数を返す）。長く閉じていたときは上限まで進めて、できごとは省く
+    @discardableResult
+    mutating func advance(to now: Date) -> Int {
+        let count = Int(now.timeIntervalSince(lastTick) / Self.yearSeconds)
+        guard count > 0, !won else {
+            if won { lastTick = now }
+            return 0
+        }
+        let steps = min(count, Self.maxCatchUp)
+        let quiet = steps > 3
+        for _ in 0..<steps { tick(quiet: quiet) }
+        lastTick = count > Self.maxCatchUp ? now : lastTick.addingTimeInterval(Double(count) * Self.yearSeconds)
+        if quiet { note("⏳ 留守のあいだに \(steps) 年がたちました") }
+        return steps
+    }
+
+    /// 1 年進める：都市が働いて、資材・知識・食料が入る
+    private mutating func tick(quiet: Bool) {
         for index in cities.indices {
             let y = cityYield(index)
             production += y.prod
@@ -657,25 +673,20 @@ struct CivState: Codable, Equatable {
             if cities[index].food >= cities[index].growThreshold {
                 cities[index].pop += 1
                 cities[index].food = cities[index].buildings.contains(.granary) ? cities[index].growThreshold / 3 : 0
-                note("👶 \(cities[index].name)の人口が \(cities[index].pop) になりました")
+                if !quiet { note("👶 \(cities[index].name)の人口が \(cities[index].pop) になりました") }
                 reveal(cities[index].x, cities[index].y, radius: cities[index].radius + 1)
             } else if cities[index].food < 0 {
                 cities[index].food = 0
             }
         }
-        // 研究
         if let tech = research, progress >= tech.cost {
             progress -= tech.cost
             techs.append(tech)
             research = CivTech.allCases.first { canResearch($0) }
             note("💡「\(tech.name)」を発見！ \(tech.unlocks)が使えるようになりました")
         }
-        // ときどき起きること
-        if Int.random(in: 0..<4) == 0 { randomEvent() }
-        note("\(name)さんが番を終えました")
-        current = players.isEmpty ? 0 : (current + 1) % players.count
-        if current == 0 { turn += 1 }
-        actions = Self.actionsPerTurn
+        if !quiet && Int.random(in: 0..<24) == 0 { randomEvent() }
+        year += 1
         version += 1
     }
 

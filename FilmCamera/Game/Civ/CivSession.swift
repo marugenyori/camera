@@ -2,12 +2,13 @@ import CloudKit
 import MultipeerConnectivity
 import SwiftUI
 
-/// 「ふたりの文明」の同期。遊び方は 3 つ：
-/// - ひとりで：この端末だけ（UserDefaults に保存）
-/// - 近くで：2 台の iPhone を Wi-Fi・Bluetooth で直接つなぐ（MultipeerConnectivity）。作る人が待ち受け、参加する人が探して入る。
-///   変わるたびに状態をまるごと送り、version が大きいほうを使う
-/// - 離れて：共有アルバムのゾーンに「CivGame」レコード（state＝状態の JSON、turnOf＝番の人、version）を 1 つ置く。
-///   番が終わると保存し、相手は数秒おきに読み直す（アプリを閉じていても、番が来たら通知が届く）
+/// 「ふたりの文明」の同期（リアルタイム。番はない）。遊び方は 3 つ：
+/// - ひとりで：この端末で時間を進める（UserDefaults に保存）
+/// - 近くで：2 台の iPhone を Wi-Fi・Bluetooth で直接つなぐ（MultipeerConnectivity）。作った人（ホスト）が時間を進め、
+///   参加した人の行動はホストに送ってホストが行う。ホストは変わるたびに状態をまるごと送る
+/// - 離れて：共有アルバムのゾーンに「CivGame」レコード（state＝状態の JSON、version）を 1 つ置く。
+///   自分の行動はすぐ画面に出して「送る予定」にため、数秒おきに「iCloud の最新を読む → 時間を進める → ためた行動を行う → 保存」する。
+///   2 人が同時に保存してぶつかったら、読み直してやり直す。だれも開いていない間の時間は、次に開いた人が進める
 @MainActor
 final class CivSession: ObservableObject {
     enum Mode: Equatable {
@@ -27,8 +28,11 @@ final class CivSession: ObservableObject {
     private(set) var myID: String
     private var nearby: CivNearby?
     private var cloud: CivCloud?
-    private var pollTask: Task<Void, Never>?
-    private var saving: Task<Void, Never>?
+    private var clock: Task<Void, Never>?
+    /// 離れて：まだ iCloud に送っていない自分の行動
+    private var pending: [CivState.Action] = []
+    private var syncing = false
+    private var lastSync = Date.distantPast
 
     init(mode: Mode, name: String) {
         self.mode = mode
@@ -45,15 +49,11 @@ final class CivSession: ObservableObject {
 
     var me: CivPlayer { CivPlayer(id: myID, name: myName, color: 0) }
     var myIndex: Int? { state?.players.firstIndex { $0.id == myID } }
-
-    var isMyTurn: Bool {
-        guard let state, state.players.indices.contains(state.current) else { return false }
-        return state.players[state.current].id == myID
-    }
-
-    var currentName: String {
-        guard let state, state.players.indices.contains(state.current) else { return "" }
-        return state.players[state.current].name
+    /// 行動できるか（近くで参加した人は、ホストとつながっている間だけ）
+    var canAct: Bool {
+        guard let state, !state.won else { return false }
+        if mode == .nearbyJoin { return partnerConnected && myIndex != nil }
+        return true
     }
 
     // MARK: - 始める・やめる
@@ -61,11 +61,12 @@ final class CivSession: ObservableObject {
     func start() async {
         switch mode {
         case .solo:
-            state = loadLocal("civSolo") ?? CivState.new(host: me)
+            state = loadLocal() ?? CivState.new(host: me)
             status = "ひとりで遊んでいます"
             saveLocal()
+            startClock()
         case .nearbyHost:
-            if let saved = loadLocal("civNearby"), saved.players.first?.id == myID {
+            if let saved = loadLocal(), saved.players.first?.id == myID {
                 state = saved
             } else {
                 state = CivState.new(host: me)
@@ -73,92 +74,126 @@ final class CivSession: ObservableObject {
             saveLocal()
             startNearby(host: true)
             status = "相手を待っています（相手は「参加する」を押してください）"
+            startClock()
         case .nearbyJoin:
             startNearby(host: false)
             status = "近くの文明をさがしています"
         case .cloud(let album):
             status = "iCloud から読み込んでいます"
             if let id = try? await CKContainer.default().userRecordID().recordName { myID = id }
-            let cloud = CivCloud(album: album)
-            self.cloud = cloud
-            do {
-                if var remote = try await cloud.fetch() {
-                    if remote.join(me) {
-                        try await cloud.save(remote)
-                    }
-                    state = remote
-                } else {
-                    let fresh = CivState.new(host: me)
-                    try await cloud.save(fresh)
-                    state = fresh
-                }
-                status = "iCloud と同期しています"
-                startPolling()
-            } catch {
-                status = "iCloud に保存できませんでした"
-                message = Self.describe(error)
-            }
+            cloud = CivCloud(album: album)
+            await syncCloud()
+            startClock()
         }
     }
 
     func stop() {
-        pollTask?.cancel()
+        clock?.cancel()
         nearby?.stop()
         nearby = nil
+        if case .cloud = mode, !pending.isEmpty {
+            Task { await syncCloud() }
+        }
     }
 
-    /// 最初から作り直す（作った人・ひとり・離れての誰でも）
+    /// 最初から作り直す（相手はそのまま 2 人目に入れておく）
     func restart() {
         var fresh = CivState.new(host: me)
         if let old = state {
             fresh.version = old.version + 1
-            // 相手はそのまま 2 人目に入れておく
             for player in old.players where player.id != myID { _ = fresh.join(player) }
         }
-        commit(fresh)
+        switch mode {
+        case .cloud:
+            pending = []
+            state = fresh
+            Task { await syncCloud(replacing: fresh) }
+        case .nearbyJoin:
+            break
+        default:
+            state = fresh
+            changed()
+        }
+    }
+
+    /// 0.5 秒ごとに時間を進める（ホスト・ひとり）、または iCloud と同期する（離れて）
+    private func startClock() {
+        clock?.cancel()
+        clock = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self else { return }
+                switch self.mode {
+                case .solo, .nearbyHost:
+                    guard var next = self.state else { continue }
+                    let before = next.techs.count
+                    if next.advance(to: Date()) > 0 {
+                        if next.techs.count > before { GameAudio.shared.play(.special) }
+                        self.state = next
+                        self.changed()
+                    }
+                case .cloud:
+                    // 自分の行動があればすぐ、なければ 3 秒おきに
+                    if !self.pending.isEmpty || Date().timeIntervalSince(self.lastSync) > 3 {
+                        await self.syncCloud()
+                    }
+                case .nearbyJoin:
+                    return
+                }
+            }
+        }
     }
 
     // MARK: - 行動
 
     func act(_ action: CivState.Action) {
-        guard var next = state, isMyTurn, let who = myIndex else { return }
-        if next.perform(action, by: who) {
-            commit(next)
-            if case .research = action { GameAudio.shared.tick() } else { GameAudio.shared.play(.place) }
-        } else {
-            GameAudio.shared.play(.invalid)
+        guard var next = state, canAct, let who = myIndex else { return }
+        switch mode {
+        case .nearbyJoin:
+            // ホストに頼む（結果はホストから届く）
+            guard next.problem(action) == nil else {
+                GameAudio.shared.play(.invalid)
+                return
+            }
+            send(.action(action, myID))
+            feedback(action)
+        default:
+            let before = next.techs.count
+            guard next.perform(action, by: who) else {
+                GameAudio.shared.play(.invalid)
+                return
+            }
+            state = next
+            feedback(action)
+            if next.won { GameAudio.shared.play(.win) } else if next.techs.count > before { GameAudio.shared.play(.special) }
+            if case .cloud = mode { pending.append(action) }
+            changed()
         }
     }
 
-    func endTurn() {
-        guard var next = state, isMyTurn else { return }
-        next.endTurn()
-        commit(next)
-        GameAudio.shared.play(.swap)
-        if next.won { GameAudio.shared.play(.win) }
+    private func feedback(_ action: CivState.Action) {
+        if case .research = action { GameAudio.shared.tick() } else { GameAudio.shared.play(.place) }
     }
 
-    private func commit(_ next: CivState) {
-        let learned = (state?.techs.count ?? 0) < next.techs.count
-        state = next
-        if learned { GameAudio.shared.play(.special) }
+    /// 状態が変わったあと：保存して、相手に送る
+    private func changed() {
         switch mode {
         case .solo:
             saveLocal()
-        case .nearbyHost, .nearbyJoin:
+        case .nearbyHost:
             saveLocal()
-            send(.state(next))
-        case .cloud:
-            pushToCloud(next)
+            if let state { send(.state(state)) }
+        case .nearbyJoin, .cloud:
+            break
         }
     }
 
     // MARK: - ひとり・近く：端末に保存
 
-    private var localKey: String { mode == .solo ? "civSolo" : "civNearby" }
+    private var localKey: String { mode == .solo ? "civSolo2" : "civNearby2" }
 
-    private func loadLocal(_ key: String) -> CivState? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+    private func loadLocal() -> CivState? {
+        guard let data = UserDefaults.standard.data(forKey: localKey) else { return nil }
         return try? JSONDecoder().decode(CivState.self, from: data)
     }
 
@@ -172,6 +207,7 @@ final class CivSession: ObservableObject {
     enum Message: Codable {
         case hello(CivPlayer)
         case state(CivState)
+        case action(CivState.Action, String)
     }
 
     private func startNearby(host: Bool) {
@@ -180,7 +216,7 @@ final class CivSession: ObservableObject {
             guard let self else { return }
             self.partnerConnected = count > 0
             if count > 0 {
-                self.status = "相手とつながりました"
+                self.status = "相手とつながっています"
                 if host, let state = self.state {
                     self.send(.state(state))
                 } else if !host {
@@ -208,60 +244,81 @@ final class CivSession: ObservableObject {
         case .hello(let player):
             guard host, var next = state else { return }
             if next.join(player) {
-                commit(next)
+                state = next
+                changed()
                 GameAudio.shared.play(.complete)
             } else {
                 send(.state(next))
             }
+        case .action(let action, let playerID):
+            guard host, var next = state, let who = next.players.firstIndex(where: { $0.id == playerID }) else { return }
+            let before = next.techs.count
+            if next.perform(action, by: who) {
+                state = next
+                if next.won { GameAudio.shared.play(.win) } else if next.techs.count > before { GameAudio.shared.play(.special) }
+            }
+            // できなかったときも、いまの状態を送り直す（相手の画面をそろえる）
+            changed()
+            if let state { send(.state(state)) }
         case .state(let incoming):
-            if state == nil || incoming.version > (state?.version ?? -1) {
-                let wasMyTurn = isMyTurn
-                state = incoming
-                saveLocal()
-                if !host, !incoming.players.contains(where: { $0.id == myID }) {
-                    status = "この文明はもう 2 人で遊んでいます"
-                } else if !wasMyTurn && isMyTurn {
-                    GameAudio.shared.play(.complete)
-                }
+            guard !host, state == nil || incoming.version >= (state?.version ?? -1) else { return }
+            let before = state?.techs.count ?? incoming.techs.count
+            state = incoming
+            saveLocal()
+            if incoming.techs.count > before { GameAudio.shared.play(.special) }
+            if !incoming.players.contains(where: { $0.id == myID }) {
+                status = "この文明はもう 2 人で遊んでいます"
             }
         }
     }
 
     // MARK: - 離れて：iCloud
 
-    private func pushToCloud(_ next: CivState) {
-        guard let cloud else { return }
-        let previous = saving
-        status = "iCloud に送っています"
-        saving = Task {
-            await previous?.value
+    /// iCloud の最新を読み、時間を進め、ためた行動を行って保存する（ぶつかったら読み直してやり直す）
+    private func syncCloud(replacing fresh: CivState? = nil) async {
+        guard let cloud, !syncing else { return }
+        syncing = true
+        defer {
+            syncing = false
+            lastSync = Date()
+        }
+        for _ in 0..<3 {
             do {
-                if let newer = try await cloud.save(next) {
-                    // 相手のほうが新しかった：相手の状態にそろえる
-                    state = newer
-                    message = "相手の変更と重なったので、相手の状態にそろえました"
+                let remote = try await cloud.fetch()
+                var next: CivState
+                var dirty = false
+                if let fresh {
+                    next = fresh
+                    next.version = (remote?.version ?? 0) + 1
+                    dirty = true
+                } else if let remote {
+                    next = remote
+                } else {
+                    next = state ?? CivState.new(host: me)
+                    dirty = true
                 }
+                if next.join(me) { dirty = true }
+                let before = next.techs.count
+                if next.advance(to: Date()) > 0 { dirty = true }
+                let actions = pending
+                if let who = next.players.firstIndex(where: { $0.id == myID }) {
+                    for action in actions where next.perform(action, by: who) { dirty = true }
+                }
+                if dirty { try await cloud.write(next) }
+                pending.removeFirst(min(actions.count, pending.count))
+                if next.techs.count > before, (state?.techs.count ?? 0) < next.techs.count { GameAudio.shared.play(.special) }
+                if next.won && !(state?.won ?? false) { GameAudio.shared.play(.win) }
+                state = next
+                partnerConnected = next.players.count > 1
                 status = "iCloud と同期しています"
+                return
+            } catch let error as CKError where error.code == .serverRecordChanged {
+                // 相手が先に保存した：読み直してやり直す
+                continue
             } catch {
                 status = "iCloud に送れませんでした"
                 message = Self.describe(error)
-            }
-        }
-    }
-
-    private func startPolling() {
-        pollTask?.cancel()
-        pollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                let wait = (self?.isMyTurn ?? false) ? 15.0 : 4.0
-                try? await Task.sleep(for: .seconds(wait))
-                guard let self, let cloud = self.cloud else { return }
-                await self.saving?.value
-                guard let remote = try? await cloud.fetch(), remote.version > (self.state?.version ?? -1) else { continue }
-                let wasMyTurn = self.isMyTurn
-                self.state = remote
-                self.partnerConnected = remote.players.count > 1
-                if !wasMyTurn && self.isMyTurn { GameAudio.shared.play(.complete) }
+                return
             }
         }
     }
@@ -391,29 +448,22 @@ final class CivCloud {
         }
     }
 
-    /// 保存する。相手のほうが新しい状態を持っていたら、その状態を返す（保存はしない）
-    @discardableResult
-    func save(_ state: CivState) async throws -> CivState? {
+    /// 保存する（直前に fetch したレコードに上書き）。相手が先に保存していたら serverRecordChanged を投げる
+    func write(_ state: CivState) async throws {
         let target = record ?? CKRecord(recordType: Self.recordType, recordID: recordID)
         fill(target, with: state)
         do {
-            try await write(target)
-            return nil
-        } catch let error as CKError where error.code == .serverRecordChanged {
-            guard let server = error.serverRecord else { throw error }
-            record = server
-            if let theirs = Self.decode(server), theirs.version >= state.version { return theirs }
-            fill(server, with: state)
-            try await write(server)
-            return nil
+            try await save(target)
         } catch let error as CKError where error.code == .zoneNotFound && album.isOwner {
             _ = try await db.modifyRecordZones(saving: [CKRecordZone(zoneID: album.zoneID)], deleting: [])
-            try await write(target)
-            return nil
+            try await save(target)
+        } catch let error as CKError where error.code == .serverRecordChanged {
+            record = error.serverRecord
+            throw error
         }
     }
 
-    private func write(_ target: CKRecord) async throws {
+    private func save(_ target: CKRecord) async throws {
         let (results, _) = try await db.modifyRecords(saving: [target], deleting: [], savePolicy: .ifServerRecordUnchanged)
         switch results[recordID] {
         case .success(let saved)?:
@@ -428,8 +478,7 @@ final class CivCloud {
     private func fill(_ target: CKRecord, with state: CivState) {
         target["state"] = (try? JSONEncoder().encode(state)) as CKRecordValue?
         target["version"] = state.version as CKRecordValue
-        let turnOf = state.players.indices.contains(state.current) ? state.players[state.current].id : ""
-        target["turnOf"] = turnOf as CKRecordValue
+        target["turnOf"] = "" as CKRecordValue
     }
 
     private static func decode(_ record: CKRecord) -> CivState? {

@@ -15,7 +15,7 @@ struct CivGameView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("ふたりの文明")
                             .font(.largeTitle.weight(.heavy))
-                        Text("2 人で 1 つの文明を育てる、交代制の街づくり。都市を作り、土地を耕し、技術を研究して、宇宙船を打ち上げたら 2 人の勝ち。")
+                        Text("2 人で 1 つの文明を育てる街づくり。番はなく、2 人とも好きなときに動かせます。5 秒で 1 年たち、資材と知識がたまります。都市を作り、土地を耕し、技術を研究して、宇宙船を打ち上げたら 2 人の勝ち。")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -62,7 +62,7 @@ struct CivGameView: View {
                 } header: {
                     Text("離れて遊ぶ")
                 } footer: {
-                    Text("同じ共有アルバムに入っている友だちと、iCloud で交代に遊びます。相手の番が終わると通知が届きます。アルバムごとに 1 つの文明があります。")
+                    Text("同じ共有アルバムに入っている友だちと、iCloud で一緒に遊びます。相手の動きは数秒おきに届きます。だれも開いていない間も時間は進みます（最大 30 分ぶん）。アルバムごとに 1 つの文明があります。")
                 }
                 Section {
                     Button {
@@ -211,7 +211,7 @@ struct CivPlayView: View {
                 }
                 .accessibilityLabel("閉じる")
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("ターン \(state.turn)・\(state.era)")
+                    Text("\(state.year) 年目・\(state.era)")
                         .font(.subheadline.weight(.heavy))
                     Text(session.status)
                         .font(.caption2)
@@ -245,12 +245,12 @@ struct CivPlayView: View {
                 }
             }
             HStack(spacing: 10) {
-                stat("🔨", "\(state.production)", "+\(income.prod)")
+                stat("🔨", "\(state.production)", "+\(income.prod)/年")
                 Button {
                     showingTech = true
                 } label: {
                     stat("📖", state.research.map { "\($0.name) \(min(state.progress, $0.cost))/\($0.cost)" } ?? "研究を選ぶ",
-                         "+\(income.sci)")
+                         "+\(income.sci)/年")
                 }
                 .buttonStyle(.plain)
                 Spacer(minLength: 0)
@@ -278,14 +278,15 @@ struct CivPlayView: View {
     private func players(_ state: CivState) -> some View {
         HStack(spacing: 4) {
             ForEach(Array(state.players.enumerated()), id: \.offset) { index, player in
-                let active = index == state.current
+                let active = index == session.myIndex
                 Text(player.name)
                     .font(.caption2.weight(active ? .heavy : .medium))
                     .lineLimit(1)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
                     .foregroundStyle(active ? .white : .primary)
-                    .background(Capsule().fill(active ? CivRenderer.color(of: player.color) : Color.white.opacity(0.4)))
+                    .foregroundStyle(.white)
+                    .background(Capsule().fill(CivRenderer.color(of: player.color).opacity(active ? 1 : 0.75)))
             }
             if state.players.count < 2 && session.mode != .solo {
                 Text("相手を待っています")
@@ -311,38 +312,33 @@ struct CivPlayView: View {
             if let spot = selected, let tile = state.tile(spot.0, spot.1) {
                 tilePanel(state, x: spot.0, y: spot.1, tile: tile)
             } else {
-                Text(session.isMyTurn ? "マスをタップして、何をするか選びます" : "\(session.currentName)さんの番です。地図を見ながら待ちましょう")
+                Text(session.canAct ? "マスをタップして、何をするか選びます。2 人とも、いつでも好きなときに動かせます"
+                                    : "相手とつながるのを待っています")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            HStack(spacing: 10) {
-                HStack(spacing: 4) {
-                    ForEach(0..<CivState.actionsPerTurn, id: \.self) { k in
-                        Circle()
-                            .fill(k < state.actions && session.isMyTurn ? Color.orange : Color.gray.opacity(0.3))
-                            .frame(width: 12, height: 12)
-                    }
-                }
-                .accessibilityLabel("残りの行動 \(state.actions)")
-                Text(session.isMyTurn ? "あなたの番" : "\(session.currentName)さんの番")
-                    .font(.subheadline.weight(.bold))
-                Spacer()
-                Button {
-                    selected = nil
-                    session.endTurn()
-                } label: {
-                    Label("番を終える", systemImage: "hourglass")
-                        .font(.subheadline.weight(.bold))
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
-                .disabled(!session.isMyTurn || state.won)
-            }
+            yearBar(state)
         }
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .padding(.horizontal, 10)
         .padding(.bottom, 6)
+    }
+
+    /// 次の年までの進み具合（5 秒で 1 年）
+    private func yearBar(_ state: CivState) -> some View {
+        TimelineView(.periodic(from: .now, by: 0.25)) { timeline in
+            let fraction = min(max(timeline.date.timeIntervalSince(state.lastTick) / CivState.yearSeconds, 0), 1)
+            HStack(spacing: 8) {
+                Image(systemName: "hourglass")
+                    .font(.caption)
+                ProgressView(value: fraction)
+                    .tint(.orange)
+                Text("\(state.year) 年目")
+                    .font(.caption.weight(.bold).monospacedDigit())
+            }
+        }
+        .accessibilityLabel("\(state.year) 年目")
     }
 
     @ViewBuilder
@@ -424,7 +420,7 @@ struct CivPlayView: View {
 
     private func actionButton(_ state: CivState, _ title: String, systemImage: String, cost: Int?,
                               _ action: CivState.Action, detail: String? = nil, special: Bool = false) -> some View {
-        let problem = session.isMyTurn ? state.problem(action) : "\(session.currentName)さんの番です"
+        let problem = session.canAct ? state.problem(action) : "相手とつながっていません"
         return Button {
             session.act(action)
             if case .foundCity = action { selected = nil }
@@ -432,7 +428,7 @@ struct CivPlayView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Label(title, systemImage: systemImage)
                     .font(.subheadline.weight(.bold))
-                Text([cost.map { "🔨\($0)" }, "行動 1", detail].compactMap { $0 }.joined(separator: "・"))
+                Text([cost.map { "🔨\($0)" }, detail].compactMap { $0 }.joined(separator: "・"))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 if let problem {
@@ -461,7 +457,7 @@ struct CivPlayView: View {
                 Text("🚀").font(.system(size: 64))
                 Text("宇宙船が打ち上がりました！")
                     .font(.title2.weight(.heavy))
-                Text("\(state.turn) ターンで、\(state.players.map(\.name).joined(separator: " と ")) の文明の勝ち")
+                Text("\(state.year) 年で、\(state.players.map(\.name).joined(separator: " と ")) の文明の勝ち")
                     .multilineTextAlignment(.center)
                 Text("都市 \(state.cities.count)・人口 \(state.cities.map(\.pop).reduce(0, +))・技術 \(state.techs.count)")
                     .font(.footnote)
@@ -498,12 +494,12 @@ private struct CivTechSheet: View {
                         } label: {
                             row(tech, status: state.research == tech ? "研究中 \(min(state.progress, tech.cost))/\(tech.cost)" : "📖\(tech.cost)")
                         }
-                        .disabled(!session.isMyTurn)
+                        .disabled(!session.canAct)
                     }
                 } header: {
                     Text("研究できる技術")
                 } footer: {
-                    Text(session.isMyTurn ? "選ぶのに行動は使いません。番を終えるたびに 📖 がたまります。" : "研究を選べるのは自分の番だけです。")
+                    Text("1 年ごとに 📖 がたまって、選んだ技術を研究します。2 人のどちらが選んでもかまいません。")
                 }
                 Section("まだ研究できない") {
                     ForEach(CivTech.allCases.filter { !state.techs.contains($0) && !state.canResearch($0) }) { tech in
@@ -553,10 +549,10 @@ private struct CivLogSheet: View {
             List {
                 ForEach(Array(state.log.enumerated().reversed()), id: \.offset) { _, entry in
                     HStack(alignment: .top, spacing: 10) {
-                        Text("T\(entry.turn)")
+                        Text("\(entry.year)年")
                             .font(.caption.monospacedDigit().weight(.bold))
                             .foregroundStyle(.orange)
-                            .frame(width: 34, alignment: .leading)
+                            .frame(width: 48, alignment: .leading)
                         Text(entry.text).font(.callout)
                     }
                 }

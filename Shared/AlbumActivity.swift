@@ -16,8 +16,6 @@ enum AlbumActivity {
     }
 
     static let photoType = "AlbumPhoto"
-    /// 「ふたりの文明」（ゲーム）の状態
-    static let civType = "CivGame"
     static let reactionType = "AlbumReaction"
     static let ownZoneName = "SharedAlbum"
     static let albumZonePrefix = "Album-"
@@ -89,19 +87,16 @@ enum AlbumActivity {
         var reactions: [CKRecord] = []
         var photos: [CKRecord] = []
         var doodled: [CKRecord] = []
-        var civ: [CKRecord] = []
         do {
             var more = true
             while more {
                 let result = try await db.recordZoneChanges(inZoneWith: zone, since: token,
-                                                            desiredKeys: ["photo", "kind", "text", "edited", "turnOf"])
+                                                            desiredKeys: ["photo", "kind", "text", "edited"])
                 for (_, outcome) in result.modificationResultsByID {
                     guard case .success(let modification) = outcome else { continue }
                     let record = modification.record
                     if record.recordType == reactionType {
                         reactions.append(record)
-                    } else if record.recordType == civType {
-                        civ.append(record)
                     } else if record.recordType == photoType {
                         if isNew(record) {
                             photos.append(record)
@@ -129,11 +124,7 @@ enum AlbumActivity {
         let freshReactions = reactions.filter { !isMine($0.creatorUserRecordID?.recordName) }
         let freshPhotos = photos.filter { !isMine($0.creatorUserRecordID?.recordName) }
         let freshDoodles = doodled.filter { !isMine($0.lastModifiedUserRecordID?.recordName) }
-        // ゲーム：相手が番を終えて、自分の番になった
-        let myTurns = civ.filter {
-            !isMine($0.lastModifiedUserRecordID?.recordName) && isMine($0["turnOf"] as? String)
-        }
-        guard !freshReactions.isEmpty || !freshPhotos.isEmpty || !freshDoodles.isEmpty || !myTurns.isEmpty else { return [] }
+        guard !freshReactions.isEmpty || !freshPhotos.isEmpty || !freshDoodles.isEmpty else { return [] }
 
         // 名前とアルバムの題名は、アルバムの共有（招待）から読む
         let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zone)
@@ -189,10 +180,6 @@ enum AlbumActivity {
             events.append(Event(title: "📷 \(who)さんが写真を \(list.count) 枚追加",
                                 body: "タップしてアルバムを見る", album: albumTitle,
                                 imageURL: await thumbnailFile(of: first?.recordID, in: db)))
-        }
-        for record in myTurns {
-            events.append(Event(title: "🏛 ふたりの文明：あなたの番です",
-                                body: "\(name(record.lastModifiedUserRecordID))さんが番を終えました", album: albumTitle))
         }
         for record in freshDoodles {
             let who = name(record.lastModifiedUserRecordID)
