@@ -87,6 +87,9 @@ struct MartCustomer: Identifiable, Codable {
     var path: [CGPoint] = []
     var timer: Double = 0
     var shirt: Int
+    /// 待たされた時間（長すぎると怒って帰る）
+    var waited: Double = 0
+    var angry = false
 }
 
 struct MartHelper: Codable {
@@ -129,6 +132,54 @@ struct MartStep {
 }
 
 /// ゲストに送るお店の様子
+/// クエスト（目標）。こなすと報酬
+struct MartQuest {
+    enum Kind: Int, Codable { case shelve, serve, earn }
+    let kind: Kind
+    let target: Int
+    let reward: Int
+
+    static func make(_ index: Int) -> MartQuest {
+        let round = index / 3
+        switch index % 3 {
+        case 0: return MartQuest(kind: .shelve, target: 12 + round * 10, reward: 25 + round * 30)
+        case 1: return MartQuest(kind: .serve, target: 4 + round * 3, reward: 35 + round * 35)
+        default: return MartQuest(kind: .earn, target: 60 + round * 80, reward: 40 + round * 45)
+        }
+    }
+
+    var title: String {
+        switch kind {
+        case .shelve: return "商品を \(target) 個並べる"
+        case .serve: return "お客さん \(target) 人をお会計"
+        case .earn: return "お金を \(target) かせぐ"
+        }
+    }
+
+    var symbol: String {
+        switch kind {
+        case .shelve: return "shippingbox.fill"
+        case .serve: return "person.2.fill"
+        case .earn: return "banknote.fill"
+        }
+    }
+}
+
+/// これまでの数（クエストに使う）
+struct MartStats: Codable {
+    var shelved = 0
+    var served = 0
+    var earned = 0
+
+    func value(_ kind: MartQuest.Kind) -> Int {
+        switch kind {
+        case .shelve: return shelved
+        case .serve: return served
+        case .earn: return earned
+        }
+    }
+}
+
 struct MartSnapshot: Codable {
     var players: [MartWalker]
     var customers: [MartCustomer]
@@ -139,6 +190,9 @@ struct MartSnapshot: Codable {
     var done: [Int]
     var paid: [Int: Int]
     var serving: Double
+    var stats: MartStats
+    var questIndex: Int
+    var questBase: Int
 }
 
 @MainActor
@@ -195,6 +249,12 @@ final class MartGame: ObservableObject {
     @Published private(set) var level = 0
     /// 解放したときの合図（画面に出す文）
     @Published var banner: String?
+    /// 留守のあいだにかせいだお金（開いたときに見せる）
+    @Published var offlineEarned = 0
+    @Published private(set) var stats = MartStats()
+    @Published private(set) var questIndex = 0
+    /// いまのクエストを始めたときの数
+    @Published private(set) var questBase = 0
 
     private(set) var players: [MartWalker] = [MartWalker(pos: CGPoint(x: 6.5, y: 9.0))]
     private(set) var customers: [MartCustomer] = []
@@ -242,6 +302,27 @@ final class MartGame: ObservableObject {
 
     func paidAmount(_ index: Int) -> Int { paid[index] ?? 0 }
 
+    var quest: MartQuest { MartQuest.make(questIndex) }
+    var questProgress: Int { max(0, min(stats.value(quest.kind) - questBase, quest.target)) }
+    var questDone: Bool { questProgress >= quest.target }
+
+    /// クエストの報酬を受け取る（ゲストのときはホストに頼む）
+    var onClaim: (() -> Void)?
+
+    func claimQuest() {
+        guard questDone else { return }
+        if role == .guest {
+            onClaim?()
+            return
+        }
+        money += quest.reward
+        banner = "🏆 クエスト達成！ 💵+\(quest.reward)"
+        GameAudio.shared.play(.win)
+        questIndex += 1
+        questBase = stats.value(quest.kind)
+        save()
+    }
+
     // MARK: - 2 人
 
     /// ゲストが来た（ホスト）
@@ -267,7 +348,8 @@ final class MartGame: ObservableObject {
 
     func snapshot() -> MartSnapshot {
         MartSnapshot(players: players, customers: customers, helpers: helpers.map(\.walker), stock: stock, cash: cash,
-                     money: money, done: Array(done), paid: paid, serving: serving)
+                     money: money, done: Array(done), paid: paid, serving: serving, stats: stats,
+                     questIndex: questIndex, questBase: questBase)
     }
 
     /// ホストから届いたお店の様子を当てはめる（ゲスト。自分の位置はそのまま）
@@ -288,6 +370,10 @@ final class MartGame: ObservableObject {
         money = snapshot.money
         paid = snapshot.paid
         serving = snapshot.serving
+        if snapshot.questIndex > questIndex { banner = "🏆 クエスト達成！" }
+        stats = snapshot.stats
+        questIndex = snapshot.questIndex
+        questBase = snapshot.questBase
         let newDone = Set(snapshot.done)
         if newDone != done {
             let added = newDone.subtracting(done)
@@ -388,6 +474,7 @@ final class MartGame: ObservableObject {
                   let at = players[index].carry.lastIndex(of: product) else { continue }
             players[index].carry.remove(at: at)
             stock[product.rawValue] += 1
+            stats.shelved += 1
             dropTimers[index] = 0.09
             tick()
         }
@@ -405,6 +492,8 @@ final class MartGame: ObservableObject {
         serving = 0
         let customer = customers[index]
         cash += customer.got * customer.product.price
+        stats.served += 1
+        stats.earned += customer.got * customer.product.price
         queue.removeFirst()
         customers[index].phase = .leaving
         customers[index].path = [CGPoint(x: Self.serveSpot.x, y: 10), Self.door, Self.outside]
@@ -517,6 +606,19 @@ final class MartGame: ObservableObject {
                 stock[k] -= 1
                 customer.got += 1
                 customer.timer = 0.4
+                customer.waited = 0
+            } else if stock[k] == 0, customer.got < customer.want {
+                customer.waited += dt
+                if customer.waited > 25 {
+                    // 品切れのまま待たされて、怒って帰る（取った分は棚にもどす）
+                    stock[k] = min(stock[k] + customer.got, Self.shelfCapacity)
+                    customer.got = 0
+                    customer.angry = true
+                    customer.phase = .leaving
+                    let front = Self.shelfFront(k)
+                    customer.path = [CGPoint(x: 11.0, y: front.y), CGPoint(x: 11.0, y: 10), Self.door, Self.outside]
+                    return
+                }
             }
             if customer.got >= customer.want, customer.timer <= 0 {
                 queue.append(customer.id)
@@ -525,8 +627,23 @@ final class MartGame: ObservableObject {
                 customer.path = [CGPoint(x: 11.0, y: front.y)]
             }
         case .toQueue:
-            if follow(&customer.walker, path: &customer.path, speed: 2.0, dt: dt) { customer.phase = .queued }
+            if follow(&customer.walker, path: &customer.path, speed: 2.0, dt: dt) {
+                customer.phase = .queued
+                customer.waited = 0
+            }
         case .queued:
+            customer.waited += dt
+            if customer.waited > 35, let at = queue.firstIndex(of: customer.id), at > 0 || !hasCashier {
+                // レジでずっと待たされて、怒って帰る
+                queue.remove(at: at)
+                stock[customer.product.rawValue] = min(stock[customer.product.rawValue] + customer.got, Self.shelfCapacity)
+                customer.got = 0
+                customer.angry = true
+                customer.phase = .leaving
+                customer.path = [CGPoint(x: Self.serveSpot.x - 0.6, y: customer.walker.pos.y), CGPoint(x: Self.serveSpot.x - 0.6, y: 10),
+                                 Self.door, Self.outside]
+                return
+            }
             let index = queue.firstIndex(of: customer.id) ?? 0
             var target = Self.serveSpot
             target.y += 0.75 * CGFloat(index)
@@ -596,6 +713,7 @@ final class MartGame: ObservableObject {
                 if stock[k] < Self.shelfCapacity {
                     helper.walker.carry.removeLast()
                     stock[k] += 1
+                    stats.shelved += 1
                     helper.timer = 0.13
                 } else {
                     helper.walker.carry.removeAll()
@@ -613,11 +731,16 @@ final class MartGame: ObservableObject {
         var paid: [Int: Int]
         var stock: [Int]
         var cash: Int
+        var stats: MartStats?
+        var questIndex: Int?
+        var questBase: Int?
+        var savedAt: Date?
     }
 
     func save() {
         guard role != .guest else { return }
-        let data = SaveData(money: money, done: Array(done), paid: paid, stock: stock, cash: cash)
+        let data = SaveData(money: money, done: Array(done), paid: paid, stock: stock, cash: cash, stats: stats,
+                            questIndex: questIndex, questBase: questBase, savedAt: Date())
         if let encoded = try? JSONEncoder().encode(data) {
             UserDefaults.standard.set(encoded, forKey: "martSave")
         }
@@ -631,7 +754,21 @@ final class MartGame: ObservableObject {
         cash = saved.cash
         if saved.stock.count == stock.count { stock = saved.stock }
         done = Set(saved.done.filter { Self.steps.indices.contains($0) })
+        stats = saved.stats ?? MartStats()
+        questIndex = saved.questIndex ?? 0
+        questBase = saved.questBase ?? 0
         rebuildUnlocks()
+        // 留守のあいだも、お店は少しかせぐ（係がいるほど多い。2 時間まで）
+        if let savedAt = saved.savedAt {
+            let minutes = min(Date().timeIntervalSince(savedAt), 7200) / 60
+            let perMinute = Double(unlockedProducts.map(\.price).reduce(0, +)) * 1.2
+                * (hasCashier ? 1 : 0.35) * (helpers.isEmpty ? 0.4 : 1 + 0.3 * Double(helpers.count - 1))
+            let earned = Int(minutes * perMinute)
+            if earned >= 5 {
+                cash += earned
+                offlineEarned = earned
+            }
+        }
     }
 
     func reset() {
@@ -642,6 +779,9 @@ final class MartGame: ObservableObject {
         paid = [:]
         stock = Array(repeating: 0, count: MartProduct.allCases.count)
         cash = 0
+        stats = MartStats()
+        questIndex = 0
+        questBase = 0
         helpers = []
         customers = []
         queue = []

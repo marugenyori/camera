@@ -38,6 +38,12 @@ final class MartScene {
     func saveZoom() { UserDefaults.standard.set(Double(zoom), forKey: "martZoom") }
 
     private var leavingCustomers: Set<UUID> = []
+    private var doorPanels: [(SCNNode, Float)] = []
+    private var doorOpen: Float = 0
+    private var dustTimer: Double = 0
+    /// 飛んでいる途中の商品（着くまで棚に出さない）
+    private var flying: Set<ObjectIdentifier> = []
+    private var lastStock: [Int] = []
     private var lastMoney = 0
     private var lastCash = 0
     private var lastDone: Set<Int> = []
@@ -303,13 +309,22 @@ final class MartScene {
 
         // 床（市松模様）
         let floorNode = Self.box(floor.width, 0.2, floor.height, .white, chamfer: 0)
-        let tiles = UIGraphicsImageRenderer(size: CGSize(width: floor.width * 40, height: floor.height * 40)).image { context in
-            UIColor(red: 0.95, green: 0.91, blue: 0.83, alpha: 1).setFill()
-            context.fill(CGRect(x: 0, y: 0, width: floor.width * 40, height: floor.height * 40))
-            UIColor(red: 0.9, green: 0.85, blue: 0.76, alpha: 1).setFill()
+        let unit: CGFloat = 64
+        let tiles = UIGraphicsImageRenderer(size: CGSize(width: floor.width * unit, height: floor.height * unit)).image { context in
+            // 目地（タイルのすき間）の色を全体に塗ってから、タイルを少しずつ色を変えて置く
+            UIColor(red: 0.82, green: 0.77, blue: 0.69, alpha: 1).setFill()
+            context.fill(CGRect(x: 0, y: 0, width: floor.width * unit, height: floor.height * unit))
             for x in 0..<Int(floor.width.rounded(.up)) {
-                for y in 0..<Int(floor.height) where (x + y) % 2 == 0 {
-                    context.fill(CGRect(x: x * 40, y: y * 40, width: 40, height: 40))
+                for y in 0..<Int(floor.height) {
+                    let checker = (x + y) % 2 == 0
+                    let jitter = CGFloat((x * 37 + y * 17) % 7) * 0.004
+                    UIColor(red: (checker ? 0.95 : 0.91) - jitter, green: (checker ? 0.92 : 0.87) - jitter,
+                            blue: (checker ? 0.86 : 0.79) - jitter, alpha: 1).setFill()
+                    let tile = CGRect(x: CGFloat(x) * unit + 2, y: CGFloat(y) * unit + 2, width: unit - 4, height: unit - 4)
+                    UIBezierPath(roundedRect: tile, cornerRadius: 4).fill()
+                    // ほんのり光る角
+                    UIColor(white: 1, alpha: 0.18).setFill()
+                    UIBezierPath(roundedRect: CGRect(x: tile.minX + 4, y: tile.minY + 4, width: tile.width * 0.45, height: 5), cornerRadius: 2).fill()
                 }
             }
         }
@@ -347,8 +362,15 @@ final class MartScene {
         let frame = UIColor(white: 0.35, alpha: 1)
         world.addChildNode(Self.at(Self.box(0.25, 2.2, 0.25, frame), floor.maxX + 0.05, 1.1, 8.65))
         world.addChildNode(Self.at(Self.box(0.25, 0.3, 2.6, frame), floor.maxX + 0.05, 2.2, 9.95))
-        let glass = UIColor(red: 0.7, green: 0.9, blue: 1, alpha: 0.35)
-        world.addChildNode(Self.at(Self.box(0.06, 2.0, 0.6, glass, chamfer: 0), floor.maxX + 0.05, 1.0, 9.0))
+        world.addChildNode(Self.at(Self.box(0.25, 2.2, 0.25, frame), floor.maxX + 0.05, 1.1, 11.25))
+        let glass = UIColor(red: 0.7, green: 0.9, blue: 1, alpha: 0.4)
+        for z in [9.3, 10.6] as [CGFloat] {
+            let panel = Self.box(0.08, 2.0, 1.25, glass, chamfer: 0.01)
+            panel.addChildNode(Self.at(Self.box(0.1, 2.0, 0.06, UIColor(white: 0.4, alpha: 1), chamfer: 0), 0, 0, z < 10 ? -0.6 : 0.6))
+            panel.position = SCNVector3(Float(floor.maxX + 0.05), 1.0, Float(z))
+            world.addChildNode(panel)
+            doorPanels.append((panel, Float(z)))
+        }
         // レジ台
         let counter = MartGame.counter
         let counterNode = SCNNode()
@@ -529,8 +551,21 @@ final class MartScene {
             wheel.eulerAngles.z = .pi / 2
             truck.addChildNode(Self.at(wheel, x, 0.32, z))
         }
-        truck.position = SCNVector3(17.2, -0.15, 4.5)
+        truck.position = SCNVector3(17.2, -0.15, -16)
         world.addChildNode(truck)
+        // 商品を届けに来て、また走っていく
+        let arrive = SCNAction.move(to: SCNVector3(17.2, -0.15, 4.5), duration: 3.2)
+        arrive.timingMode = .easeOut
+        let leave = SCNAction.move(to: SCNVector3(17.2, -0.15, 26), duration: 3.0)
+        leave.timingMode = .easeIn
+        truck.runAction(.repeatForever(.sequence([
+            arrive,
+            .sequence([.moveBy(x: 0, y: 0.04, z: 0, duration: 0.12), .moveBy(x: 0, y: -0.04, z: 0, duration: 0.12)]),
+            .wait(duration: 9),
+            leave,
+            .wait(duration: 8),
+            .move(to: SCNVector3(17.2, -0.15, -16), duration: 0),
+        ])))
     }
 
     // MARK: - 棚・倉庫の台
@@ -681,19 +716,46 @@ final class MartScene {
                                      Float(MartGame.shelfRect(product.rawValue).midY)))
             }
         }
+        // 棚の商品：増えたら店員の手から飛んでいき、減ったらお客さんの手へ飛ぶ
+        var staffHands: [SCNVector3] = playerNodes.map(\.handPosition) + helperNodes.map(\.handPosition)
+        if staffHands.isEmpty { staffHands = [SCNVector3(6.5, 1, 9)] }
         for (k, items) in shelfItems {
             let stock = game.stock.indices.contains(k) ? game.stock[k] : 0
+            guard let product = MartProduct(rawValue: k) else { continue }
             for (index, item) in items.enumerated() {
+                let id = ObjectIdentifier(item)
                 let show = index < stock
-                if item.isHidden == show {
-                    item.isHidden = !show
-                    if show {
-                        item.scale = SCNVector3(0.3, 0.3, 0.3)
-                        item.runAction(.scale(to: 1, duration: 0.15))
+                if show, item.isHidden, !flying.contains(id) {
+                    if built {
+                        let slot = item.worldPosition
+                        let from = staffHands.min { Self.distance($0, slot) < Self.distance($1, slot) } ?? slot
+                        flying.insert(id)
+                        flyClone(Self.productModel(product), from: from, to: slot, duration: 0.22) { [weak self] in
+                            guard let self else { return }
+                            self.flying.remove(id)
+                            let current = self.lastStock.indices.contains(k) ? self.lastStock[k] : 0
+                            guard index < current else { return }
+                            item.isHidden = false
+                            item.scale = SCNVector3(0.5, 0.5, 0.5)
+                            item.runAction(.scale(to: 1, duration: 0.12))
+                        }
+                    } else {
+                        item.isHidden = false
+                    }
+                } else if !show, !item.isHidden {
+                    item.isHidden = true
+                    // お客さんが取った
+                    let slot = item.worldPosition
+                    let buyer = game.customers.filter { $0.phase == .shopping && $0.product == product }
+                        .map { SCNVector3(Float($0.walker.pos.x), 0.9, Float($0.walker.pos.y)) }
+                        .min { Self.distance($0, slot) < Self.distance($1, slot) }
+                    if let buyer {
+                        flyClone(Self.productModel(product), from: slot, to: buyer, duration: 0.25, shrink: true)
                     }
                 }
             }
         }
+        lastStock = game.stock
         syncPads(game)
         // 人
         while playerNodes.count < game.players.count {
@@ -705,7 +767,8 @@ final class MartScene {
         }
         while playerNodes.count > game.players.count { playerNodes.removeLast().root.removeFromParentNode() }
         for (index, walker) in game.players.enumerated() {
-            playerNodes[index].update(walker, smooth: index == game.me ? 1 : smooth)
+            let added = playerNodes[index].update(walker, smooth: index == game.me ? 1 : smooth)
+            flyFromSupply(added, carry: walker.carry)
         }
         var seen = Set<UUID>()
         for customer in game.customers {
@@ -731,11 +794,12 @@ final class MartScene {
                 node.setBubble(Self.bubble(product: nil, count: 0))
             case .leaving:
                 node.setBubble(nil)
-                node.setBag(customer.product)
+                if !customer.angry { node.setBag(customer.product) }
                 if !leavingCustomers.contains(customer.id) {
                     leavingCustomers.insert(customer.id)
-                    // 買えてうれしい
-                    floatText(["😊", "😍", "🥰", "👍"][customer.shirt % 4], at: SCNVector3(node.root.position.x, 2.0, node.root.position.z))
+                    // 買えてうれしい・待たされて怒った
+                    let face = customer.angry ? "😡" : ["😊", "😍", "🥰", "👍"][customer.shirt % 4]
+                    floatText(face, at: SCNVector3(node.root.position.x, 2.0, node.root.position.z))
                 }
             }
         }
@@ -749,7 +813,25 @@ final class MartScene {
             world.addChildNode(node.root)
             helperNodes.append(node)
         }
-        for (index, helper) in game.helpers.enumerated() { helperNodes[index].update(helper.walker, smooth: smooth) }
+        for (index, helper) in game.helpers.enumerated() {
+            let added = helperNodes[index].update(helper.walker, smooth: smooth)
+            flyFromSupply(added, carry: helper.walker.carry)
+        }
+        // 歩くと足もとに土ぼこり
+        dustTimer -= dt
+        if dustTimer <= 0 {
+            dustTimer = 0.11
+            for (index, walker) in game.players.enumerated() where walker.moving && playerNodes.indices.contains(index) {
+                puff(at: playerNodes[index].root.position)
+            }
+        }
+        // 自動ドア：人が近づくと開く
+        let door = MartGame.door
+        let near = (game.players.map(\.pos) + game.customers.map(\.walker.pos)).contains { hypot($0.x - door.x - 0.4, $0.y - door.y) < 1.9 }
+        doorOpen += ((near ? 1 : 0) - doorOpen) * Float(min(1, dt * 8))
+        for (panel, z) in doorPanels {
+            panel.position.z = z + (z < 10 ? -1 : 1) * doorOpen * 1.05
+        }
         if game.hasCashier, cashierNode == nil {
             let node = CharacterNode(style: .helper)
             world.addChildNode(node.root)
@@ -883,6 +965,63 @@ final class MartScene {
     }
 
     // MARK: - 演出
+
+    static func distance(_ a: SCNVector3, _ b: SCNVector3) -> Float {
+        let dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z
+        return (dx * dx + dy * dy + dz * dz).squareRoot()
+    }
+
+    /// 受け取った商品が、倉庫の台から手の上へ飛んでくる
+    private func flyFromSupply(_ added: [SCNNode], carry: [MartProduct]) {
+        guard built else {
+            added.forEach { $0.isHidden = false }
+            return
+        }
+        for pack in added {
+            let index = Int(pack.name ?? "") ?? 0
+            guard carry.indices.contains(index) else {
+                pack.isHidden = false
+                continue
+            }
+            let product = carry[index]
+            let spot = MartGame.supplySpot(product.rawValue)
+            let from = SCNVector3(Float(spot.x - 0.35), 0.9, Float(spot.y))
+            flyClone(Self.packModel(product), from: from, to: pack.worldPosition, duration: 0.18) {
+                pack.isHidden = false
+                pack.scale = SCNVector3(1.25, 0.8, 1.25)
+                pack.runAction(.scale(to: 1, duration: 0.1))
+            }
+        }
+    }
+
+    /// 物を放物線で飛ばす（着いたら消して completion）
+    private func flyClone(_ node: SCNNode, from start: SCNVector3, to end: SCNVector3, duration: Double, shrink: Bool = false,
+                          completion: (() -> Void)? = nil) {
+        node.position = start
+        node.castsShadow = false
+        world.addChildNode(node)
+        let mid = SCNVector3((start.x + end.x) / 2, max(start.y, end.y) + 0.9, (start.z + end.z) / 2)
+        let up = SCNAction.move(to: mid, duration: duration / 2)
+        up.timingMode = .easeOut
+        let down = SCNAction.move(to: end, duration: duration / 2)
+        down.timingMode = .easeIn
+        var actions: [SCNAction] = [.sequence([up, down]), .rotateBy(x: 0, y: 2.5, z: 0, duration: duration)]
+        if shrink { actions.append(.scale(to: 0.3, duration: duration)) }
+        node.runAction(.group(actions)) {
+            node.removeFromParentNode()
+            if let completion { DispatchQueue.main.async { completion() } }
+        }
+    }
+
+    /// 足もとの土ぼこり
+    private func puff(at position: SCNVector3) {
+        let dust = Self.sphere(0.09, UIColor(white: 1, alpha: 0.85))
+        dust.castsShadow = false
+        dust.position = SCNVector3(position.x + Float.random(in: -0.08...0.08), 0.06, position.z + Float.random(in: -0.08...0.08))
+        world.addChildNode(dust)
+        dust.runAction(.sequence([.group([.scale(to: 2.2, duration: 0.4), .fadeOut(duration: 0.4),
+                                          .moveBy(x: 0, y: 0.15, z: 0, duration: 0.4)]), .removeFromParentNode()]))
+    }
 
     private func flyBill(from start: SCNVector3, to end: SCNVector3) {
         let bill = Self.box(0.4, 0.06, 0.25, UIColor(red: 0.42, green: 0.78, blue: 0.4, alpha: 1), chamfer: 0.01)
@@ -1051,7 +1190,8 @@ final class CharacterNode {
         pivot.addChildNode(stack)
     }
 
-    func update(_ walker: MartWalker, smooth: Float) {
+    @discardableResult
+    func update(_ walker: MartWalker, smooth: Float) -> [SCNNode] {
         let target = SCNVector3(Float(walker.pos.x), 0, Float(walker.pos.y))
         root.position.x += (target.x - root.position.x) * smooth
         root.position.z += (target.z - root.position.z) * smooth
@@ -1066,18 +1206,37 @@ final class CharacterNode {
         leftLeg.eulerAngles.z = swing
         rightLeg.eulerAngles.z = -swing
         body.position.y = 0.66 + (walker.moving ? abs(Float(sin(walker.step * 8))) * 0.05 : 0)
-        // 運んでいる箱
+        // 運んでいる箱（増えた分は、隠して返す。飛んできてから見せる）
+        var added: [SCNNode] = []
         if walker.carry != stackKey {
-            stackKey = walker.carry
-            stack.childNodes.forEach { $0.removeFromParentNode() }
-            for (index, product) in walker.carry.enumerated() {
-                let pack = MartScene.packModel(product)
-                pack.position = SCNVector3(0, Float(index) * 0.18, 0)
-                stack.addChildNode(pack)
+            if walker.carry.count > stackKey.count, Array(walker.carry.prefix(stackKey.count)) == stackKey {
+                for index in stackKey.count..<walker.carry.count {
+                    let pack = MartScene.packModel(walker.carry[index])
+                    pack.position = SCNVector3(0, Float(index) * 0.18, 0)
+                    pack.name = "\(index)"
+                    pack.isHidden = true
+                    stack.addChildNode(pack)
+                    added.append(pack)
+                }
+            } else {
+                stack.childNodes.forEach { $0.removeFromParentNode() }
+                for (index, product) in walker.carry.enumerated() {
+                    let pack = MartScene.packModel(product)
+                    pack.position = SCNVector3(0, Float(index) * 0.18, 0)
+                    pack.name = "\(index)"
+                    stack.addChildNode(pack)
+                }
             }
+            stackKey = walker.carry
         }
         // 歩くと積んだ箱が少しゆれる
         stack.eulerAngles.x = walker.moving ? Float(sin(walker.step * 4)) * 0.05 : 0
+        return added
+    }
+
+    /// 手の上（積んだ箱のいちばん上）の場所
+    var handPosition: SCNVector3 {
+        stack.convertPosition(SCNVector3(0, Float(stackKey.count) * 0.18, 0), to: nil)
     }
 
     func setBubble(_ image: UIImage?) {

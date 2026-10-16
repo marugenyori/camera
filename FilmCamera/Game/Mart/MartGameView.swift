@@ -98,6 +98,7 @@ final class MartSession: ObservableObject, Identifiable {
     enum Message: Codable {
         case guest(MartWalker)
         case snapshot(MartSnapshot)
+        case claim
     }
 
     init(role: MartGame.Role, name: String) {
@@ -124,10 +125,17 @@ final class MartSession: ObservableObject, Identifiable {
                 if role == .host { self.game.setGuest(walker) }
             case .snapshot(let snapshot):
                 if role == .guest { self.game.apply(snapshot) }
+            case .claim:
+                if role == .host { self.game.claimQuest() }
             }
         }
         link.start()
         nearby = link
+        if role == .guest {
+            game.onClaim = { [weak link] in
+                if let data = try? JSONEncoder().encode(Message.claim) { link?.send(data) }
+            }
+        }
         status = role == .host ? "友だちを待っています" : "友だちのお店をさがしています"
     }
 
@@ -188,6 +196,7 @@ struct MartPlayView: View {
             joystick
             VStack(spacing: 8) {
                 hud
+                questCard
                 if !session.status.isEmpty {
                     HStack(spacing: 8) {
                         ProgressView().tint(.white)
@@ -221,8 +230,12 @@ struct MartPlayView: View {
                 }
             }
         }
+        .overlay {
+            if game.offlineEarned > 0 { offlinePopup }
+        }
         .preferredColorScheme(.light)
         .animation(.spring(duration: 0.4, bounce: 0.5), value: game.banner)
+        .animation(.spring(duration: 0.4, bounce: 0.3), value: game.offlineEarned)
         .statusBarHidden()
         .task { await run() }
         .onDisappear {
@@ -261,6 +274,99 @@ struct MartPlayView: View {
                 touchNow = nil
                 game.stick = .zero
             }
+    }
+
+    /// クエスト（左上のカード）。こなしたら「受け取る」
+    private var questCard: some View {
+        let quest = game.quest
+        let progress = game.questProgress
+        return HStack(spacing: 10) {
+            Image(systemName: quest.symbol)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 38, height: 38)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(red: 0.35, green: 0.55, blue: 0.95)))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(quest.title)
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Color(red: 0.2, green: 0.22, blue: 0.3))
+                    .lineLimit(1)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color(white: 0.88))
+                        Capsule().fill(Color(red: 0.35, green: 0.8, blue: 0.35))
+                            .frame(width: max(geo.size.width * CGFloat(progress) / CGFloat(max(quest.target, 1)), 8))
+                    }
+                }
+                .frame(height: 8)
+                Text("\(progress)/\(quest.target)　報酬 💵\(quest.reward)")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+            if game.questDone {
+                Button {
+                    game.claimQuest()
+                } label: {
+                    Text("受け取る")
+                        .font(.system(size: 14, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(Capsule().fill(Color(red: 1, green: 0.6, blue: 0.15))
+                            .shadow(color: Color(red: 0.8, green: 0.4, blue: 0.1), radius: 0, x: 0, y: 3))
+                }
+                .buttonStyle(.plain)
+                .phaseAnimator([1.0, 1.08]) { content, scale in
+                    content.scaleEffect(scale)
+                } animation: { _ in .easeInOut(duration: 0.5) }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: 300, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.white.opacity(0.95))
+            .shadow(color: .black.opacity(0.15), radius: 0, x: 0, y: 3))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+    }
+
+    /// 留守のあいだにかせいだお金
+    private var offlinePopup: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+            VStack(spacing: 14) {
+                Text("おかえりなさい！")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                Text("留守のあいだも、お店は\nがんばってかせいでいました")
+                    .font(.callout.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text("💵").font(.system(size: 40))
+                    Text("\(game.offlineEarned)")
+                        .font(.system(size: 44, weight: .black, design: .rounded))
+                        .foregroundStyle(Color(red: 0.2, green: 0.6, blue: 0.25))
+                }
+                Text("レジの横に置いてあります。拾いに行こう！")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.secondary)
+                Button {
+                    game.offlineEarned = 0
+                    GameAudio.shared.play(.complete)
+                } label: {
+                    Text("OK")
+                        .font(.system(size: 20, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(width: 160, height: 52)
+                        .background(Capsule().fill(Color(red: 0.3, green: 0.75, blue: 0.35))
+                            .shadow(color: Color(red: 0.2, green: 0.5, blue: 0.2), radius: 0, x: 0, y: 4))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(28)
+            .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(.white))
+            .padding(30)
+            .transition(.scale(scale: 0.6).combined(with: .opacity))
+        }
     }
 
     /// 2 本指で広げると寄る、つまむと引く（写真と同じ感覚）
