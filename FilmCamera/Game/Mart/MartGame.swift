@@ -195,7 +195,7 @@ struct MartStep {
 /// ゲストに送るお店の様子
 /// アップグレード（床の UPGRADE の場所で、お金を払ってレベルを上げる）
 enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
-    case capacity, speed, price, cashier, staff, hire
+    case capacity, speed, price, cashier, staff, hire, baskets, ads, tips
     var id: String { rawValue }
     static let maxLevel = 5
 
@@ -207,6 +207,9 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .cashier: return "レジのスピード"
         case .staff: return "係のスピード"
         case .hire: return "係を雇う"
+        case .baskets: return "かご係"
+        case .ads: return "宣伝"
+        case .tips: return "チップ"
         }
     }
 
@@ -218,6 +221,9 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .cashier: return "barcode.viewfinder"
         case .staff: return "person.2.fill"
         case .hire: return "person.badge.plus"
+        case .baskets: return "basket.fill"
+        case .ads: return "megaphone.fill"
+        case .tips: return "heart.circle.fill"
         }
     }
 
@@ -229,6 +235,9 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .cashier: return "+\(level * 20)%"
         case .staff: return "+\(level * 20)%"
         case .hire: return "+\(level) 人"
+        case .baskets: return "+\(level) 人"
+        case .ads: return "+\(level) 人"
+        case .tips: return "\(level * 10)%"
         }
     }
 
@@ -241,6 +250,9 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .cashier: base = 1_800
         case .staff: base = 2_200
         case .hire: base = 8_000
+        case .baskets: base = 3_000
+        case .ads: base = 4_000
+        case .tips: base = 5_000
         }
         return Int((base * pow(2.1, Double(level)) / 100).rounded()) * 100
     }
@@ -310,6 +322,7 @@ struct MartSnapshot: Codable {
     var standBaskets: Int
     var returnedBaskets: Int
     var upgrades: [MartUpgrade: Int]
+    var basketHelpers: [MartWalker]
 }
 
 @MainActor
@@ -327,27 +340,50 @@ final class MartGame: ObservableObject {
     nonisolated static let shelfCapacity = 8
     /// かご置き場（入口のそば）と、使い終わったかごがたまる場所（レジのそば）
     nonisolated static let basketStand = CGPoint(x: 20.3, y: 12.4)
-    nonisolated static let basketReturn = CGPoint(x: 16.3, y: 6.7)
+    nonisolated static let basketReturn = CGPoint(x: 16.4, y: 10.4)
     nonisolated static let basketStandMax = 12
     /// ゴミ箱（間違えて取った商品を捨てる）
-    nonisolated static let trashSpot = CGPoint(x: 3.3, y: 6.2)
+    nonisolated static let trashSpot = CGPoint(x: 3.2, y: 10.6)
     /// アップグレードの場所（左下）
     nonisolated static let upgradeZone = CGRect(x: 12.6, y: 14.0, width: 2.6, height: 1.6)
-    /// 広げたあとの床の奥行き
-    nonisolated static let expandedDepth: CGFloat = 23
-    /// お客さんが通る縦の通路（棚とレジのあいだ）
-    nonisolated static let aisleX: CGFloat = 17.6
-    /// 品出し係が通る縦の通路（倉庫の台と棚のあいだ）
-    nonisolated static let helperX: CGFloat = 2.9
+    /// 広げるごとにのびる奥行き
+    nonisolated static let areaDepth: CGFloat = 7
+
+    /// 売り場の向き（お客さんが立つ側）
+    enum Facing { case south, north, east, west }
+
+    /// 売り場の置き方：中心・向き・長さ（商品が並ぶ方向）・奥行き。本家のように、壁ぞいの冷蔵庫や島の台をばらばらに置く
+    nonisolated static let layout: [(center: CGPoint, facing: Facing, length: CGFloat, depth: CGFloat)] = [
+        (CGPoint(x: 5.4, y: 0.75), .south, 2.8, 0.9),   // ジュース：奥の壁の冷蔵庫
+        (CGPoint(x: 4.6, y: 5.6), .east, 2.4, 1.0),     // おかし：縦向きの台
+        (CGPoint(x: 9.6, y: 0.7), .south, 2.6, 0.8),    // カップめん：奥の壁の棚
+        (CGPoint(x: 14.2, y: 0.75), .south, 2.8, 0.9),  // サンド：奥の壁の冷蔵庫
+        (CGPoint(x: 9.4, y: 5.2), .north, 2.6, 1.2),    // くだもの：木箱の島
+        (CGPoint(x: 15.6, y: 7.0), .west, 2.4, 1.0),    // おもちゃ：右の島
+        (CGPoint(x: 6.2, y: 9.2), .south, 2.4, 1.0),    // パン：パン屋の台
+        (CGPoint(x: 12.2, y: 8.6), .north, 2.6, 1.0),   // 牛乳：低い冷蔵台
+        (CGPoint(x: 6.0, y: 18.4), .south, 2.4, 1.2),   // アイス：冷凍ケース（スイーツのエリア）
+        (CGPoint(x: 11.0, y: 20.6), .north, 2.6, 1.0),  // ケーキ：ショーケース
+        (CGPoint(x: 6.0, y: 26.0), .east, 2.4, 1.0),    // 花束：花のバケツ（ギフトのエリア）
+        (CGPoint(x: 13.0, y: 27.4), .north, 3.0, 1.0),  // ゲーム：ゲームの台
+    ]
 
     nonisolated static func shelfRect(_ k: Int) -> CGRect {
-        CGRect(x: 4.2 + 3.4 * CGFloat(k % 4), y: [3.0, 8.5, 17.5][min(k / 4, 2)], width: 2.2, height: 1.0)
+        let place = layout[min(max(k, 0), layout.count - 1)]
+        let size = place.facing == .south || place.facing == .north
+            ? CGSize(width: place.length, height: place.depth) : CGSize(width: place.depth, height: place.length)
+        return CGRect(x: place.center.x - size.width / 2, y: place.center.y - size.height / 2, width: size.width, height: size.height)
     }
 
-    /// お客さんが立って商品を取る場所（棚の手前）
+    /// お客さんが立って商品を取る場所（売り場の手前）
     nonisolated static func shelfFront(_ k: Int) -> CGPoint {
         let rect = shelfRect(k)
-        return CGPoint(x: rect.midX, y: rect.maxY + 0.7)
+        switch layout[min(max(k, 0), layout.count - 1)].facing {
+        case .south: return CGPoint(x: rect.midX, y: rect.maxY + 0.7)
+        case .north: return CGPoint(x: rect.midX, y: rect.minY - 0.7)
+        case .east: return CGPoint(x: rect.maxX + 0.7, y: rect.midY)
+        case .west: return CGPoint(x: rect.minX - 0.7, y: rect.midY)
+        }
     }
 
     /// 倉庫の台（左の壁ぞい）
@@ -385,11 +421,11 @@ final class MartGame: ObservableObject {
         MartStep(kind: .stocker, cost: 66_000, pos: CGPoint(x: 4.4, y: 12.6)),
         MartStep(kind: .shelf(9), cost: 75_000, pos: CGPoint(x: shelfRect(9).midX, y: shelfRect(9).midY)),
         MartStep(kind: .capacity, cost: 82_000, pos: CGPoint(x: 7.6, y: 12.6)),
-        MartStep(kind: .shelf(10), cost: 95_000, pos: CGPoint(x: shelfRect(10).midX, y: shelfRect(10).midY)),
-        MartStep(kind: .stocker, cost: 105_000, pos: CGPoint(x: 4.4, y: 12.6)),
-        MartStep(kind: .customers, cost: 115_000, pos: CGPoint(x: 14.0, y: 12.6)),
-        MartStep(kind: .shelf(11), cost: 130_000, pos: CGPoint(x: shelfRect(11).midX, y: shelfRect(11).midY)),
-        MartStep(kind: .speed, cost: 140_000, pos: CGPoint(x: 10.8, y: 12.6)),
+        MartStep(kind: .expand, cost: 110_000, pos: CGPoint(x: 15.0, y: 21.6)),
+        MartStep(kind: .shelf(10), cost: 120_000, pos: CGPoint(x: shelfRect(10).midX, y: shelfRect(10).midY)),
+        MartStep(kind: .stocker, cost: 128_000, pos: CGPoint(x: 4.4, y: 12.6)),
+        MartStep(kind: .shelf(11), cost: 140_000, pos: CGPoint(x: shelfRect(11).midX, y: shelfRect(11).midY)),
+        MartStep(kind: .speed, cost: 150_000, pos: CGPoint(x: 10.8, y: 12.6)),
     ]
 
     /// そのあとも、係・お客さん・運べる数を順に増やし続ける（値段は少しずつ上がる）
@@ -419,6 +455,8 @@ final class MartGame: ObservableObject {
     private(set) var players: [MartWalker] = [MartWalker(pos: CGPoint(x: 9.0, y: 13.5))]
     private(set) var customers: [MartCustomer] = []
     private(set) var helpers: [MartHelper] = []
+    /// かご係（使い終わったかごを、かご置き場へ戻す）
+    private(set) var basketHelpers: [MartHelper] = []
     private(set) var stock: [Int] = Array(repeating: 0, count: MartProduct.allCases.count)
     private(set) var unlocked: Set<Int> = [0]
     private(set) var done: Set<Int> = []
@@ -429,9 +467,10 @@ final class MartGame: ObservableObject {
     private(set) var capacity = 4
     private(set) var speed: CGFloat = 4.3
     private(set) var maxCustomers = 5
-    /// お店を広げたか（床が奥へのびる）
-    private(set) var expanded = false
-    var floorRect: CGRect { CGRect(x: 0, y: 0, width: Self.floor.width, height: expanded ? Self.expandedDepth : Self.floor.height) }
+    /// お店を広げた回数（1 回で床が 7 のびる。1 回目はスイーツ、2 回目はギフトのエリア）
+    private(set) var expansions = 0
+    var expanded: Bool { expansions > 0 }
+    var floorRect: CGRect { CGRect(x: 0, y: 0, width: Self.floor.width, height: Self.floor.height + Self.areaDepth * CGFloat(expansions)) }
     /// かご置き場のかご・返ってきたかご
     private(set) var standBaskets = 6
     private(set) var returnedBaskets = 0
@@ -555,7 +594,7 @@ final class MartGame: ObservableObject {
         MartSnapshot(players: players, customers: customers, helpers: helpers.map(\.walker), stock: stock, cash: cash,
                      money: money, done: Array(done), paid: paid, serving: serving, stats: stats,
                      questIndex: questIndex, questBase: questBase, standBaskets: standBaskets,
-                     returnedBaskets: returnedBaskets, upgrades: upgrades)
+                     returnedBaskets: returnedBaskets, upgrades: upgrades, basketHelpers: basketHelpers.map(\.walker))
     }
 
     /// ホストから届いたお店の様子を当てはめる（ゲスト。自分の位置はそのまま）
@@ -571,6 +610,7 @@ final class MartGame: ObservableObject {
         }
         customers = snapshot.customers
         helpers = snapshot.helpers.map { MartHelper(walker: $0) }
+        basketHelpers = snapshot.basketHelpers.map { MartHelper(walker: $0) }
         stock = snapshot.stock
         cash = snapshot.cash
         money = snapshot.money
@@ -620,6 +660,7 @@ final class MartGame: ObservableObject {
             let busy = Set(helpers.enumerated().filter { $0.offset != index && $0.element.phase != .idle }.map(\.element.target))
             updateHelper(&helpers[index], busy: busy, dt)
         }
+        for index in basketHelpers.indices { updateBasketHelper(&basketHelpers[index], dt) }
         saveTimer += dt
         if saveTimer > 5 {
             saveTimer = 0
@@ -678,13 +719,161 @@ final class MartGame: ObservableObject {
         let r: CGFloat = 0.28
         let inner = floorRect.insetBy(dx: r + 0.1, dy: r + 0.1)
         if !inner.contains(point) { return true }
+        return obstacles.contains { $0.insetBy(dx: -r, dy: -r).contains(point) }
+    }
+
+    /// 通れない場所：レジ台・ゴミ箱・売り場・倉庫の台
+    private var obstacles: [CGRect] {
         var walls = [Self.counter, CGRect(x: Self.trashSpot.x - 0.3, y: Self.trashSpot.y - 0.3, width: 0.6, height: 0.6)]
         walls += unlocked.map { Self.shelfRect($0) }
         for k in unlocked {
             let spot = Self.supplySpot(k)
             walls.append(CGRect(x: spot.x - 1.1, y: spot.y - 0.5, width: 0.75, height: 1.0))
         }
-        return walls.contains { $0.insetBy(dx: -r, dy: -r).contains(point) }
+        return walls
+    }
+
+    // MARK: - 道さがし（売り場をよけて歩く）
+
+    private static let cell: CGFloat = 0.4
+    private var grid: (key: Int, columns: Int, rows: Int, open: [Bool])?
+
+    /// 通れるマスの表（売り場が増えたり床が広がったときだけ作り直す）
+    private func walkGrid() -> (columns: Int, rows: Int, open: [Bool]) {
+        let key = unlocked.reduce(expansions << 20) { $0 + 1 << $1 }
+        if let grid, grid.key == key { return (grid.columns, grid.rows, grid.open) }
+        let floor = floorRect
+        let columns = Int(floor.width / Self.cell), rows = Int(floor.height / Self.cell)
+        let walls = obstacles.map { $0.insetBy(dx: -0.3, dy: -0.3) }
+        var open = [Bool](repeating: true, count: columns * rows)
+        for row in 0..<rows {
+            for column in 0..<columns {
+                let point = CGPoint(x: (CGFloat(column) + 0.5) * Self.cell, y: (CGFloat(row) + 0.5) * Self.cell)
+                if walls.contains(where: { $0.contains(point) }) { open[row * columns + column] = false }
+            }
+        }
+        grid = (key, columns, rows, open)
+        return (columns, rows, open)
+    }
+
+    /// from から to まで、売り場をよけた道すじ（最後は to ちょうど）。見つからなければまっすぐ
+    func route(from: CGPoint, to: CGPoint) -> [CGPoint] {
+        let (columns, rows, open) = walkGrid()
+        func index(_ point: CGPoint) -> Int {
+            let column = min(max(Int(point.x / Self.cell), 0), columns - 1)
+            let row = min(max(Int(point.y / Self.cell), 0), rows - 1)
+            return row * columns + column
+        }
+        func center(_ index: Int) -> CGPoint {
+            CGPoint(x: (CGFloat(index % columns) + 0.5) * Self.cell, y: (CGFloat(index / columns) + 0.5) * Self.cell)
+        }
+        /// いちばん近い通れるマス
+        func nearestOpen(_ start: Int) -> Int {
+            if open[start] { return start }
+            var seen: Set<Int> = [start]
+            var queue = [start]
+            var head = 0
+            while head < queue.count {
+                let current = queue[head]
+                head += 1
+                if open[current] { return current }
+                for next in [current - 1, current + 1, current - columns, current + columns] where next >= 0 && next < open.count && !seen.contains(next) {
+                    seen.insert(next)
+                    queue.append(next)
+                }
+            }
+            return start
+        }
+        let start = nearestOpen(index(from)), goal = nearestOpen(index(to))
+        // A*（8 方向。角をすり抜けない）
+        var cost = [CGFloat](repeating: .infinity, count: open.count)
+        var parent = [Int](repeating: -1, count: open.count)
+        var heap: [(CGFloat, Int)] = [(0, start)]
+        cost[start] = 0
+        let goalPoint = center(goal)
+        func push(_ item: (CGFloat, Int)) {
+            heap.append(item)
+            var child = heap.count - 1
+            while child > 0 {
+                let up = (child - 1) / 2
+                guard heap[child].0 < heap[up].0 else { break }
+                heap.swapAt(child, up)
+                child = up
+            }
+        }
+        func pop() -> (CGFloat, Int) {
+            let top = heap[0]
+            let last = heap.removeLast()
+            if !heap.isEmpty {
+                heap[0] = last
+                var node = 0
+                while true {
+                    let left = node * 2 + 1, right = left + 1
+                    var smallest = node
+                    if left < heap.count, heap[left].0 < heap[smallest].0 { smallest = left }
+                    if right < heap.count, heap[right].0 < heap[smallest].0 { smallest = right }
+                    if smallest == node { break }
+                    heap.swapAt(node, smallest)
+                    node = smallest
+                }
+            }
+            return top
+        }
+        var found = false
+        while !heap.isEmpty {
+            let (_, current) = pop()
+            if current == goal {
+                found = true
+                break
+            }
+            let column = current % columns, row = current / columns
+            for dy in -1...1 {
+                for dx in -1...1 where dx != 0 || dy != 0 {
+                    let nc = column + dx, nr = row + dy
+                    guard nc >= 0, nc < columns, nr >= 0, nr < rows else { continue }
+                    let next = nr * columns + nc
+                    guard open[next] else { continue }
+                    if dx != 0 && dy != 0 && (!open[row * columns + nc] || !open[nr * columns + column]) { continue }
+                    let step: CGFloat = dx != 0 && dy != 0 ? 1.414 : 1
+                    let total = cost[current] + step
+                    guard total < cost[next] else { continue }
+                    cost[next] = total
+                    parent[next] = current
+                    let p = center(next)
+                    push((total + hypot(p.x - goalPoint.x, p.y - goalPoint.y) / Self.cell, next))
+                }
+            }
+        }
+        guard found else { return [to] }
+        var cells: [Int] = []
+        var current = goal
+        while current != start, current >= 0 {
+            cells.append(current)
+            current = parent[current]
+        }
+        let points = cells.reversed().map(center) + [to]
+        // 見通せるところは、まっすぐつなぐ（カクカクしない）
+        func clear(_ a: CGPoint, _ b: CGPoint) -> Bool {
+            let steps = max(Int(hypot(b.x - a.x, b.y - a.y) / (Self.cell * 0.5)), 1)
+            for i in 0...steps {
+                let t = CGFloat(i) / CGFloat(steps)
+                let p = CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+                let at = index(p)
+                if !open[at], at != goal, at != index(to) { return false }
+            }
+            return true
+        }
+        var result: [CGPoint] = []
+        var anchor = from
+        var i = 0
+        while i < points.count {
+            var far = i
+            while far + 1 < points.count, clear(anchor, points[far + 1]) { far += 1 }
+            result.append(points[far])
+            anchor = points[far]
+            i = far + 1
+        }
+        return result
     }
 
     private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
@@ -748,7 +937,9 @@ final class MartGame: ObservableObject {
         guard serving >= 1 else { return }
         serving = 0
         let customer = customers[index]
-        let amount = sale(customer.product, count: customer.got)
+        var amount = sale(customer.product, count: customer.got)
+        // チップ：アップグレードした分だけ、ときどき多めに払ってくれる
+        if Double.random(in: 0..<1) < 0.1 * Double(upgradeLevel(.tips)) { amount += amount / 2 }
         cash += amount
         returnedBaskets = min(returnedBaskets + (customer.basket ? 1 : 0), 20)
         stats.served += 1
@@ -762,6 +953,7 @@ final class MartGame: ObservableObject {
     /// かごの数をお客さんの数に合わせて増やす。レジ係がいると、ひまなときに少しずつかごを戻してくれる
     private func handleBaskets(_ dt: Double) {
         let total = standBaskets + returnedBaskets + customers.filter(\.basket).count + players.reduce(0) { $0 + $1.baskets }
+            + basketHelpers.reduce(0) { $0 + $1.walker.baskets }
         if total < maxCustomers + 3, standBaskets < Self.basketStandMax { standBaskets += 1 }
         guard hasCashier, returnedBaskets > 0, standBaskets < Self.basketStandMax else {
             basketTimer = 0
@@ -834,7 +1026,7 @@ final class MartGame: ObservableObject {
         capacity = 4
         speed = 4.8
         maxCustomers = 5
-        expanded = false
+        expansions = 0
         var stockers = upgradeLevel(.hire)
         for index in done.sorted() where Self.steps.indices.contains(index) {
             switch Self.steps[index].kind {
@@ -844,15 +1036,19 @@ final class MartGame: ObservableObject {
             case .capacity: capacity += 2
             case .speed: speed += 0.9
             case .customers: maxCustomers += 3
-            case .expand: expanded = true
+            case .expand: expansions += 1
             }
         }
         // 列がお店からはみ出さないよう、お客さんの上限をおさえる
-        maxCustomers = min(maxCustomers, expanded ? 22 : 14)
+        maxCustomers += upgradeLevel(.ads)
+        maxCustomers = min(maxCustomers, 14 + 6 * expansions)
         capacity += 2 * upgradeLevel(.capacity)
         speed *= 1 + 0.12 * CGFloat(upgradeLevel(.speed))
         if role != .guest {
             while helpers.count < stockers { helpers.append(MartHelper(walker: MartWalker(pos: CGPoint(x: 2.9, y: 13.5)))) }
+            while basketHelpers.count < upgradeLevel(.baskets) {
+                basketHelpers.append(MartHelper(walker: MartWalker(pos: CGPoint(x: 18.0, y: 13.0))))
+            }
         }
         level = done.count
     }
@@ -869,11 +1065,11 @@ final class MartGame: ObservableObject {
     private func spawnCustomers(_ dt: Double) {
         spawnTimer -= dt
         guard spawnTimer <= 0, customers.count < maxCustomers, let product = unlockedProducts.randomElement() else { return }
-        spawnTimer = Double.random(in: 0.5...1.4)
+        spawnTimer = Double.random(in: 0.5...1.4) / (1 + 0.15 * Double(upgradeLevel(.ads)))
         let want = Int.random(in: 1...min(4, 1 + level / 3))
         var customer = MartCustomer(walker: MartWalker(pos: Self.outside), product: product, want: want,
                                     shirt: Int.random(in: 0..<8))
-        customer.path = [Self.door, CGPoint(x: Self.basketStand.x, y: Self.door.y), CGPoint(x: Self.basketStand.x, y: Self.basketStand.y + 0.8)]
+        customer.path = [Self.door] + route(from: Self.door, to: CGPoint(x: Self.basketStand.x, y: Self.basketStand.y + 0.8))
         customer.phase = .toBasket
         customers.append(customer)
     }
@@ -889,8 +1085,7 @@ final class MartGame: ObservableObject {
                 customer.basket = true
                 customer.waited = 0
                 customer.phase = .toShelf
-                let front = Self.shelfFront(customer.product.rawValue)
-                customer.path = [CGPoint(x: Self.aisleX, y: Self.door.y - 0.6), CGPoint(x: Self.aisleX, y: front.y), front]
+                customer.path = route(from: customer.walker.pos, to: Self.shelfFront(customer.product.rawValue))
             } else {
                 // かごがない：しばらく待ち、待ちすぎたら怒って帰る
                 customer.waited += dt
@@ -903,8 +1098,9 @@ final class MartGame: ObservableObject {
         case .toShelf:
             if follow(&customer.walker, path: &customer.path, speed: 3.4, dt: dt) {
                 customer.phase = .shopping
-                // 棚のほうを向く
-                customer.walker.heading = -.pi / 2
+                // 売り場のほうを向く
+                let rect = Self.shelfRect(customer.product.rawValue)
+                customer.walker.heading = atan2(rect.midY - customer.walker.pos.y, rect.midX - customer.walker.pos.x)
             }
         case .shopping:
             customer.timer -= dt
@@ -924,16 +1120,16 @@ final class MartGame: ObservableObject {
                     customer.basket = false
                     customer.angry = true
                     customer.phase = .leaving
-                    let front = Self.shelfFront(k)
-                    customer.path = [CGPoint(x: Self.aisleX, y: front.y), CGPoint(x: Self.aisleX, y: Self.door.y), Self.door, Self.outside]
+                    customer.path = route(from: customer.walker.pos, to: Self.door) + [Self.outside]
                     return
                 }
             }
             if customer.got >= customer.want, customer.timer <= 0 {
                 queue.append(customer.id)
                 customer.phase = .toQueue
-                let front = Self.shelfFront(k)
-                customer.path = [CGPoint(x: Self.aisleX, y: front.y)]
+                // 列のうしろあたりまで、売り場をよけて歩く
+                let tail = CGPoint(x: Self.serveSpot.x, y: min(Self.serveSpot.y + 0.85 * CGFloat(queue.count), floorRect.maxY - 1))
+                customer.path = route(from: customer.walker.pos, to: tail)
             }
         case .toQueue:
             if follow(&customer.walker, path: &customer.path, speed: 3.4, dt: dt) {
@@ -951,8 +1147,7 @@ final class MartGame: ObservableObject {
                 customer.basket = false
                 customer.angry = true
                 customer.phase = .leaving
-                customer.path = [CGPoint(x: Self.serveSpot.x - 0.6, y: customer.walker.pos.y), CGPoint(x: Self.serveSpot.x - 0.6, y: Self.door.y),
-                                 Self.door, Self.outside]
+                customer.path = route(from: CGPoint(x: Self.serveSpot.x - 0.6, y: customer.walker.pos.y), to: Self.door) + [Self.outside]
                 return
             }
             let index = queue.firstIndex(of: customer.id) ?? 0
@@ -989,6 +1184,47 @@ final class MartGame: ObservableObject {
         return path.isEmpty
     }
 
+    // MARK: - かご係
+
+    private func updateBasketHelper(_ helper: inout MartHelper, _ dt: Double) {
+        let speed = 3.7 * (1 + 0.2 * CGFloat(upgradeLevel(.staff)))
+        switch helper.phase {
+        case .idle:
+            helper.walker.moving = false
+            // かごが 2 つ以上たまったら取りに行く（置き場が空なら 1 つでも）
+            guard returnedBaskets >= 2 || (returnedBaskets > 0 && standBaskets == 0) else { return }
+            helper.path = route(from: helper.walker.pos, to: Self.basketReturn)
+            helper.phase = .toSupply
+        case .toSupply:
+            if follow(&helper.walker, path: &helper.path, speed: speed, dt: dt) { helper.phase = .loading }
+        case .loading:
+            helper.timer -= dt
+            if helper.timer <= 0, returnedBaskets > 0, helper.walker.baskets < 8 {
+                returnedBaskets -= 1
+                helper.walker.baskets += 1
+                helper.timer = 0.12
+            }
+            if returnedBaskets == 0 || helper.walker.baskets >= 8 {
+                if helper.walker.baskets == 0 {
+                    helper.phase = .idle
+                } else {
+                    helper.path = route(from: helper.walker.pos, to: CGPoint(x: Self.basketStand.x - 0.9, y: Self.basketStand.y))
+                    helper.phase = .toShelf
+                }
+            }
+        case .toShelf:
+            if follow(&helper.walker, path: &helper.path, speed: speed, dt: dt) { helper.phase = .unloading }
+        case .unloading:
+            helper.timer -= dt
+            if helper.timer <= 0, helper.walker.baskets > 0 {
+                helper.walker.baskets -= 1
+                if standBaskets < Self.basketStandMax { standBaskets += 1 } else { returnedBaskets += 1 }
+                helper.timer = 0.12
+            }
+            if helper.walker.baskets == 0 { helper.phase = .idle }
+        }
+    }
+
     // MARK: - 品出し係
 
     private func updateHelper(_ helper: inout MartHelper, busy: Set<MartProduct>, _ dt: Double) {
@@ -1000,7 +1236,7 @@ final class MartGame: ObservableObject {
             guard let product = candidates.min(by: { stock[$0.rawValue] < stock[$1.rawValue] }) else { return }
             helper.target = product
             let supply = Self.supplySpot(product.rawValue)
-            helper.path = [CGPoint(x: Self.helperX, y: helper.walker.pos.y), CGPoint(x: Self.helperX, y: supply.y)]
+            helper.path = route(from: helper.walker.pos, to: supply)
             helper.phase = .toSupply
         case .toSupply:
             if follow(&helper.walker, path: &helper.path, speed: 3.7 * (1 + 0.2 * CGFloat(upgradeLevel(.staff))), dt: dt) { helper.phase = .loading }
@@ -1012,7 +1248,7 @@ final class MartGame: ObservableObject {
             }
             if helper.walker.carry.count >= 5 {
                 let front = Self.shelfFront(helper.target.rawValue)
-                helper.path = [CGPoint(x: Self.helperX, y: front.y), front]
+                helper.path = route(from: helper.walker.pos, to: front)
                 helper.phase = .toShelf
             }
         case .toShelf:
@@ -1110,6 +1346,7 @@ final class MartGame: ObservableObject {
         standBaskets = 6
         returnedBaskets = 0
         helpers = []
+        basketHelpers = []
         customers = []
         queue = []
         for index in players.indices {

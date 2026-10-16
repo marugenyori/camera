@@ -346,46 +346,52 @@ struct MartPlayView: View {
 
     /// アップグレード（床の UPGRADE に立つと出る）
     private var upgradePanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // 2 列のタイル（アイコン・レベル・効果・値段）
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
             ForEach(MartUpgrade.allCases) { upgrade in
                 let level = game.upgradeLevel(upgrade)
                 let maxed = level >= MartUpgrade.maxLevel
                 let cost = upgrade.cost(level)
-                HStack(spacing: 10) {
-                    Image(systemName: upgrade.symbol)
-                        .font(.system(size: 19, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
-                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(Color(red: 0.45, green: 0.35, blue: 0.95)))
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 3) {
-                            ForEach(0..<MartUpgrade.maxLevel, id: \.self) { index in
-                                Capsule()
-                                    .fill(index < level ? Color(red: 0.45, green: 0.35, blue: 0.95) : Color(white: 0.85))
-                                    .frame(width: 14, height: 5)
+                Button {
+                    game.buyUpgrade(upgrade)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: upgrade.symbol)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(Color(red: 0.45, green: 0.35, blue: 0.95)))
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 2) {
+                                ForEach(0..<MartUpgrade.maxLevel, id: \.self) { index in
+                                    Capsule()
+                                        .fill(index < level ? Color(red: 0.45, green: 0.35, blue: 0.95) : Color(white: 0.85))
+                                        .frame(width: 9, height: 4)
+                                }
+                                Text(upgrade.effect(level))
+                                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .padding(.leading, 2)
                             }
-                            Text(upgrade.effect(level))
-                                .font(.system(size: 13, weight: .heavy, design: .rounded))
-                                .foregroundStyle(.secondary)
-                                .padding(.leading, 4)
+                            Text(maxed ? "MAX" : MartYen.text(cost))
+                                .font(.system(size: 13, weight: .black, design: .rounded))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 4)
+                                .background(Capsule().fill(maxed ? Color(white: 0.6)
+                                                           : game.money >= cost ? Color(red: 0.3, green: 0.75, blue: 0.35) : Color(white: 0.72)))
                         }
                     }
-                    Spacer()
-                    Button {
-                        game.buyUpgrade(upgrade)
-                    } label: {
-                        Text(maxed ? "MAX" : MartYen.text(cost))
-                            .font(.system(size: 14, weight: .black, design: .rounded))
-                            .foregroundStyle(.white)
-                            .frame(minWidth: 86)
-                            .padding(.vertical, 8)
-                            .background(Capsule().fill(maxed ? Color(white: 0.6)
-                                                       : game.money >= cost ? Color(red: 0.3, green: 0.75, blue: 0.35) : Color(white: 0.72)))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(maxed)
+                    .padding(7)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.6)))
                 }
+                .buttonStyle(.plain)
+                .disabled(maxed)
+                .accessibilityLabel(upgrade.title)
             }
         }
         .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.28))
