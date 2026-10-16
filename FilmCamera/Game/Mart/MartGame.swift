@@ -8,7 +8,7 @@ import SwiftUI
 /// 遊びに来た人（ゲスト）は自分の位置を送って、ホストから 1 秒に 15 回お店の様子（MartSnapshot）を受け取る。
 /// お金は 2 人で共通。座標はお店の床のマス（x は右下、y は左下へ）。描くのは MartScene（SceneKit の 3D）
 enum MartProduct: Int, CaseIterable, Codable {
-    case soda, snack, noodle, sandwich, fruit, toy
+    case soda, snack, noodle, sandwich, fruit, toy, bread, milk, iceCream, flower, cake, game
 
     var name: String {
         switch self {
@@ -18,6 +18,12 @@ enum MartProduct: Int, CaseIterable, Codable {
         case .sandwich: return "サンド"
         case .fruit: return "くだもの"
         case .toy: return "おもちゃ"
+        case .bread: return "パン"
+        case .milk: return "牛乳"
+        case .iceCream: return "アイス"
+        case .flower: return "花束"
+        case .cake: return "ケーキ"
+        case .game: return "ゲーム"
         }
     }
 
@@ -29,6 +35,12 @@ enum MartProduct: Int, CaseIterable, Codable {
         case .sandwich: return "SANDWICH"
         case .fruit: return "FRUIT"
         case .toy: return "TOY"
+        case .bread: return "BREAD"
+        case .milk: return "MILK"
+        case .iceCream: return "ICE"
+        case .flower: return "FLOWER"
+        case .cake: return "CAKE"
+        case .game: return "GAME"
         }
     }
 
@@ -40,6 +52,12 @@ enum MartProduct: Int, CaseIterable, Codable {
         case .sandwich: return UIColor(red: 0.98, green: 0.72, blue: 0.4, alpha: 1)
         case .fruit: return UIColor(red: 0.98, green: 0.4, blue: 0.3, alpha: 1)
         case .toy: return UIColor(red: 0.62, green: 0.45, blue: 0.98, alpha: 1)
+        case .bread: return UIColor(red: 0.93, green: 0.68, blue: 0.38, alpha: 1)
+        case .milk: return UIColor(white: 0.98, alpha: 1)
+        case .iceCream: return UIColor(red: 1, green: 0.7, blue: 0.8, alpha: 1)
+        case .flower: return UIColor(red: 1, green: 0.45, blue: 0.62, alpha: 1)
+        case .cake: return UIColor(red: 1, green: 0.97, blue: 0.94, alpha: 1)
+        case .game: return UIColor(red: 0.25, green: 0.27, blue: 0.33, alpha: 1)
         }
     }
 
@@ -52,6 +70,12 @@ enum MartProduct: Int, CaseIterable, Codable {
         case .sandwich: return "🥪"
         case .fruit: return "🍎"
         case .toy: return "🧸"
+        case .bread: return "🍞"
+        case .milk: return "🥛"
+        case .iceCream: return "🍦"
+        case .flower: return "💐"
+        case .cake: return "🎂"
+        case .game: return "🎮"
         }
     }
 
@@ -63,6 +87,12 @@ enum MartProduct: Int, CaseIterable, Codable {
         case .sandwich: return UIColor(red: 0.45, green: 0.75, blue: 0.3, alpha: 1)
         case .fruit: return UIColor(red: 0.4, green: 0.75, blue: 0.3, alpha: 1)
         case .toy: return UIColor(red: 1, green: 0.85, blue: 0.3, alpha: 1)
+        case .bread: return UIColor(red: 0.62, green: 0.4, blue: 0.22, alpha: 1)
+        case .milk: return UIColor(red: 0.3, green: 0.6, blue: 0.95, alpha: 1)
+        case .iceCream: return UIColor(red: 0.85, green: 0.6, blue: 0.35, alpha: 1)
+        case .flower: return UIColor(red: 0.35, green: 0.7, blue: 0.38, alpha: 1)
+        case .cake: return UIColor(red: 0.95, green: 0.3, blue: 0.42, alpha: 1)
+        case .game: return UIColor(red: 0.25, green: 0.8, blue: 0.9, alpha: 1)
         }
     }
 
@@ -74,6 +104,12 @@ enum MartProduct: Int, CaseIterable, Codable {
         case .sandwich: return 280
         case .fruit: return 350
         case .toy: return 480
+        case .bread: return 300
+        case .milk: return 380
+        case .iceCream: return 450
+        case .flower: return 600
+        case .cake: return 800
+        case .game: return 1_500
         }
     }
 }
@@ -126,7 +162,7 @@ struct MartHelper: Codable {
 
 /// 解放マーク（お金を払うと何かが増える）
 struct MartStep {
-    enum Kind: Equatable { case shelf(Int), cashier, stocker, capacity, speed, customers }
+    enum Kind: Equatable { case shelf(Int), cashier, stocker, capacity, speed, customers, expand }
     let kind: Kind
     let cost: Int
     let pos: CGPoint
@@ -139,6 +175,7 @@ struct MartStep {
         case .capacity: return "運べる数 +2"
         case .speed: return "スピードアップ"
         case .customers: return "お客さん +3"
+        case .expand: return "お店を広げる"
         }
     }
 
@@ -150,6 +187,7 @@ struct MartStep {
         case .capacity: return "shippingbox.fill"
         case .speed: return "hare.fill"
         case .customers: return "person.3.fill"
+        case .expand: return "arrow.up.left.and.arrow.down.right"
         }
     }
 }
@@ -157,7 +195,7 @@ struct MartStep {
 /// ゲストに送るお店の様子
 /// アップグレード（床の UPGRADE の場所で、お金を払ってレベルを上げる）
 enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
-    case capacity, speed, price, cashier, staff
+    case capacity, speed, price, cashier, staff, hire
     var id: String { rawValue }
     static let maxLevel = 5
 
@@ -168,6 +206,7 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .price: return "売値アップ"
         case .cashier: return "レジのスピード"
         case .staff: return "係のスピード"
+        case .hire: return "係を雇う"
         }
     }
 
@@ -178,6 +217,7 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .price: return "yensign.circle.fill"
         case .cashier: return "barcode.viewfinder"
         case .staff: return "person.2.fill"
+        case .hire: return "person.badge.plus"
         }
     }
 
@@ -188,6 +228,7 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .price: return "+\(level * 15)%"
         case .cashier: return "+\(level * 20)%"
         case .staff: return "+\(level * 20)%"
+        case .hire: return "+\(level) 人"
         }
     }
 
@@ -199,6 +240,7 @@ enum MartUpgrade: String, CaseIterable, Codable, Identifiable {
         case .price: base = 2_500
         case .cashier: base = 1_800
         case .staff: base = 2_200
+        case .hire: base = 8_000
         }
         return Int((base * pow(2.1, Double(level)) / 100).rounded()) * 100
     }
@@ -290,14 +332,16 @@ final class MartGame: ObservableObject {
     /// ゴミ箱（間違えて取った商品を捨てる）
     nonisolated static let trashSpot = CGPoint(x: 3.3, y: 6.2)
     /// アップグレードの場所（左下）
-    nonisolated static let upgradeZone = CGRect(x: 0.6, y: 14.0, width: 2.6, height: 1.6)
+    nonisolated static let upgradeZone = CGRect(x: 12.6, y: 14.0, width: 2.6, height: 1.6)
+    /// 広げたあとの床の奥行き
+    nonisolated static let expandedDepth: CGFloat = 23
     /// お客さんが通る縦の通路（棚とレジのあいだ）
     nonisolated static let aisleX: CGFloat = 17.6
     /// 品出し係が通る縦の通路（倉庫の台と棚のあいだ）
     nonisolated static let helperX: CGFloat = 2.9
 
     nonisolated static func shelfRect(_ k: Int) -> CGRect {
-        CGRect(x: 4.2 + 3.4 * CGFloat(k % 4), y: k < 4 ? 3.0 : 8.5, width: 2.2, height: 1.0)
+        CGRect(x: 4.2 + 3.4 * CGFloat(k % 4), y: [3.0, 8.5, 17.5][min(k / 4, 2)], width: 2.2, height: 1.0)
     }
 
     /// お客さんが立って商品を取る場所（棚の手前）
@@ -308,10 +352,12 @@ final class MartGame: ObservableObject {
 
     /// 倉庫の台（左の壁ぞい）
     nonisolated static func supplySpot(_ k: Int) -> CGPoint {
-        CGPoint(x: 1.6, y: 2.2 + 2.1 * CGFloat(k))
+        CGPoint(x: 1.6, y: 2.2 + 1.75 * CGFloat(k))
     }
 
-    nonisolated static let steps: [MartStep] = [
+    nonisolated static let steps: [MartStep] = baseSteps + moreSteps + endlessSteps
+
+    private nonisolated static let baseSteps: [MartStep] = [
         MartStep(kind: .shelf(1), cost: 600, pos: CGPoint(x: shelfRect(1).midX, y: shelfRect(1).midY)),
         MartStep(kind: .capacity, cost: 1200, pos: CGPoint(x: 7.6, y: 12.6)),
         MartStep(kind: .shelf(2), cost: 2100, pos: CGPoint(x: shelfRect(2).midX, y: shelfRect(2).midY)),
@@ -327,6 +373,33 @@ final class MartGame: ObservableObject {
         MartStep(kind: .customers, cost: 13500, pos: CGPoint(x: 14.0, y: 12.6)),
         MartStep(kind: .speed, cost: 18000, pos: CGPoint(x: 10.8, y: 12.6)),
     ]
+
+    /// 2 列目の残りの棚・お店を広げる・奥の列の棚（あとから足したので、保存の番号を変えないよう後ろに続ける）
+    private nonisolated static let moreSteps: [MartStep] = [
+        MartStep(kind: .shelf(6), cost: 22_000, pos: CGPoint(x: shelfRect(6).midX, y: shelfRect(6).midY)),
+        MartStep(kind: .stocker, cost: 26_000, pos: CGPoint(x: 4.4, y: 12.6)),
+        MartStep(kind: .shelf(7), cost: 32_000, pos: CGPoint(x: shelfRect(7).midX, y: shelfRect(7).midY)),
+        MartStep(kind: .expand, cost: 45_000, pos: CGPoint(x: 8.0, y: 14.9)),
+        MartStep(kind: .shelf(8), cost: 52_000, pos: CGPoint(x: shelfRect(8).midX, y: shelfRect(8).midY)),
+        MartStep(kind: .customers, cost: 60_000, pos: CGPoint(x: 14.0, y: 12.6)),
+        MartStep(kind: .stocker, cost: 66_000, pos: CGPoint(x: 4.4, y: 12.6)),
+        MartStep(kind: .shelf(9), cost: 75_000, pos: CGPoint(x: shelfRect(9).midX, y: shelfRect(9).midY)),
+        MartStep(kind: .capacity, cost: 82_000, pos: CGPoint(x: 7.6, y: 12.6)),
+        MartStep(kind: .shelf(10), cost: 95_000, pos: CGPoint(x: shelfRect(10).midX, y: shelfRect(10).midY)),
+        MartStep(kind: .stocker, cost: 105_000, pos: CGPoint(x: 4.4, y: 12.6)),
+        MartStep(kind: .customers, cost: 115_000, pos: CGPoint(x: 14.0, y: 12.6)),
+        MartStep(kind: .shelf(11), cost: 130_000, pos: CGPoint(x: shelfRect(11).midX, y: shelfRect(11).midY)),
+        MartStep(kind: .speed, cost: 140_000, pos: CGPoint(x: 10.8, y: 12.6)),
+    ]
+
+    /// そのあとも、係・お客さん・運べる数を順に増やし続ける（値段は少しずつ上がる）
+    private nonisolated static let endlessSteps: [MartStep] = (0..<30).map { index in
+        let kinds: [(MartStep.Kind, CGPoint)] = [(.stocker, CGPoint(x: 4.4, y: 12.6)), (.customers, CGPoint(x: 14.0, y: 12.6)),
+                                                 (.capacity, CGPoint(x: 7.6, y: 12.6))]
+        let (kind, pos) = kinds[index % kinds.count]
+        let cost = Int((160_000 * pow(1.22, Double(index)) / 1_000).rounded()) * 1_000
+        return MartStep(kind: kind, cost: cost, pos: pos)
+    }
 
     let role: Role
     /// 自分の店員（players の番号。ゲストは 1）
@@ -356,6 +429,9 @@ final class MartGame: ObservableObject {
     private(set) var capacity = 4
     private(set) var speed: CGFloat = 4.3
     private(set) var maxCustomers = 5
+    /// お店を広げたか（床が奥へのびる）
+    private(set) var expanded = false
+    var floorRect: CGRect { CGRect(x: 0, y: 0, width: Self.floor.width, height: expanded ? Self.expandedDepth : Self.floor.height) }
     /// かご置き場のかご・返ってきたかご
     private(set) var standBaskets = 6
     private(set) var returnedBaskets = 0
@@ -424,7 +500,9 @@ final class MartGame: ObservableObject {
 
     /// いま見せる解放マーク（まだのものから順に 2 つ）
     var visibleSteps: [(Int, MartStep)] {
-        Self.steps.enumerated().filter { !done.contains($0.offset) }.prefix(2).map { ($0.offset, $0.element) }
+        // まだ広げていないときは、床の外のマークは出さない
+        Self.steps.enumerated().filter { !done.contains($0.offset) && $0.element.pos.y < floorRect.maxY }
+            .prefix(2).map { ($0.offset, $0.element) }
     }
 
     func paidAmount(_ index: Int) -> Int { paid[index] ?? 0 }
@@ -598,7 +676,7 @@ final class MartGame: ObservableObject {
     /// 店員がそこに立てないか（壁・棚・レジ台）
     private func blocked(_ point: CGPoint) -> Bool {
         let r: CGFloat = 0.28
-        let inner = Self.floor.insetBy(dx: r + 0.1, dy: r + 0.1)
+        let inner = floorRect.insetBy(dx: r + 0.1, dy: r + 0.1)
         if !inner.contains(point) { return true }
         var walls = [Self.counter, CGRect(x: Self.trashSpot.x - 0.3, y: Self.trashSpot.y - 0.3, width: 0.6, height: 0.6)]
         walls += unlocked.map { Self.shelfRect($0) }
@@ -639,7 +717,7 @@ final class MartGame: ObservableObject {
             tick()
         }
         // 倉庫の台：そばにいる間、運べる数まで受け取る（かごを持っていないとき）
-        for product in unlockedProducts where distance(pos, Self.supplySpot(product.rawValue)) < 1.15 && players[index].baskets == 0 {
+        for product in unlockedProducts where distance(pos, Self.supplySpot(product.rawValue)) < 0.95 && players[index].baskets == 0 {
             if players[index].carry.count < capacity, pickTimers[index] <= 0 {
                 players[index].carry.append(product)
                 pickTimers[index] = 0.07
@@ -756,7 +834,8 @@ final class MartGame: ObservableObject {
         capacity = 4
         speed = 4.8
         maxCustomers = 5
-        var stockers = 0
+        expanded = false
+        var stockers = upgradeLevel(.hire)
         for index in done.sorted() where Self.steps.indices.contains(index) {
             switch Self.steps[index].kind {
             case .shelf(let k): unlocked.insert(k)
@@ -765,8 +844,11 @@ final class MartGame: ObservableObject {
             case .capacity: capacity += 2
             case .speed: speed += 0.9
             case .customers: maxCustomers += 3
+            case .expand: expanded = true
             }
         }
+        // 列がお店からはみ出さないよう、お客さんの上限をおさえる
+        maxCustomers = min(maxCustomers, expanded ? 22 : 14)
         capacity += 2 * upgradeLevel(.capacity)
         speed *= 1 + 0.12 * CGFloat(upgradeLevel(.speed))
         if role != .guest {
@@ -989,7 +1071,7 @@ final class MartGame: ObservableObject {
         money = saved.money * scale
         paid = saved.paid.mapValues { $0 * scale }
         cash = saved.cash * scale
-        if saved.stock.count == stock.count { stock = saved.stock }
+        for (k, count) in saved.stock.enumerated() where stock.indices.contains(k) { stock[k] = count }
         done = Set(saved.done.filter { Self.steps.indices.contains($0) })
         stats = saved.stats ?? MartStats()
         stats.earned *= scale
