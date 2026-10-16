@@ -51,7 +51,7 @@ final class MartScene {
     private var built = false
 
     init() {
-        scene.background.contents = UIColor(red: 0.62, green: 0.85, blue: 0.48, alpha: 1)
+        scene.background.contents = UIColor(red: 0.7, green: 0.83, blue: 0.62, alpha: 1)
         scene.rootNode.addChildNode(world)
         setupCamera()
         setupLights()
@@ -202,6 +202,43 @@ final class MartScene {
         return image
     }
 
+    /// 持っている商品の札（「● ジュース ×3　● おかし ×2」）
+    static func carryImage(_ carry: [MartProduct]) -> UIImage {
+        var counts: [(MartProduct, Int)] = []
+        for product in carry {
+            if let index = counts.firstIndex(where: { $0.0 == product }) { counts[index].1 += 1 } else { counts.append((product, 1)) }
+        }
+        let key = "carry|" + counts.map { "\($0.0.rawValue)x\($0.1)" }.joined(separator: ",")
+        if let cached = imageCache[key] { return cached }
+        let font = UIFont.systemFont(ofSize: 34, weight: .bold).rounded()
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor(white: 0.15, alpha: 1)]
+        let parts = counts.map { "\($0.0.name) ×\($0.1)" }
+        let widths = parts.map { ($0 as NSString).size(withAttributes: attributes).width }
+        let height: CGFloat = 60
+        let width = widths.reduce(0, +) + CGFloat(parts.count) * 44 + CGFloat(max(parts.count - 1, 0)) * 14 + 20
+        let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height + 8)).image { _ in
+            UIColor(white: 0, alpha: 0.12).setFill()
+            UIBezierPath(roundedRect: CGRect(x: 0, y: 6, width: width, height: height), cornerRadius: height / 2).fill()
+            UIColor(white: 1, alpha: 0.97).setFill()
+            UIBezierPath(roundedRect: CGRect(x: 0, y: 0, width: width, height: height), cornerRadius: height / 2).fill()
+            var x: CGFloat = 16
+            for (index, part) in parts.enumerated() {
+                let product = counts[index].0
+                product.color.setFill()
+                UIBezierPath(ovalIn: CGRect(x: x, y: height / 2 - 13, width: 26, height: 26)).fill()
+                product.accent.setStroke()
+                let ring = UIBezierPath(ovalIn: CGRect(x: x + 2, y: height / 2 - 11, width: 22, height: 22))
+                ring.lineWidth = 4
+                ring.stroke()
+                x += 36
+                (part as NSString).draw(at: CGPoint(x: x, y: height / 2 - font.lineHeight / 2), withAttributes: attributes)
+                x += widths[index] + 22
+            }
+        }
+        imageCache[key] = image
+        return image
+    }
+
     /// 解放マーク（点線の枠・絵・名前・残りの値段）
     static func padImage(_ step: MartStep, remaining: Int, pixels: CGSize) -> UIImage {
         UIGraphicsImageRenderer(size: pixels).image { _ in
@@ -297,7 +334,7 @@ final class MartScene {
         let floor = MartGame.floor
         // 外の地面と道
         let ground = SCNNode(geometry: SCNPlane(width: 80, height: 80))
-        ground.geometry?.materials = [Self.material(UIColor(red: 0.6, green: 0.84, blue: 0.45, alpha: 1))]
+        ground.geometry?.materials = [Self.material(UIColor(red: 0.7, green: 0.83, blue: 0.62, alpha: 1))]
         ground.eulerAngles.x = -.pi / 2
         ground.position = SCNVector3(7, -0.21, 6)
         world.addChildNode(ground)
@@ -312,14 +349,14 @@ final class MartScene {
         let unit: CGFloat = 64
         let tiles = UIGraphicsImageRenderer(size: CGSize(width: floor.width * unit, height: floor.height * unit)).image { context in
             // 目地（タイルのすき間）の色を全体に塗ってから、タイルを少しずつ色を変えて置く
-            UIColor(red: 0.82, green: 0.77, blue: 0.69, alpha: 1).setFill()
+            UIColor(red: 0.84, green: 0.83, blue: 0.81, alpha: 1).setFill()
             context.fill(CGRect(x: 0, y: 0, width: floor.width * unit, height: floor.height * unit))
             for x in 0..<Int(floor.width.rounded(.up)) {
                 for y in 0..<Int(floor.height) {
                     let checker = (x + y) % 2 == 0
                     let jitter = CGFloat((x * 37 + y * 17) % 7) * 0.004
-                    UIColor(red: (checker ? 0.95 : 0.91) - jitter, green: (checker ? 0.92 : 0.87) - jitter,
-                            blue: (checker ? 0.86 : 0.79) - jitter, alpha: 1).setFill()
+                    UIColor(red: (checker ? 0.965 : 0.93) - jitter, green: (checker ? 0.957 : 0.92) - jitter,
+                            blue: (checker ? 0.94 : 0.9) - jitter, alpha: 1).setFill()
                     let tile = CGRect(x: CGFloat(x) * unit + 2, y: CGFloat(y) * unit + 2, width: unit - 4, height: unit - 4)
                     UIBezierPath(roundedRect: tile, cornerRadius: 4).fill()
                     // ほんのり光る角
@@ -337,8 +374,8 @@ final class MartScene {
         world.addChildNode(floorNode)
 
         // 奥の壁 2 枚と、手前の低い縁
-        let wall = UIColor(red: 0.99, green: 0.84, blue: 0.7, alpha: 1)
-        let trim = UIColor(red: 0.9, green: 0.62, blue: 0.48, alpha: 1)
+        let wall = UIColor(red: 0.97, green: 0.95, blue: 0.92, alpha: 1)
+        let trim = UIColor(red: 0.36, green: 0.4, blue: 0.46, alpha: 1)
         world.addChildNode(Self.at(Self.box(floor.width + 0.3, 2.6, 0.3, wall, chamfer: 0.02), floor.midX - 0.15, 1.3, -0.15))
         world.addChildNode(Self.at(Self.box(0.3, 2.6, floor.height, wall, chamfer: 0.02), -0.15, 1.3, floor.midY))
         world.addChildNode(Self.at(Self.box(floor.width + 0.4, 0.2, 0.4, trim, chamfer: 0.03), floor.midX - 0.15, 2.6, -0.15))
@@ -346,7 +383,7 @@ final class MartScene {
         world.addChildNode(Self.at(Self.box(floor.width - 0.3, 0.3, 0.15, trim), floor.midX - 0.15, 0.15, floor.maxY + 0.07))
         world.addChildNode(Self.at(Self.box(0.15, 0.3, 8.6, trim), floor.maxX + 0.07, 0.15, 4.3))
         // 看板
-        let sign = Self.decalStanding(Self.label("MACHIKADO MART", size: 80, color: UIColor(red: 0.95, green: 0.4, blue: 0.2, alpha: 1)),
+        let sign = Self.decalStanding(Self.label("MACHIKADO MART", size: 80, color: UIColor(red: 0.3, green: 0.33, blue: 0.38, alpha: 1)),
                                       width: 6)
         sign.position = SCNVector3(7.5, 1.75, 0.02)
         world.addChildNode(sign)
@@ -374,7 +411,7 @@ final class MartScene {
         // レジ台
         let counter = MartGame.counter
         let counterNode = SCNNode()
-        counterNode.addChildNode(Self.at(Self.box(counter.width, 0.9, counter.height, UIColor(red: 0.93, green: 0.33, blue: 0.3, alpha: 1)),
+        counterNode.addChildNode(Self.at(Self.box(counter.width, 0.9, counter.height, UIColor(red: 0.36, green: 0.4, blue: 0.46, alpha: 1)),
                                          0, 0.45, 0))
         counterNode.addChildNode(Self.at(Self.box(counter.width + 0.1, 0.08, counter.height + 0.1, UIColor(white: 0.97, alpha: 1)),
                                          0, 0.93, 0))
@@ -449,7 +486,7 @@ final class MartScene {
             world.addChildNode(Self.at(Self.box(0.06, 1.0, 0.08, frame, chamfer: 0), x, 1.5, 0.04))
             world.addChildNode(Self.at(Self.box(1.8, 0.06, 0.08, frame, chamfer: 0), x, 1.5, 0.04))
             // 窓の下のひさし
-            world.addChildNode(Self.at(Self.box(2.2, 0.06, 0.25, UIColor(red: 0.95, green: 0.45, blue: 0.3, alpha: 1)), x, 0.86, 0.12))
+            world.addChildNode(Self.at(Self.box(2.2, 0.06, 0.25, UIColor(red: 0.36, green: 0.4, blue: 0.46, alpha: 1)), x, 0.86, 0.12))
         }
         // 左の壁のポスターと時計
         let posterColors: [UIColor] = [UIColor(red: 1, green: 0.8, blue: 0.3, alpha: 1), UIColor(red: 0.5, green: 0.8, blue: 1, alpha: 1),
@@ -573,8 +610,8 @@ final class MartScene {
     private func makeShelf(_ k: Int) -> SCNNode {
         let rect = MartGame.shelfRect(k)
         let node = SCNNode()
-        let metal = UIColor(white: 0.93, alpha: 1)
-        let post = UIColor(red: 0.55, green: 0.7, blue: 0.85, alpha: 1)
+        let metal = UIColor(white: 0.97, alpha: 1)
+        let post = UIColor(red: 0.36, green: 0.4, blue: 0.46, alpha: 1)
         node.addChildNode(Self.at(Self.box(rect.width, 0.12, rect.height, metal), 0, 0.06, 0))
         node.addChildNode(Self.at(Self.box(rect.width, 1.15, 0.06, metal), 0, 0.6, -rect.height / 2 + 0.03))
         for x in [-rect.width / 2 + 0.04, rect.width / 2 - 0.04] {
@@ -691,7 +728,7 @@ final class MartScene {
     // MARK: - 毎コマ
 
     func sync(_ game: MartGame, dt: Double) {
-        let smooth = Float(min(1, dt * 14))
+        let smooth = 1 - Float(exp(-12 * dt))
         // 棚と倉庫の台
         for product in game.unlockedProducts where shelfNodes[product.rawValue] == nil {
             let shelf = makeShelf(product.rawValue)
@@ -767,7 +804,7 @@ final class MartScene {
         }
         while playerNodes.count > game.players.count { playerNodes.removeLast().root.removeFromParentNode() }
         for (index, walker) in game.players.enumerated() {
-            let added = playerNodes[index].update(walker, smooth: index == game.me ? 1 : smooth)
+            let added = playerNodes[index].update(walker, smooth: index == game.me ? 1 : smooth, dt: dt)
             flyFromSupply(added, carry: walker.carry)
         }
         var seen = Set<UUID>()
@@ -782,7 +819,7 @@ final class MartScene {
                 world.addChildNode(node.root)
                 customerNodes[customer.id] = node
             }
-            node.update(customer.walker, smooth: smooth)
+            node.update(customer.walker, smooth: smooth, dt: dt)
             let stock = game.stock[customer.product.rawValue]
             switch customer.phase {
             case .toShelf:
@@ -814,7 +851,7 @@ final class MartScene {
             helperNodes.append(node)
         }
         for (index, helper) in game.helpers.enumerated() {
-            let added = helperNodes[index].update(helper.walker, smooth: smooth)
+            let added = helperNodes[index].update(helper.walker, smooth: smooth, dt: dt)
             flyFromSupply(added, carry: helper.walker.carry)
         }
         // 歩くと足もとに土ぼこり
@@ -890,7 +927,7 @@ final class MartScene {
         // カメラは自分の店員を追う
         if let mine = playerNodes.indices.contains(game.me) ? playerNodes[game.me] : nil {
             let p = mine.root.position
-            let follow = Float(min(1, dt * 5))
+            let follow = 1 - Float(exp(-6 * dt))
             target.x += (p.x - target.x) * follow
             target.z += (p.z - target.z) * follow
             moveCamera(to: target)
@@ -986,9 +1023,9 @@ final class MartScene {
             let product = carry[index]
             let spot = MartGame.supplySpot(product.rawValue)
             let from = SCNVector3(Float(spot.x - 0.35), 0.9, Float(spot.y))
-            flyClone(Self.packModel(product), from: from, to: pack.worldPosition, duration: 0.18) {
+            flyClone(Self.productModel(product), from: from, to: pack.worldPosition, duration: 0.2) {
                 pack.isHidden = false
-                pack.scale = SCNVector3(1.25, 0.8, 1.25)
+                pack.scale = SCNVector3(1.2, 0.8, 1.2)
                 pack.runAction(.scale(to: 1, duration: 0.1))
             }
         }
@@ -1076,7 +1113,8 @@ final class MartScene {
 
 // MARK: - 人
 
-/// 人の 3D：のっぺりした丸い体と頭、歩くと足と体がゆれる。手の前に運ぶ箱を積む
+/// 人の 3D：すらっとした体、歩くと足と腕が振れて体が少し前に傾く。
+/// 運ぶ商品は、商品そのもの（缶・袋・カップ…）をお盆にのせて積み、上に「ジュース ×3」の札を出す
 @MainActor
 final class CharacterNode {
     enum Style {
@@ -1087,111 +1125,132 @@ final class CharacterNode {
 
     let root = SCNNode()
     private let pivot = SCNNode()
+    private let lean = SCNNode()
     private let body: SCNNode
     private let leftLeg = SCNNode()
     private let rightLeg = SCNNode()
+    private let leftArm = SCNNode()
+    private let rightArm = SCNNode()
     private let stack = SCNNode()
+    private let tray: SCNNode
     private var stackKey: [MartProduct] = []
+    private var stackTop: Float = 0
+    private var carryLabel: SCNNode?
     private var bubbleNode: SCNNode?
     private var bubbleImage: UIImage?
     private var bag: SCNNode?
+    private var stride: Float = 0
+    private let showsLabel: Bool
 
     private static let customerColors: [UIColor] = [
-        UIColor(red: 0.42, green: 0.62, blue: 0.9, alpha: 1), UIColor(red: 0.95, green: 0.55, blue: 0.5, alpha: 1),
-        UIColor(red: 0.5, green: 0.78, blue: 0.5, alpha: 1), UIColor(red: 0.98, green: 0.78, blue: 0.4, alpha: 1),
-        UIColor(red: 0.72, green: 0.55, blue: 0.9, alpha: 1), UIColor(red: 0.4, green: 0.78, blue: 0.8, alpha: 1),
-        UIColor(red: 0.95, green: 0.65, blue: 0.8, alpha: 1), UIColor(red: 0.6, green: 0.62, blue: 0.7, alpha: 1),
+        UIColor(red: 0.45, green: 0.6, blue: 0.85, alpha: 1), UIColor(red: 0.9, green: 0.58, blue: 0.55, alpha: 1),
+        UIColor(red: 0.55, green: 0.75, blue: 0.6, alpha: 1), UIColor(red: 0.95, green: 0.8, blue: 0.5, alpha: 1),
+        UIColor(red: 0.7, green: 0.6, blue: 0.85, alpha: 1), UIColor(red: 0.5, green: 0.75, blue: 0.78, alpha: 1),
+        UIColor(red: 0.92, green: 0.7, blue: 0.78, alpha: 1), UIColor(red: 0.62, green: 0.64, blue: 0.7, alpha: 1),
     ]
 
-    init(style: Style) {
-        let skin: UIColor
-        let shirt: UIColor
-        switch style {
-        case .staff:
-            skin = UIColor(red: 0.96, green: 0.8, blue: 0.66, alpha: 1)
-            shirt = UIColor(red: 0.25, green: 0.27, blue: 0.35, alpha: 1)
-        case .helper:
-            skin = UIColor(red: 0.96, green: 0.8, blue: 0.66, alpha: 1)
-            shirt = UIColor(red: 0.3, green: 0.5, blue: 0.38, alpha: 1)
-        case .customer(let index):
-            let color = Self.customerColors[index % Self.customerColors.count]
-            skin = UIColor(red: 0.98, green: 0.84, blue: 0.72, alpha: 1)
-            shirt = color
+    /// 積むときの、商品 1 つぶんの高さ
+    static func height(_ product: MartProduct) -> Float {
+        switch product {
+        case .soda: return 0.3
+        case .snack: return 0.34
+        case .noodle: return 0.25
+        case .sandwich: return 0.21
+        case .fruit: return 0.23
+        case .toy: return 0.4
         }
+    }
+
+    init(style: Style) {
+        let skin = UIColor(red: 0.97, green: 0.84, blue: 0.72, alpha: 1)
+        let shirt: UIColor
         let pants: UIColor
         switch style {
+        case .staff:
+            shirt = UIColor(red: 0.22, green: 0.25, blue: 0.32, alpha: 1)
+            pants = UIColor(red: 0.18, green: 0.2, blue: 0.26, alpha: 1)
+        case .helper:
+            shirt = UIColor(red: 0.3, green: 0.48, blue: 0.4, alpha: 1)
+            pants = UIColor(red: 0.2, green: 0.26, blue: 0.24, alpha: 1)
         case .customer(let index):
-            pants = [UIColor(red: 0.25, green: 0.3, blue: 0.45, alpha: 1), UIColor(red: 0.35, green: 0.3, blue: 0.28, alpha: 1),
-                     UIColor(white: 0.3, alpha: 1)][index % 3]
-        default:
-            pants = shirt.withAlphaComponent(1)
+            shirt = Self.customerColors[index % Self.customerColors.count]
+            pants = [UIColor(red: 0.27, green: 0.31, blue: 0.42, alpha: 1), UIColor(red: 0.4, green: 0.36, blue: 0.33, alpha: 1),
+                     UIColor(white: 0.32, alpha: 1)][index % 3]
         }
-        body = MartScene.capsule(0.21, 0.66, shirt)
+        showsLabel = { if case .customer = style { return false } else { return true } }()
+        body = MartScene.capsule(0.165, 0.64, shirt)
+        tray = MartScene.box(0.44, 0.03, 0.34, UIColor(white: 0.97, alpha: 1), chamfer: 0.012)
         root.addChildNode(pivot)
-        body.position = SCNVector3(0, 0.66, 0)
-        pivot.addChildNode(body)
-        let head = MartScene.sphere(0.2, skin)
-        head.position = SCNVector3(0, 0.5, 0)
-        body.addChildNode(head)
-        // 足（腰を軸にゆらす）
-        for (leg, z) in [(leftLeg, Float(-0.09)), (rightLeg, Float(0.09))] {
-            leg.position = SCNVector3(0, 0.38, z)
-            let shape = MartScene.capsule(0.08, 0.36, pants)
-            shape.position = SCNVector3(0, -0.18, 0)
+        pivot.addChildNode(lean)
+        // 足（腰を軸に振る）
+        for (leg, z) in [(leftLeg, Float(-0.075)), (rightLeg, Float(0.075))] {
+            leg.position = SCNVector3(0, 0.44, z)
+            let shape = MartScene.capsule(0.06, 0.44, pants)
+            shape.position = SCNVector3(0, -0.22, 0)
             leg.addChildNode(shape)
-            // くつ
-            let shoe = MartScene.box(0.2, 0.08, 0.13, UIColor(white: 0.18, alpha: 1), chamfer: 0.035)
-            shoe.position = SCNVector3(0.04, -0.34, 0)
+            let shoe = MartScene.box(0.17, 0.06, 0.1, UIColor(white: 0.16, alpha: 1), chamfer: 0.03)
+            shoe.position = SCNVector3(0.035, -0.42, 0)
             leg.addChildNode(shoe)
             pivot.addChildNode(leg)
         }
-        // 腕（前に出して箱を持つ）
-        for z in [Float(-0.2), Float(0.2)] {
-            let arm = MartScene.capsule(0.065, 0.34, shirt)
-            arm.eulerAngles.z = -.pi / 2.4
-            arm.position = SCNVector3(0.14, 0.02, z)
-            arm.addChildNode(MartScene.at(MartScene.sphere(0.065, skin), 0, -0.19, 0))
+        // 体と頭
+        body.position = SCNVector3(0, 0.76, 0)
+        lean.addChildNode(body)
+        let neck = MartScene.cylinder(0.05, 0.08, skin)
+        neck.position = SCNVector3(0, 0.33, 0)
+        body.addChildNode(neck)
+        let head = MartScene.sphere(0.155, skin)
+        head.position = SCNVector3(0, 0.46, 0)
+        body.addChildNode(head)
+        // 腕（肩を軸に振る。運ぶときは前に出す）
+        for (arm, z) in [(leftArm, Float(-0.2)), (rightArm, Float(0.2))] {
+            arm.position = SCNVector3(0, 0.2, z)
+            let shape = MartScene.capsule(0.048, 0.36, shirt)
+            shape.position = SCNVector3(0, -0.17, 0)
+            shape.addChildNode(MartScene.at(MartScene.sphere(0.05, skin), 0, -0.19, 0))
+            arm.addChildNode(shape)
             body.addChildNode(arm)
         }
         switch style {
         case .staff(let cap):
-            // 帽子とエプロン
-            let crown = MartScene.sphere(0.205, cap)
-            crown.scale = SCNVector3(1, 0.65, 1)
-            crown.position = SCNVector3(0, 0.56, 0)
+            let crown = MartScene.sphere(0.162, cap)
+            crown.scale = SCNVector3(1, 0.6, 1)
+            crown.position = SCNVector3(0, 0.53, 0)
             body.addChildNode(crown)
-            let brim = MartScene.cylinder(0.14, 0.03, cap)
-            brim.scale = SCNVector3(1.4, 1, 1)
-            brim.position = SCNVector3(0.17, 0.52, 0)
+            let brim = MartScene.cylinder(0.11, 0.025, cap)
+            brim.scale = SCNVector3(1.5, 1, 1.1)
+            brim.position = SCNVector3(0.14, 0.5, 0)
             body.addChildNode(brim)
-            let apron = MartScene.box(0.06, 0.4, 0.3, cap, chamfer: 0.02)
-            apron.position = SCNVector3(0.19, -0.06, 0)
+            let apron = MartScene.box(0.04, 0.42, 0.26, cap, chamfer: 0.015)
+            apron.position = SCNVector3(0.155, -0.08, 0)
             body.addChildNode(apron)
         case .helper:
-            let apron = MartScene.box(0.06, 0.4, 0.3, UIColor(red: 0.95, green: 0.95, blue: 0.9, alpha: 1), chamfer: 0.02)
-            apron.position = SCNVector3(0.19, -0.06, 0)
+            let apron = MartScene.box(0.04, 0.42, 0.26, UIColor(white: 0.96, alpha: 1), chamfer: 0.015)
+            apron.position = SCNVector3(0.155, -0.08, 0)
             body.addChildNode(apron)
         case .customer(let index):
-            // 髪
-            let hairColors: [UIColor] = [UIColor(red: 0.25, green: 0.18, blue: 0.12, alpha: 1), UIColor(red: 0.12, green: 0.1, blue: 0.1, alpha: 1),
-                                         UIColor(red: 0.85, green: 0.65, blue: 0.3, alpha: 1), UIColor(red: 0.55, green: 0.3, blue: 0.18, alpha: 1)]
-            let hair = MartScene.sphere(0.21, hairColors[index % hairColors.count])
-            hair.scale = SCNVector3(1, 0.7, 1)
-            hair.position = SCNVector3(-0.03, 0.58, 0)
+            let hairColors: [UIColor] = [UIColor(red: 0.22, green: 0.16, blue: 0.12, alpha: 1), UIColor(red: 0.1, green: 0.09, blue: 0.09, alpha: 1),
+                                         UIColor(red: 0.8, green: 0.62, blue: 0.32, alpha: 1), UIColor(red: 0.5, green: 0.28, blue: 0.17, alpha: 1)]
+            let hair = MartScene.sphere(0.164, hairColors[index % hairColors.count])
+            hair.scale = SCNVector3(1, 0.68, 1)
+            hair.position = SCNVector3(-0.025, 0.53, 0)
             body.addChildNode(hair)
             if index % 3 == 1 {
-                // 長い髪
-                let back = MartScene.box(0.12, 0.3, 0.34, hairColors[index % hairColors.count], chamfer: 0.06)
-                back.position = SCNVector3(-0.15, 0.42, 0)
+                let back = MartScene.box(0.09, 0.26, 0.27, hairColors[index % hairColors.count], chamfer: 0.045)
+                back.position = SCNVector3(-0.12, 0.4, 0)
                 body.addChildNode(back)
             }
         }
-        stack.position = SCNVector3(0.42, 0.9, 0)
+        // 運ぶ商品をのせるお盆
+        tray.isHidden = true
+        stack.addChildNode(tray)
+        stack.position = SCNVector3(0.38, 0.9, 0)
         pivot.addChildNode(stack)
     }
 
+    /// 動かす。smooth は位置を追いかける割合、dt はコマの長さ。増えた商品（隠してある）を返す
     @discardableResult
-    func update(_ walker: MartWalker, smooth: Float) -> [SCNNode] {
+    func update(_ walker: MartWalker, smooth: Float, dt: Double = 1.0 / 60) -> [SCNNode] {
         let target = SCNVector3(Float(walker.pos.x), 0, Float(walker.pos.y))
         root.position.x += (target.x - root.position.x) * smooth
         root.position.z += (target.z - root.position.z) * smooth
@@ -1200,43 +1259,65 @@ final class CharacterNode {
         var diff = want - pivot.eulerAngles.y
         while diff > .pi { diff -= 2 * .pi }
         while diff < -.pi { diff += 2 * .pi }
-        pivot.eulerAngles.y += diff * min(1, smooth * 1.4)
-        // 歩く動き
-        let swing = walker.moving ? Float(sin(walker.step * 8)) * 0.6 : 0
+        pivot.eulerAngles.y += diff * (1 - Float(exp(-14 * dt)))
+        // 歩く動き（止まるときもすっと収める）
+        stride += ((walker.moving ? 1 : 0) - stride) * (1 - Float(exp(-10 * dt)))
+        let phase = Float(walker.step) * 7.5
+        let swing = sin(phase) * 0.55 * stride
         leftLeg.eulerAngles.z = swing
         rightLeg.eulerAngles.z = -swing
-        body.position.y = 0.66 + (walker.moving ? abs(Float(sin(walker.step * 8))) * 0.05 : 0)
-        // 運んでいる箱（増えた分は、隠して返す。飛んできてから見せる）
+        body.position.y = 0.76 + abs(sin(phase)) * 0.035 * stride
+        lean.eulerAngles.z = -0.08 * stride
+        let carrying = !walker.carry.isEmpty
+        let armTarget: Float = carrying ? -1.35 : 0
+        for (arm, sign) in [(leftArm, Float(-1)), (rightArm, Float(1))] {
+            let walkSwing = carrying ? 0 : sin(phase) * 0.5 * stride * sign
+            arm.eulerAngles.z += (armTarget + walkSwing - arm.eulerAngles.z) * (1 - Float(exp(-16 * dt)))
+        }
+        // 運んでいる商品
         var added: [SCNNode] = []
         if walker.carry != stackKey {
             if walker.carry.count > stackKey.count, Array(walker.carry.prefix(stackKey.count)) == stackKey {
                 for index in stackKey.count..<walker.carry.count {
-                    let pack = MartScene.packModel(walker.carry[index])
-                    pack.position = SCNVector3(0, Float(index) * 0.18, 0)
-                    pack.name = "\(index)"
-                    pack.isHidden = true
-                    stack.addChildNode(pack)
-                    added.append(pack)
+                    let item = MartScene.productModel(walker.carry[index])
+                    item.position = SCNVector3(0, 0.02 + stackTop, 0)
+                    stackTop += Self.height(walker.carry[index])
+                    item.name = "\(index)"
+                    item.isHidden = true
+                    stack.addChildNode(item)
+                    added.append(item)
                 }
             } else {
-                stack.childNodes.forEach { $0.removeFromParentNode() }
+                stack.childNodes.filter { $0 !== tray }.forEach { $0.removeFromParentNode() }
+                stackTop = 0
                 for (index, product) in walker.carry.enumerated() {
-                    let pack = MartScene.packModel(product)
-                    pack.position = SCNVector3(0, Float(index) * 0.18, 0)
-                    pack.name = "\(index)"
-                    stack.addChildNode(pack)
+                    let item = MartScene.productModel(product)
+                    item.position = SCNVector3(0, 0.02 + stackTop, 0)
+                    stackTop += Self.height(product)
+                    item.name = "\(index)"
+                    stack.addChildNode(item)
                 }
             }
             stackKey = walker.carry
+            tray.isHidden = walker.carry.isEmpty
+            // 何を持っているかの札
+            carryLabel?.removeFromParentNode()
+            carryLabel = nil
+            if showsLabel, !walker.carry.isEmpty {
+                let label = MartScene.billboard(MartScene.carryImage(walker.carry), width: 1.1)
+                label.position = SCNVector3(0, stackTop + 0.35, 0)
+                stack.addChildNode(label)
+                carryLabel = label
+            }
         }
-        // 歩くと積んだ箱が少しゆれる
-        stack.eulerAngles.x = walker.moving ? Float(sin(walker.step * 4)) * 0.05 : 0
+        // 歩くと積んだ商品が少しゆれる
+        stack.eulerAngles.x = sin(phase * 0.5) * 0.04 * stride
         return added
     }
 
-    /// 手の上（積んだ箱のいちばん上）の場所
+    /// 手の上（積んだ商品のいちばん上）の場所
     var handPosition: SCNVector3 {
-        stack.convertPosition(SCNVector3(0, Float(stackKey.count) * 0.18, 0), to: nil)
+        stack.convertPosition(SCNVector3(0, stackTop, 0), to: nil)
     }
 
     func setBubble(_ image: UIImage?) {
@@ -1245,17 +1326,19 @@ final class CharacterNode {
         bubbleNode?.removeFromParentNode()
         bubbleNode = nil
         guard let image else { return }
-        let node = MartScene.billboard(image, width: 0.75)
+        let node = MartScene.billboard(image, width: 0.72)
         node.position = SCNVector3(0, 1.85, 0)
         root.addChildNode(node)
         bubbleNode = node
+        node.scale = SCNVector3(0.4, 0.4, 0.4)
+        node.runAction(.scale(to: 1, duration: 0.15))
     }
 
     func setBag(_ product: MartProduct) {
         guard bag == nil else { return }
-        let node = MartScene.box(0.32, 0.36, 0.14, UIColor(white: 0.97, alpha: 1), chamfer: 0.04)
-        node.addChildNode(MartScene.at(MartScene.productModel(product), 0, 0.12, 0))
-        node.position = SCNVector3(0.1, 0.55, 0.3)
+        let node = MartScene.box(0.28, 0.32, 0.12, UIColor(white: 0.97, alpha: 1), chamfer: 0.035)
+        node.addChildNode(MartScene.at(MartScene.productModel(product), 0, 0.1, 0))
+        node.position = SCNVector3(0.05, 0.6, 0.27)
         pivot.addChildNode(node)
         bag = node
     }

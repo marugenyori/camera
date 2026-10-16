@@ -202,25 +202,24 @@ struct MartPlayView: View {
                         ProgressView().tint(.white)
                         Text(session.status)
                     }
-                    .font(.footnote.weight(.bold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(Capsule().fill(.black.opacity(0.45)))
+                    .background(.ultraThinMaterial.opacity(0.9), in: Capsule())
+                    .environment(\.colorScheme, .dark)
                 }
                 Spacer()
                 if let banner = game.banner {
                     Text(banner)
-                        .font(.system(size: 26, weight: .black, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 26)
-                        .padding(.vertical, 14)
-                        .background(
-                            Capsule().fill(LinearGradient(colors: [Color(red: 1, green: 0.7, blue: 0.2), Color(red: 1, green: 0.45, blue: 0.2)],
-                                                          startPoint: .top, endPoint: .bottom))
-                                .shadow(color: Color(red: 0.8, green: 0.35, blue: 0.1), radius: 0, x: 0, y: 5)
-                        )
-                        .transition(.scale(scale: 0.4).combined(with: .opacity))
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.25))
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 12)
+                        .background(.regularMaterial, in: Capsule())
+                        .overlay(Capsule().stroke(.white.opacity(0.7), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                         .task(id: banner) {
                             try? await Task.sleep(for: .seconds(1.8))
                             withAnimation { game.banner = nil }
@@ -247,14 +246,14 @@ struct MartPlayView: View {
         }
     }
 
+    /// 画面の書き換えに合わせて動かす（対応機種は 1 秒 120 コマ）。決まった間隔で寝て起きるより、ずっとなめらか
     @MainActor
     private func run() async {
-        var last = Date()
+        let ticker = MartTicker { dt in session.step(dt) }
+        ticker.start()
+        defer { ticker.stop() }
         while !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(16))
-            let now = Date()
-            session.step(min(now.timeIntervalSince(last), 0.05))
-            last = now
+            try? await Task.sleep(for: .seconds(3600))
         }
     }
 
@@ -285,7 +284,9 @@ struct MartPlayView: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 38, height: 38)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(red: 0.35, green: 0.55, blue: 0.95)))
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(LinearGradient(colors: [Color(red: 0.36, green: 0.78, blue: 0.62), Color(red: 0.3, green: 0.62, blue: 0.95)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing)))
             VStack(alignment: .leading, spacing: 4) {
                 Text(quest.title)
                     .font(.system(size: 13, weight: .heavy, design: .rounded))
@@ -312,8 +313,9 @@ struct MartPlayView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 9)
-                        .background(Capsule().fill(Color(red: 1, green: 0.6, blue: 0.15))
-                            .shadow(color: Color(red: 0.8, green: 0.4, blue: 0.1), radius: 0, x: 0, y: 3))
+                        .background(Capsule().fill(LinearGradient(colors: [Color(red: 0.36, green: 0.78, blue: 0.62),
+                                                                           Color(red: 0.3, green: 0.62, blue: 0.95)],
+                                                                  startPoint: .leading, endPoint: .trailing)))
                 }
                 .buttonStyle(.plain)
                 .phaseAnimator([1.0, 1.08]) { content, scale in
@@ -323,8 +325,9 @@ struct MartPlayView: View {
         }
         .padding(10)
         .frame(maxWidth: 300, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.white.opacity(0.95))
-            .shadow(color: .black.opacity(0.15), radius: 0, x: 0, y: 3))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.7), lineWidth: 1))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
     }
@@ -394,9 +397,9 @@ struct MartPlayView: View {
             let clamp = min(length, 45) / max(length, 0.001)
             ZStack {
                 Circle()
-                    .fill(.black.opacity(0.18))
-                    .frame(width: 120, height: 120)
-                    .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 4))
+                    .fill(.white.opacity(0.16))
+                    .frame(width: 116, height: 116)
+                    .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 2))
                 Circle()
                     .fill(.white)
                     .frame(width: 56, height: 56)
@@ -430,63 +433,97 @@ struct MartPlayView: View {
                     Label("ゲームをやめる", systemImage: "xmark")
                 }
             } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.35), radius: 0, x: 0, y: 2)
-                    .frame(width: 48, height: 48)
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.25))
+                    .frame(width: 42, height: 42)
+                    .background(.regularMaterial, in: Circle())
+                    .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
             }
-            // レベル（星と、次までのバー）
-            HStack(spacing: 0) {
-                ZStack {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 44))
-                        .foregroundStyle(LinearGradient(colors: [Color(red: 1, green: 0.88, blue: 0.3), Color(red: 1, green: 0.65, blue: 0.1)],
-                                                        startPoint: .top, endPoint: .bottom))
-                        .shadow(color: Color(red: 0.75, green: 0.45, blue: 0.05), radius: 0, x: 0, y: 2)
+            // レベル（お店の成長）
+            let fraction = CGFloat(game.level) / CGFloat(MartGame.steps.count)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text("LV")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
                     Text("\(game.level + 1)")
-                        .font(.system(size: 17, weight: .black, design: .rounded))
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.4), radius: 0, x: 0, y: 1)
-                        .offset(y: 2)
+                        .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
+                    Spacer(minLength: 0)
+                    Text(fraction >= 1 ? "MAX" : "\(Int(fraction * 100))%")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
-                .zIndex(1)
                 GeometryReader { geo in
-                    let fraction = CGFloat(game.level) / CGFloat(MartGame.steps.count)
                     ZStack(alignment: .leading) {
-                        Capsule().fill(.white)
+                        Capsule().fill(Color.black.opacity(0.08))
                         Capsule()
-                            .fill(LinearGradient(colors: [Color(red: 0.5, green: 0.9, blue: 0.35), Color(red: 0.3, green: 0.75, blue: 0.25)],
-                                                 startPoint: .top, endPoint: .bottom))
-                            .frame(width: max(geo.size.width * fraction, 14))
-                            .padding(2)
-                        Text(fraction >= 1 ? "MAX" : "\(game.level)/\(MartGame.steps.count)")
-                            .font(.system(size: 13, weight: .black, design: .rounded))
-                            .foregroundStyle(.white)
-                            .shadow(color: .black.opacity(0.35), radius: 0, x: 0, y: 1)
-                            .frame(maxWidth: .infinity)
+                            .fill(LinearGradient(colors: [Color(red: 0.36, green: 0.78, blue: 0.62), Color(red: 0.3, green: 0.62, blue: 0.95)],
+                                                 startPoint: .leading, endPoint: .trailing))
+                            .frame(width: max(geo.size.width * fraction, 5))
                     }
                 }
-                .frame(height: 22)
-                .padding(.leading, -12)
+                .frame(height: 5)
             }
-            .frame(maxWidth: 160)
+            .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.25))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .frame(width: 150)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.7), lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+            .animation(.smooth, value: game.level)
             Spacer()
-            HStack(spacing: 6) {
-                Text("💵")
-                    .font(.system(size: 22))
+            HStack(spacing: 7) {
+                Image(systemName: "banknote.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.25, green: 0.7, blue: 0.45))
                 Text("\(game.money)")
-                    .font(.system(size: 20, weight: .black, design: .rounded).monospacedDigit())
-                    .foregroundStyle(Color(red: 0.2, green: 0.25, blue: 0.3))
+                    .font(.system(size: 19, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.25))
                     .contentTransition(.numericText())
                     .animation(.snappy, value: game.money)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .background(Capsule().fill(.white).shadow(color: .black.opacity(0.2), radius: 0, x: 0, y: 3))
+            .padding(.horizontal, 16)
+            .frame(height: 42)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.7), lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)
+    }
+}
+
+/// 画面の書き換えのたびに呼ぶ（CADisplayLink）
+@MainActor
+final class MartTicker: NSObject {
+    private var link: CADisplayLink?
+    private var last: CFTimeInterval = 0
+    private let onTick: (Double) -> Void
+
+    init(onTick: @escaping (Double) -> Void) {
+        self.onTick = onTick
+    }
+
+    func start() {
+        let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        let now = link.timestamp
+        let dt = last == 0 ? link.duration : now - last
+        last = now
+        onTick(min(max(dt, 1.0 / 240), 0.05))
     }
 }
 
@@ -499,7 +536,7 @@ struct MartSceneView: UIViewRepresentable {
         view.scene = scene.scene
         view.pointOfView = scene.cameraNode
         view.antialiasingMode = .multisampling4X
-        view.preferredFramesPerSecond = 60
+        view.preferredFramesPerSecond = 120
         view.rendersContinuously = true
         view.isPlaying = true
         view.isUserInteractionEnabled = false

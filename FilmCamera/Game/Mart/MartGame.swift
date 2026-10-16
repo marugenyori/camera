@@ -410,31 +410,50 @@ final class MartGame: ObservableObject {
         }
     }
 
+    /// 自分の店員の速さ（歩き出し・止まりをなめらかにするため、指の向きへ少しずつ近づける）
+    private var velocity = CGVector.zero
+
     private func movePlayer(_ index: Int, _ dt: Double) {
         guard players.indices.contains(index) else { return }
-        // 画面の向き → 床の向き（右上ななめから見下ろしているので変換する）
+        // 画面の向き → 床の向き（右手前ななめ上から見下ろしているので変換する）
         let sx = stick.dx, sy = stick.dy
         let length = min((sx * sx + sy * sy).squareRoot(), 1)
-        guard length > 0.08 else {
+        var want = CGVector.zero
+        if length > 0.08 {
+            var wx = 0.707 * sx + sy
+            var wy = sy - 0.707 * sx
+            let norm = (wx * wx + wy * wy).squareRoot()
+            wx /= norm
+            wy /= norm
+            want = CGVector(dx: wx * speed * length, dy: wy * speed * length)
+        }
+        // 加速は速く、止まるのは少しだけゆっくり
+        let rate: CGFloat = length > 0.08 ? 16 : 11
+        let blend = 1 - CGFloat(exp(-Double(rate) * dt))
+        velocity.dx += (want.dx - velocity.dx) * blend
+        velocity.dy += (want.dy - velocity.dy) * blend
+        let moved = (velocity.dx * velocity.dx + velocity.dy * velocity.dy).squareRoot()
+        guard moved > 0.05 else {
+            velocity = .zero
             players[index].moving = false
             return
         }
-        var wx = sx / 2 + sy
-        var wy = sy - sx / 2
-        let norm = (wx * wx + wy * wy).squareRoot()
-        wx /= norm
-        wy /= norm
-        let distance = speed * CGFloat(dt) * length
         let start = players[index].pos
         var next = start
-        next.x += wx * distance
-        if blocked(next) { next.x = start.x }
-        next.y += wy * distance
-        if blocked(next) { next.y = start.y }
+        next.x += velocity.dx * CGFloat(dt)
+        if blocked(next) {
+            next.x = start.x
+            velocity.dx = 0
+        }
+        next.y += velocity.dy * CGFloat(dt)
+        if blocked(next) {
+            next.y = start.y
+            velocity.dy = 0
+        }
         players[index].pos = next
-        players[index].moving = true
-        players[index].step += Double(distance)
-        players[index].heading = atan2(wy, wx)
+        players[index].moving = moved > 0.3
+        players[index].step += Double(moved) * dt
+        if length > 0.08 { players[index].heading = atan2(want.dy, want.dx) }
     }
 
     /// 店員がそこに立てないか（壁・棚・レジ台）
