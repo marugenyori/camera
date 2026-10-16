@@ -56,13 +56,20 @@ enum MartProduct: Int, CaseIterable, Codable {
 
     var price: Int {
         switch self {
-        case .soda: return 4
-        case .snack: return 5
-        case .noodle: return 7
-        case .sandwich: return 9
-        case .fruit: return 11
-        case .toy: return 15
+        case .soda: return 120
+        case .snack: return 150
+        case .noodle: return 220
+        case .sandwich: return 280
+        case .fruit: return 350
+        case .toy: return 480
         }
+    }
+}
+
+/// 円の表示（¥12,340）
+enum MartYen {
+    static func text(_ value: Int) -> String {
+        "¥" + value.formatted(.number.grouping(.automatic))
     }
 }
 
@@ -142,9 +149,9 @@ struct MartQuest {
     static func make(_ index: Int) -> MartQuest {
         let round = index / 3
         switch index % 3 {
-        case 0: return MartQuest(kind: .shelve, target: 12 + round * 10, reward: 25 + round * 30)
-        case 1: return MartQuest(kind: .serve, target: 4 + round * 3, reward: 35 + round * 35)
-        default: return MartQuest(kind: .earn, target: 60 + round * 80, reward: 40 + round * 45)
+        case 0: return MartQuest(kind: .shelve, target: 12 + round * 10, reward: 800 + round * 900)
+        case 1: return MartQuest(kind: .serve, target: 4 + round * 3, reward: 1_000 + round * 1_000)
+        default: return MartQuest(kind: .earn, target: 2_000 + round * 2_500, reward: 1_200 + round * 1_400)
         }
     }
 
@@ -152,7 +159,7 @@ struct MartQuest {
         switch kind {
         case .shelve: return "商品を \(target) 個並べる"
         case .serve: return "お客さん \(target) 人をお会計"
-        case .earn: return "お金を \(target) かせぐ"
+        case .earn: return "\(MartYen.text(target)) かせぐ"
         }
     }
 
@@ -225,20 +232,20 @@ final class MartGame: ObservableObject {
     }
 
     nonisolated static let steps: [MartStep] = [
-        MartStep(kind: .shelf(1), cost: 20, pos: CGPoint(x: shelfRect(1).midX, y: shelfRect(1).midY)),
-        MartStep(kind: .capacity, cost: 40, pos: CGPoint(x: 5.2, y: 9.9)),
-        MartStep(kind: .shelf(2), cost: 70, pos: CGPoint(x: shelfRect(2).midX, y: shelfRect(2).midY)),
-        MartStep(kind: .cashier, cost: 100, pos: CGPoint(x: 13.65, y: 2.0)),
-        MartStep(kind: .shelf(3), cost: 150, pos: CGPoint(x: shelfRect(3).midX, y: shelfRect(3).midY)),
-        MartStep(kind: .speed, cost: 140, pos: CGPoint(x: 7.0, y: 9.9)),
-        MartStep(kind: .stocker, cost: 220, pos: CGPoint(x: 2.4, y: 9.9)),
-        MartStep(kind: .shelf(4), cost: 260, pos: CGPoint(x: shelfRect(4).midX, y: shelfRect(4).midY)),
-        MartStep(kind: .customers, cost: 200, pos: CGPoint(x: 8.8, y: 9.9)),
-        MartStep(kind: .capacity, cost: 320, pos: CGPoint(x: 5.2, y: 9.9)),
-        MartStep(kind: .shelf(5), cost: 420, pos: CGPoint(x: shelfRect(5).midX, y: shelfRect(5).midY)),
-        MartStep(kind: .stocker, cost: 500, pos: CGPoint(x: 2.4, y: 9.9)),
-        MartStep(kind: .customers, cost: 450, pos: CGPoint(x: 8.8, y: 9.9)),
-        MartStep(kind: .speed, cost: 600, pos: CGPoint(x: 7.0, y: 9.9)),
+        MartStep(kind: .shelf(1), cost: 600, pos: CGPoint(x: shelfRect(1).midX, y: shelfRect(1).midY)),
+        MartStep(kind: .capacity, cost: 1200, pos: CGPoint(x: 5.2, y: 9.9)),
+        MartStep(kind: .shelf(2), cost: 2100, pos: CGPoint(x: shelfRect(2).midX, y: shelfRect(2).midY)),
+        MartStep(kind: .cashier, cost: 3000, pos: CGPoint(x: 13.65, y: 2.0)),
+        MartStep(kind: .shelf(3), cost: 4500, pos: CGPoint(x: shelfRect(3).midX, y: shelfRect(3).midY)),
+        MartStep(kind: .speed, cost: 4200, pos: CGPoint(x: 7.0, y: 9.9)),
+        MartStep(kind: .stocker, cost: 6600, pos: CGPoint(x: 2.4, y: 9.9)),
+        MartStep(kind: .shelf(4), cost: 7800, pos: CGPoint(x: shelfRect(4).midX, y: shelfRect(4).midY)),
+        MartStep(kind: .customers, cost: 6000, pos: CGPoint(x: 8.8, y: 9.9)),
+        MartStep(kind: .capacity, cost: 9600, pos: CGPoint(x: 5.2, y: 9.9)),
+        MartStep(kind: .shelf(5), cost: 12600, pos: CGPoint(x: shelfRect(5).midX, y: shelfRect(5).midY)),
+        MartStep(kind: .stocker, cost: 15000, pos: CGPoint(x: 2.4, y: 9.9)),
+        MartStep(kind: .customers, cost: 13500, pos: CGPoint(x: 8.8, y: 9.9)),
+        MartStep(kind: .speed, cost: 18000, pos: CGPoint(x: 7.0, y: 9.9)),
     ]
 
     let role: Role
@@ -280,6 +287,8 @@ final class MartGame: ObservableObject {
     private var dropTimers: [Double] = [0, 0]
     private var cashTimer: Double = 0
     private var payCarry: Double = 0
+    /// 続けて拾った金額
+    private var haul = 0
     private var saveTimer: Double = 0
     private var soundTimer: Double = 0
 
@@ -316,7 +325,7 @@ final class MartGame: ObservableObject {
             return
         }
         money += quest.reward
-        banner = "🏆 クエスト達成！ 💵+\(quest.reward)"
+        banner = "🏆 クエスト達成！ +\(MartYen.text(quest.reward))"
         GameAudio.shared.play(.win)
         questIndex += 1
         questBase = stats.value(quest.kind)
@@ -522,10 +531,16 @@ final class MartGame: ObservableObject {
     private func handleCash(_ dt: Double) {
         cashTimer -= dt
         guard cash > 0, players.contains(where: { distance($0.pos, Self.cashSpot) < 1.0 }), cashTimer <= 0 else { return }
-        let take = max(1, min(cash, 3 + cash / 8))
+        let take = max(1, min(cash, 60 + cash / 7))
         cash -= take
         money += take
-        cashTimer = 0.06
+        haul += take
+        cashTimer = 0.035
+        if cash == 0 {
+            // 一度にたくさん拾ったら「大もうけ」
+            if haul >= 3_000 { banner = "💰 大もうけ！ +\(MartYen.text(haul))" }
+            haul = 0
+        }
         if soundTimer <= 0 {
             GameAudio.shared.play(.pop(combo: 1))
             soundTimer = 0.2
@@ -534,7 +549,7 @@ final class MartGame: ObservableObject {
 
     private func handlePads(_ dt: Double) {
         for (index, step) in visibleSteps where players.contains(where: { distance($0.pos, step.pos) < 0.8 }) && money > 0 {
-            let rate = max(Double(step.cost) / 1.2, 30)
+            let rate = max(Double(step.cost) / 1.2, 900)
             payCarry += rate * dt
             let amount = min(Int(payCarry), money, step.cost - paidAmount(index))
             guard amount > 0 else { continue }
@@ -754,12 +769,14 @@ final class MartGame: ObservableObject {
         var questIndex: Int?
         var questBase: Int?
         var savedAt: Date?
+        /// 2 = 円（30 倍）にしたあと
+        var unit: Int?
     }
 
     func save() {
         guard role != .guest else { return }
         let data = SaveData(money: money, done: Array(done), paid: paid, stock: stock, cash: cash, stats: stats,
-                            questIndex: questIndex, questBase: questBase, savedAt: Date())
+                            questIndex: questIndex, questBase: questBase, savedAt: Date(), unit: 2)
         if let encoded = try? JSONEncoder().encode(data) {
             UserDefaults.standard.set(encoded, forKey: "martSave")
         }
@@ -768,14 +785,18 @@ final class MartGame: ObservableObject {
     private func load() {
         guard let data = UserDefaults.standard.data(forKey: "martSave"),
               let saved = try? JSONDecoder().decode(SaveData.self, from: data) else { return }
-        money = saved.money
-        paid = saved.paid
-        cash = saved.cash
+        // 前の版（小さい単位）の保存は 30 倍にする
+        let scale = (saved.unit ?? 1) >= 2 ? 1 : 30
+        money = saved.money * scale
+        paid = saved.paid.mapValues { $0 * scale }
+        cash = saved.cash * scale
         if saved.stock.count == stock.count { stock = saved.stock }
         done = Set(saved.done.filter { Self.steps.indices.contains($0) })
         stats = saved.stats ?? MartStats()
+        stats.earned *= scale
         questIndex = saved.questIndex ?? 0
         questBase = saved.questBase ?? 0
+        if scale > 1, MartQuest.make(questIndex).kind == .earn { questBase *= scale }
         rebuildUnlocks()
         // 留守のあいだも、お店は少しかせぐ（係がいるほど多い。2 時間まで）
         if let savedAt = saved.savedAt {
@@ -783,7 +804,7 @@ final class MartGame: ObservableObject {
             let perMinute = Double(unlockedProducts.map(\.price).reduce(0, +)) * 1.2
                 * (hasCashier ? 1 : 0.35) * (helpers.isEmpty ? 0.4 : 1 + 0.3 * Double(helpers.count - 1))
             let earned = Int(minutes * perMinute)
-            if earned >= 5 {
+            if earned >= 100 {
                 cash += earned
                 offlineEarned = earned
             }

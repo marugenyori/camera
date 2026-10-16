@@ -263,7 +263,7 @@ final class MartScene {
             ]
             let titleSize = title.size(withAttributes: titleAttributes)
             title.draw(at: CGPoint(x: pixels.width / 2 - titleSize.width / 2, y: pixels.height * 0.47), withAttributes: titleAttributes)
-            let price = "💵 \(remaining)" as NSString
+            let price = MartYen.text(remaining) as NSString
             let priceAttributes: [NSAttributedString.Key: Any] = [
                 .font: UIFont.systemFont(ofSize: min(pixels.width, pixels.height) * 0.16, weight: .black).rounded(),
                 .foregroundColor: UIColor(red: 0.2, green: 0.55, blue: 0.2, alpha: 1),
@@ -460,18 +460,134 @@ final class MartScene {
         servingRing = Self.billboard(Self.label("💵", size: 60), width: 0.6)
         servingRing.isHidden = true
         world.addChildNode(servingRing)
-        // お金の山（はじめに作っておき、数で出し入れする）
-        for index in 0..<40 {
-            let bill = Self.box(0.46, 0.07, 0.28, UIColor(red: 0.42, green: 0.78, blue: 0.4, alpha: 1), chamfer: 0.01)
-            bill.addChildNode(Self.at(Self.box(0.12, 0.075, 0.29, UIColor(red: 0.85, green: 0.95, blue: 0.8, alpha: 1), chamfer: 0), 0, 0, 0))
-            let column = index / 10, level = index % 10
-            bill.position = SCNVector3(Float(MartGame.cashSpot.x - 0.45 + CGFloat(column % 2) * 0.55),
-                                       Float(0.08 + CGFloat(level) * 0.08),
-                                       Float(MartGame.cashSpot.y - 0.18 + CGFloat(column / 2) * 0.36))
-            bill.isHidden = true
-            world.addChildNode(bill)
-            cashBills.append(bill)
+        // お金の山：帯の付いた札束を 3×2 の山に積む（はじめに作っておき、たまった額で出し入れする）
+        for index in 0..<36 {
+            let bundle = Self.bundleNode(kind: index % 5 == 4 ? 1 : 0)
+            let pile = index % 6, level = index / 6
+            bundle.position = SCNVector3(Float(MartGame.cashSpot.x - 0.5 + CGFloat(pile % 3) * 0.5),
+                                         Float(0.1 + CGFloat(level) * 0.105),
+                                         Float(MartGame.cashSpot.y - 0.16 + CGFloat(pile / 3) * 0.32))
+            bundle.eulerAngles.y = Float.random(in: -0.12...0.12)
+            bundle.isHidden = true
+            world.addChildNode(bundle)
+            cashBills.append(bundle)
         }
+    }
+
+    // MARK: - お金の絵
+
+    /// お札の模様（kind 0 = 一万円ふう、1 = 千円ふう）。本物にまねない、ゲーム用のデザイン
+    static func billImage(kind: Int) -> UIImage {
+        let key = "bill|\(kind)"
+        if let cached = imageCache[key] { return cached }
+        let base = kind == 0 ? UIColor(red: 0.9, green: 0.85, blue: 0.74, alpha: 1) : UIColor(red: 0.8, green: 0.86, blue: 0.9, alpha: 1)
+        let ink = kind == 0 ? UIColor(red: 0.5, green: 0.36, blue: 0.24, alpha: 1) : UIColor(red: 0.25, green: 0.36, blue: 0.52, alpha: 1)
+        let size = CGSize(width: 512, height: 256)
+        let image = UIGraphicsImageRenderer(size: size).image { context in
+            base.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            // 細かい地紋（波線）
+            ink.withAlphaComponent(0.12).setStroke()
+            for row in stride(from: CGFloat(0), to: size.height, by: 9) {
+                let wave = UIBezierPath()
+                wave.move(to: CGPoint(x: 0, y: row))
+                for x in stride(from: CGFloat(0), through: size.width, by: 16) {
+                    wave.addQuadCurve(to: CGPoint(x: x + 16, y: row), controlPoint: CGPoint(x: x + 8, y: row + 5))
+                }
+                wave.lineWidth = 1.2
+                wave.stroke()
+            }
+            // 枠
+            let outer = UIBezierPath(roundedRect: CGRect(x: 12, y: 12, width: 488, height: 232), cornerRadius: 10)
+            outer.lineWidth = 7
+            ink.withAlphaComponent(0.85).setStroke()
+            outer.stroke()
+            let inner = UIBezierPath(roundedRect: CGRect(x: 26, y: 26, width: 460, height: 204), cornerRadius: 6)
+            inner.lineWidth = 2
+            inner.stroke()
+            // 左のロゼット（花のような丸い模様）
+            let center = CGPoint(x: 120, y: 128)
+            for k in 0..<14 {
+                let angle = CGFloat(k) / 14 * .pi * 2
+                let petal = UIBezierPath(ovalIn: CGRect(x: -44, y: -14, width: 88, height: 28))
+                petal.apply(CGAffineTransform(rotationAngle: angle))
+                petal.apply(CGAffineTransform(translationX: center.x, y: center.y))
+                petal.lineWidth = 1.6
+                ink.withAlphaComponent(0.45).setStroke()
+                petal.stroke()
+            }
+            ink.withAlphaComponent(0.8).setFill()
+            UIBezierPath(ovalIn: CGRect(x: center.x - 14, y: center.y - 14, width: 28, height: 28)).fill()
+            // 右のすかしの楕円
+            UIColor(white: 1, alpha: 0.35).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 360, y: 58, width: 96, height: 132)).fill()
+            ink.withAlphaComponent(0.25).setStroke()
+            let watermark = UIBezierPath(ovalIn: CGRect(x: 360, y: 58, width: 96, height: 132))
+            watermark.lineWidth = 2
+            watermark.stroke()
+            // 金額
+            let amount = (kind == 0 ? "10000" : "1000") as NSString
+            let amountFont = UIFont.systemFont(ofSize: 64, weight: .heavy).rounded()
+            amount.draw(at: CGPoint(x: 196, y: 120), withAttributes: [.font: amountFont, .foregroundColor: ink])
+            ("MART BANK" as NSString).draw(at: CGPoint(x: 200, y: 44),
+                                           withAttributes: [.font: UIFont.systemFont(ofSize: 26, weight: .bold).rounded(),
+                                                            .foregroundColor: ink.withAlphaComponent(0.8)])
+            ("円" as NSString).draw(at: CGPoint(x: 410, y: 186),
+                                   withAttributes: [.font: UIFont.systemFont(ofSize: 34, weight: .heavy), .foregroundColor: ink])
+        }
+        imageCache[key] = image
+        return image
+    }
+
+    private static var billMaterials: [Int: [SCNMaterial]] = [:]
+
+    /// 1 枚のお札（上と下にお札の絵、ふちは紙の色）
+    static func billNode(kind: Int) -> SCNNode {
+        let geometry = SCNBox(width: 0.5, height: 0.014, length: 0.25, chamferRadius: 0.004)
+        if billMaterials[kind] == nil {
+            let face = SCNMaterial()
+            face.lightingModel = .lambert
+            face.diffuse.contents = billImage(kind: kind)
+            let edge = material(kind == 0 ? UIColor(red: 0.86, green: 0.8, blue: 0.68, alpha: 1) : UIColor(red: 0.76, green: 0.82, blue: 0.86, alpha: 1))
+            billMaterials[kind] = [edge, edge, edge, edge, face, face]
+        }
+        geometry.materials = billMaterials[kind] ?? []
+        return SCNNode(geometry: geometry)
+    }
+
+    private static var bundleMaterials: [Int: [SCNMaterial]] = [:]
+
+    /// 帯の付いた札束（横から見ると紙が重なったしま）
+    static func bundleNode(kind: Int) -> SCNNode {
+        let geometry = SCNBox(width: 0.5, height: 0.1, length: 0.25, chamferRadius: 0.008)
+        if bundleMaterials[kind] == nil {
+            let face = SCNMaterial()
+            face.lightingModel = .lambert
+            face.diffuse.contents = billImage(kind: kind)
+            let paper = kind == 0 ? UIColor(red: 0.88, green: 0.83, blue: 0.72, alpha: 1) : UIColor(red: 0.78, green: 0.84, blue: 0.88, alpha: 1)
+            let layers = UIGraphicsImageRenderer(size: CGSize(width: 128, height: 32)).image { context in
+                paper.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 128, height: 32))
+                paper.darker(0.12).setFill()
+                for y in stride(from: 1, to: 32, by: 3) { context.fill(CGRect(x: 0, y: y, width: 128, height: 1)) }
+            }
+            let side = SCNMaterial()
+            side.lightingModel = .lambert
+            side.diffuse.contents = layers
+            bundleMaterials[kind] = [side, side, side, side, face, face]
+        }
+        geometry.materials = bundleMaterials[kind] ?? []
+        let node = SCNNode(geometry: geometry)
+        // 帯
+        node.addChildNode(at(box(0.09, 0.104, 0.254, UIColor(white: 0.98, alpha: 1), chamfer: 0.004), -0.06, 0, 0))
+        return node
+    }
+
+    static func coinNode() -> SCNNode {
+        let coin = cylinder(0.075, 0.022, UIColor(red: 0.95, green: 0.78, blue: 0.32, alpha: 1))
+        coin.geometry?.firstMaterial?.emission.contents = UIColor(red: 0.3, green: 0.2, blue: 0.0, alpha: 1)
+        coin.addChildNode(at(cylinder(0.05, 0.024, UIColor(red: 0.98, green: 0.86, blue: 0.45, alpha: 1)), 0, 0, 0))
+        return coin
     }
 
     /// 飾り：窓・ポスター・時計・観葉植物・入口のマット・外の花だん・街灯・ベンチ・駐車場
@@ -877,25 +993,43 @@ final class MartScene {
         cashierNode?.update(MartWalker(pos: MartGame.cashierSpot, heading: .pi), smooth: 1)
 
         // お金
-        let bills = game.cash > 0 ? min(game.cash / 2 + 1, cashBills.count) : 0
-        for (index, bill) in cashBills.enumerated() { bill.isHidden = index >= bills }
+        // たまった額に合わせて札束を出す（¥1,500 で 1 束）
+        let bundles = game.cash > 0 ? min(game.cash / 1_500 + 1, cashBills.count) : 0
+        for (index, bundle) in cashBills.enumerated() where bundle.isHidden != (index >= bundles) {
+            bundle.isHidden = index >= bundles
+            if !bundle.isHidden, built {
+                bundle.scale = SCNVector3(1.3, 0.4, 1.3)
+                bundle.runAction(.scale(to: 1, duration: 0.18))
+            }
+        }
         if game.cash > lastCash {
-            floatText("+\(game.cash - lastCash)", at: SCNVector3(Float(MartGame.counter.midX), 1.6, Float(MartGame.counter.midY)))
+            let earned = game.cash - lastCash
+            floatText("+" + MartYen.text(earned), at: SCNVector3(Float(MartGame.counter.midX), 1.6, Float(MartGame.counter.midY)))
+            // お客さんの払ったお金（硬貨とお札）が、レジ横の山へ飛ぶ
+            let from = SCNVector3(Float(MartGame.serveSpot.x), 1.0, Float(MartGame.serveSpot.y))
+            let to = SCNVector3(Float(MartGame.cashSpot.x), 0.5, Float(MartGame.cashSpot.y))
+            for k in 0..<min(2 + earned / 300, 6) {
+                let delay = Double(k) * 0.05
+                let node = k % 3 == 2 ? Self.billNode(kind: 1) : Self.coinNode()
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.flyClone(node, from: from, to: Self.jitter(to, 0.3), duration: 0.32)
+                }
+            }
         }
         billTimer -= dt
         let mePos = game.players.indices.contains(game.me) ? game.players[game.me].pos : .zero
         if game.money > lastMoney, billTimer <= 0 {
             // 拾ったお金が店員に飛んでくる
-            flyBill(from: SCNVector3(Float(MartGame.cashSpot.x), 0.4, Float(MartGame.cashSpot.y)),
-                    to: SCNVector3(Float(mePos.x), 1.0, Float(mePos.y)))
-            billTimer = 0.05
+            flyBill(from: Self.jitter(SCNVector3(Float(MartGame.cashSpot.x), 0.5, Float(MartGame.cashSpot.y)), 0.35),
+                    to: SCNVector3(Float(mePos.x), 1.1, Float(mePos.y)), bundle: game.money - lastMoney >= 600)
+            billTimer = 0.022
         } else if game.money < lastMoney, billTimer <= 0, let pad = game.visibleSteps.first(where: {
             hypot($0.1.pos.x - mePos.x, $0.1.pos.y - mePos.y) < 0.9
         }) {
             // 払ったお金がマークに飛んでいく
             flyBill(from: SCNVector3(Float(mePos.x), 1.0, Float(mePos.y)),
                     to: SCNVector3(Float(pad.1.pos.x), 0.1, Float(pad.1.pos.y)))
-            billTimer = 0.06
+            billTimer = 0.04
         }
         lastMoney = game.money
         lastCash = game.cash
@@ -1060,23 +1194,31 @@ final class MartScene {
                                           .moveBy(x: 0, y: 0.15, z: 0, duration: 0.4)]), .removeFromParentNode()]))
     }
 
-    private func flyBill(from start: SCNVector3, to end: SCNVector3) {
-        let bill = Self.box(0.4, 0.06, 0.25, UIColor(red: 0.42, green: 0.78, blue: 0.4, alpha: 1), chamfer: 0.01)
+    static func jitter(_ point: SCNVector3, _ amount: Float) -> SCNVector3 {
+        SCNVector3(point.x + Float.random(in: -amount...amount), point.y, point.z + Float.random(in: -amount...amount))
+    }
+
+    /// お札（または札束）が放物線で飛ぶ。くるくる回りながら
+    private func flyBill(from start: SCNVector3, to end: SCNVector3, bundle: Bool = false) {
+        let bill = bundle ? Self.bundleNode(kind: Int.random(in: 0...1)) : Self.billNode(kind: Int.random(in: 0...3) == 0 ? 1 : 0)
         bill.position = start
         bill.castsShadow = false
+        bill.eulerAngles.y = Float.random(in: 0...(2 * .pi))
         world.addChildNode(bill)
-        let mid = SCNVector3((start.x + end.x) / 2, max(start.y, end.y) + 1.2, (start.z + end.z) / 2)
-        let up = SCNAction.move(to: mid, duration: 0.16)
+        let mid = SCNVector3((start.x + end.x) / 2, max(start.y, end.y) + 1.3, (start.z + end.z) / 2)
+        let up = SCNAction.move(to: mid, duration: 0.17)
         up.timingMode = .easeOut
-        let down = SCNAction.move(to: end, duration: 0.16)
+        let down = SCNAction.move(to: end, duration: 0.17)
         down.timingMode = .easeIn
-        bill.runAction(.group([.sequence([up, down]), .rotateBy(x: 0, y: 3, z: 0, duration: 0.32)])) {
+        bill.runAction(.group([.sequence([up, down]), .rotateBy(x: CGFloat.random(in: -2...2), y: 4, z: CGFloat.random(in: -1...1), duration: 0.34),
+                               .sequence([.wait(duration: 0.26), .scale(to: 0.4, duration: 0.08)])])) {
             bill.removeFromParentNode()
         }
     }
 
     private func floatText(_ text: String, at position: SCNVector3) {
-        let node = Self.billboard(Self.label(text, size: 60, color: UIColor(red: 0.35, green: 0.85, blue: 0.35, alpha: 1)), width: 0.9)
+        let node = Self.billboard(Self.label(text, size: 60, color: UIColor(red: 1, green: 0.82, blue: 0.3, alpha: 1)),
+                                  width: text.hasPrefix("+") ? 1.4 : 0.9)
         node.position = position
         world.addChildNode(node)
         node.runAction(.group([.moveBy(x: 0, y: 1.0, z: 0, duration: 0.9), .sequence([.wait(duration: 0.5), .fadeOut(duration: 0.4)])])) {
@@ -1389,6 +1531,14 @@ final class PadNode {
         let fraction = max(Float(paid) / Float(step.cost), 0.001)
         fill.scale = SCNVector3(1, fraction, 1)
         fill.position = SCNVector3(0, 0.005, Float(size.height - 0.12) * (1 - fraction) / 2)
+    }
+}
+
+private extension UIColor {
+    func darker(_ amount: CGFloat) -> UIColor {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        getRed(&r, green: &g, blue: &b, alpha: &a)
+        return UIColor(red: max(r - amount, 0), green: max(g - amount, 0), blue: max(b - amount, 0), alpha: a)
     }
 }
 

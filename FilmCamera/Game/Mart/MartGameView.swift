@@ -300,7 +300,8 @@ struct MartPlayView: View {
                     }
                 }
                 .frame(height: 8)
-                Text("\(progress)/\(quest.target)　報酬 💵\(quest.reward)")
+                Text((quest.kind == .earn ? "\(MartYen.text(progress))/\(MartYen.text(quest.target))" : "\(progress)/\(quest.target)")
+                     + "　報酬 \(MartYen.text(quest.reward))")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
             }
@@ -344,8 +345,8 @@ struct MartPlayView: View {
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 8) {
-                    Text("💵").font(.system(size: 40))
-                    Text("\(game.offlineEarned)")
+                    Text("💴").font(.system(size: 40))
+                    Text(MartYen.text(game.offlineEarned))
                         .font(.system(size: 44, weight: .black, design: .rounded))
                         .foregroundStyle(Color(red: 0.2, green: 0.6, blue: 0.25))
                 }
@@ -479,7 +480,7 @@ struct MartPlayView: View {
                 Image(systemName: "banknote.fill")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color(red: 0.25, green: 0.7, blue: 0.45))
-                Text("\(game.money)")
+                Text(MartYen.text(game.money))
                     .font(.system(size: 19, weight: .bold, design: .rounded).monospacedDigit())
                     .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.25))
                     .contentTransition(.numericText())
