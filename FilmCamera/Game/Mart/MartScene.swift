@@ -1919,7 +1919,7 @@ final class CharacterNode {
                     added.append(item)
                 }
             } else {
-                stack.childNodes.filter { $0 !== tray }.forEach { $0.removeFromParentNode() }
+                stack.childNodes.filter { $0 !== tray && $0 !== basketStack }.forEach { $0.removeFromParentNode() }
                 stackTop = 0
                 for (index, product) in walker.carry.enumerated() {
                     let item = MartScene.productModel(product)
