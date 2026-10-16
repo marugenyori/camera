@@ -459,13 +459,12 @@ struct MartPlayView: View {
             }
             if game.boostSeconds > 0 {
                 Text("⚡ \(game.boostSeconds)")
-                    .font(GameStyle.font(14))
+                    .font(.system(size: 13, weight: .black, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(GameStyle.ink)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 11)
-                    .background(BurstShape(spikes: 12, depth: 0.14).fill(GameStyle.gold))
-                    .rotationEffect(.degrees(5))
+                    .foregroundStyle(Color(red: 0.25, green: 0.2, blue: 0.05))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color(red: 1, green: 0.85, blue: 0.25)))
                     .transition(.scale.combined(with: .opacity))
             }
             HStack(spacing: 1) {
@@ -488,60 +487,55 @@ struct MartPlayView: View {
     /// ガチャ（台のそばに立つと出る）
     private var gachaPanel: some View {
         let affordable = game.money >= game.gachaCost
-        return VStack(spacing: 12) {
-            HStack(spacing: 8) {
-                RansomText(text: "ガチャ", size: 22)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("🎰 ガチャ")
+                    .font(.system(size: 15, weight: .black, design: .rounded))
                 Spacer()
                 Text(MartPrize.allCases.map(\.icon).joined())
-                    .font(.system(size: 16))
+                    .font(.system(size: 15))
             }
             Button {
                 game.spinGacha()
             } label: {
-                HStack(spacing: 10) {
-                    Text("🎰")
-                        .font(.system(size: 26))
+                HStack(spacing: 8) {
                     Text("回す")
-                        .font(GameStyle.font(22))
                     Text(MartYen.text(game.gachaCost))
-                        .font(GameStyle.font(17).monospacedDigit())
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
-                        .background(SlantShape(skew: 6).fill(GameStyle.ink))
+                        .monospacedDigit()
                 }
+                .font(.system(size: 18, weight: .black, design: .rounded))
                 .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, minHeight: 58)
-                .slantCard(skew: 14, fill: affordable ? GameStyle.red : Color(white: 0.45), shadow: .white)
+                .frame(maxWidth: .infinity, minHeight: 50)
+                .background(Capsule().fill(affordable ? Color(red: 0.3, green: 0.75, blue: 0.35) : Color(white: 0.72)))
             }
-            .buttonStyle(SlantButtonStyle())
+            .buttonStyle(.plain)
             .disabled(!affordable)
         }
-        .padding(16)
+        .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.28))
+        .padding(14)
         .frame(maxWidth: 380)
-        .slantCard(skew: 16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.7), lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
         .padding(.horizontal, 14)
         .padding(.bottom, 24)
     }
 
-    /// 当たった景品：ギザギザの中に大きなアイコン、下に名前（タップか 2 秒で閉じる）
+    /// 当たった景品：大きなアイコンと名前（タップか 2 秒で閉じる）
     private func prizeReveal(_ prize: MartPrize) -> some View {
         ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
-            VStack(spacing: 18) {
+            Color.black.opacity(0.4).ignoresSafeArea()
+            VStack(spacing: 12) {
                 Text(prize.icon)
-                    .font(.system(size: 84))
-                    .frame(width: 200, height: 200)
-                    .background(
-                        ZStack {
-                            BurstShape(spikes: 22, depth: 0.16).fill(GameStyle.ink).offset(x: 8, y: 8)
-                            BurstShape(spikes: 22, depth: 0.16).fill(prize == .coins ? Color.white : GameStyle.gold)
-                        }
-                    )
-                    .rotationEffect(.degrees(-8))
-                RansomText(text: prize.title, size: 24)
-                    .rotationEffect(.degrees(-3))
+                    .font(.system(size: 72))
+                Text(prize.title)
+                    .font(.system(size: 22, weight: .black, design: .rounded))
+                    .foregroundStyle(Color(red: 0.18, green: 0.2, blue: 0.28))
             }
-            .transition(.scale(scale: 0.2).combined(with: .opacity))
+            .padding(.horizontal, 36)
+            .padding(.vertical, 28)
+            .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(.white))
+            .transition(.scale(scale: 0.4).combined(with: .opacity))
         }
         .contentShape(Rectangle())
         .onTapGesture { game.lastPrize = nil }
