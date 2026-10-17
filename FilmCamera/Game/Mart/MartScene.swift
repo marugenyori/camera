@@ -29,6 +29,7 @@ final class MartScene {
     private var selfMachineNodes: [SCNNode] = []
     private let ambientLight = SCNNode()
     private var dayTime: Double = 40
+    private var lastNight: CGFloat = -1
     private var lampBulbs: [SCNMaterial] = []
     private let boostRing = SCNNode()
     private let cat = SCNNode()
@@ -847,6 +848,9 @@ final class MartScene {
         case ..<0.9: night = 1
         default: night = CGFloat(1 - (t - 0.9) / 0.1)
         }
+        // 変わったときだけ光を変える（毎コマ変えると重い）
+        guard abs(night - lastNight) > 0.01 || lastNight < 0 else { return }
+        lastNight = night
         let dusk = max(0, 1 - abs(night - 0.5) * 2)
         sun.light?.intensity = 780 - 520 * night
         sun.light?.color = UIColor(red: 1, green: 1 - 0.25 * dusk - 0.1 * night, blue: 1 - 0.45 * dusk + 0.05 * night, alpha: 1)
@@ -1948,14 +1952,14 @@ final class MartScene {
             // 拾ったお金が店員に飛んでくる
             flyBill(from: Self.jitter(SCNVector3(Float(MartGame.cashSpot.x), 0.5, Float(MartGame.cashSpot.y)), 0.35),
                     to: SCNVector3(Float(mePos.x), 1.1, Float(mePos.y)), bundle: game.money - lastMoney >= 600)
-            billTimer = 0.022
+            billTimer = 0.06
         } else if game.money < lastMoney, billTimer <= 0, let pad = game.visibleSteps.first(where: {
             hypot($0.1.pos.x - mePos.x, $0.1.pos.y - mePos.y) < 0.9
         }) {
             // 払ったお金がマークに飛んでいく
             flyBill(from: SCNVector3(Float(mePos.x), 1.0, Float(mePos.y)),
                     to: SCNVector3(Float(pad.1.pos.x), 0.1, Float(pad.1.pos.y)))
-            billTimer = 0.04
+            billTimer = 0.07
         }
         lastMoney = game.money
         lastCash = game.cash
